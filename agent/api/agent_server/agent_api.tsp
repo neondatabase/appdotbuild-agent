@@ -71,7 +71,7 @@ model FileEntry {
   content: string;
 }
 
-@doc("Represents a single content block in an external message with timestamp.")
+@doc("Represents a single content block in an external message.")
 model ExternalContentBlock {
   @doc("Deprecated. The role of the block. Will be removed in the future.")
   role: 'assistant';
@@ -83,7 +83,7 @@ model ExternalContentBlock {
   // timestamp: utcDateTime;
 }
 
-@doc("Represents a message from the agent to the user, including structured content blocks, state, and any code changes. The 'content' field has been deprecated in favor of the 'messages' field for better structured messaging.")
+@doc("Represents a message from the agent to the user, including structured content blocks, state, and any code changes.")
 model AgentMessage {
   @doc("Fixed field for client to detect agent message in the history") 
   role: 'assistant';
@@ -91,19 +91,22 @@ model AgentMessage {
   @doc("The type of message being sent.")
   kind: MessageKind;
 
-  @doc("Structured content blocks with timestamps. Preferred for new clients that support structured messaging.")
+  @doc("Deprecated field for content. Use 'messages' field instead for structured messaging.")
+  content?: string;
+
+  @doc("Structured content blocks. Present only for new clients.")
   messages?: ExternalContentBlock[];
 
   @doc("Updated state of the Agent Server that should be presented in the next request to continue the conversation.")
   agentState: Record<string, unknown> | null;
 
-  @doc("A unified diff format string representing code changes made by the agent, if any. Null if no diff is available.")
+  @doc("A unified diff format string representing code changes made by the agent.")
   unifiedDiff: string | null;
 
-  @doc("Hash (e.g., SHA-256 hex) of the complete unified diff that corresponds to the current full application state.")
+  @doc("Hash (e.g., SHA-256) of the complete unified diff for the current application state.")
   completeDiffHash: string | null;
 
-  @doc("A lightweight per-file summary of what changed since the previous message.")
+  @doc("Lightweight per-file summary of changes since the previous message.")
   diffStat: DiffStatEntry[] | null;
   
   @doc("Generated application name suitable for use as a GitHub repository name.")
@@ -114,11 +117,11 @@ model AgentMessage {
 }
 
 @doc("Structure of the data payload within each Server-Sent Event (SSE).")
-model AgentEvent {
+model AgentSseEvent {
   @doc("Current status of the agent (running or idle).")
   status: AgentStatus;
 
-  @doc("The trace ID corresponding to the POST request that initiated this stream of events.")
+  @doc("The trace ID corresponding to the POST request.")
   @encodedName("application/json", "traceId")
   traceId?: string;
 
@@ -143,23 +146,35 @@ union ConversationMessage {
 
 @doc("Request body for initiating or continuing interaction with the Agent Server.")
 model AgentRequest {
-  @doc("History of all user messages in the current conversation thread.")
+  @doc("History of all messages in the current conversation thread.")
   allMessages: ConversationMessage[];
 
-  @doc("All files in the workspace to be used as a base for diff generation.")
+  @doc("All files in the workspace to be used for diff generation.")
   allFiles?: FileEntry[];
 
-  @doc("Unique identifier for the application instance. Used for tracing and context.")
+  @doc("Unique identifier for the application instance.")
   applicationId: string;
 
-  @doc("Unique identifier for this specific request/response cycle. Used to correlate SSE events back to the originating POST request.")
+  @doc("Unique identifier for this request/response cycle.")
   traceId: string;
 
-  @doc("The full state of the Agent Server to restore from. This is an opaque object from the platform's perspective and should not be modified.")
+  @doc("Unique identifier of the template the agent supports.")
+  templateId?: string;
+
+  @doc("The full state of the Agent Server to restore from.")
   agentState?: Record<string, unknown> | null;
 
   @doc("Settings for the agent execution, such as maximum number of iterations.")
   settings?: Record<string, unknown>;
+}
+
+@doc("Error response model.")
+model ErrorResponse {
+  @doc("Error message.")
+  error: string;
+  
+  @doc("Additional error details.")
+  details?: string;
 }
 
 // --- Operations ---
@@ -170,18 +185,37 @@ interface MessageOperations {
   @post
   @summary("Send a message to the agent and stream responses.")
   @doc("""
-  Sends user input and conversation context to the Agent Server.
-  The server responds with a stream of Server-Sent Events (SSE) of type `text/event-stream`.
-  Each event in the stream will have a `data` field containing a JSON payload conforming to the `AgentSseEvent` model.
-  The connection remains open until the agent reaches an 'idle' state or a 'RuntimeError' occurs.
+  Send a message to the agent and stream responses via SSE.
 
-  **SSE Event Format:**
-  event: message
-  data: {"status": "...", "traceId": "...", "message": {...}}
+  Platform (Backend) -> Agent Server API Spec:
+  POST Request:
+  - allMessages: [str] - history of all user messages
+  - applicationId: str - required for Agent Server for tracing
+  - traceId: str - required - a string used in SSE events
+  - templateId: str - optional an ID of the template to use in the agent
+  - agentState: {..} or null - the full state of the Agent to restore from
+  - settings: {...} - json with settings with number of iterations etc
+
+  SSE Response:
+  - status: "running" | "idle" - defines if the Agent stopped or continues running
+  - traceId: corresponding traceId of the input
+  - message: {kind, content, agentState, unifiedDiff} - response from the Agent Server
   """)
   sendMessage(
     @body body: AgentRequest
   ): OkResponse<string> | BadRequestResponse | InternalServerErrorResponse;
+}
+
+@doc("Health check endpoint.")
+@route("/health")
+interface HealthOperations {
+  @get
+  @summary("Dagger connection health check endpoint")
+  healthCheck(): OkResponse<{
+    status: string;
+    dagger_connection: string;
+    alpine_version: string;
+  }>;
 }
 
 @doc("Standard Bad Request response.")
@@ -195,8 +229,5 @@ model BadRequestResponse {
 @doc("Standard Internal Server Error response.")
 model InternalServerErrorResponse {
   @statusCode _: 500;
-  @body body: {
-    error: string;
-    details?: string;
-  };
+  @body body: ErrorResponse;
 } 

@@ -147,6 +147,7 @@ class AgentRequest(BaseModel):
     application_id: str = Field(..., alias="applicationId", description="Unique identifier for the application instance.")
     trace_id: str = Field(..., alias="traceId", description="Unique identifier for this request/response cycle.")
     all_files: Optional[List[FileEntry]] = Field(None, alias="allFiles", description="All files in the workspace to be used for diff generation.")
+    template_id: Optional[str] = Field(None, alias="templateId", description="Unique identifier of the template the agent supports.")
     agent_state: Optional[Dict[str, Any]] = Field(
         None, 
         alias="agentState", 

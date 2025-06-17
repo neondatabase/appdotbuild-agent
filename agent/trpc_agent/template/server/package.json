@@ -5,6 +5,7 @@
     "build": "tsc",
     "dev": "bun --hot src/index.ts",
     "db:push": "drizzle-kit push --force",
+    "db:push-ci": "yes $'\\e[B\\r' | bun db:push",
     "lint": "eslint --cache src/index.ts"
   },
   "dependencies": {

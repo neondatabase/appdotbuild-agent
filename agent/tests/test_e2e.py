@@ -47,11 +47,11 @@ def latest_app_name_and_commit_message(events):
 
     return app_name, commit_message
 
-async def run_e2e(prompt: str, standalone: bool, with_edit=True):
+async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=None):
     context = empty_context() if standalone else spawn_local_server()
     with context:
         async with AgentApiClient() as client:
-            events, request = await client.send_message(prompt)
+            events, request = await client.send_message(prompt, template_id=template_id)
             assert events, "No response received from agent"
             while events[-1].message.kind == MessageKind.REFINEMENT_REQUEST:
                 events, request = await client.continue_conversation(
@@ -131,6 +131,7 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True):
                     # Clean up Docker containers
                     stop_docker_compose(temp_dir, container_names["project_name"])
 
+@pytest.mark.skipif(os.getenv("GEMINI_API_KEY") is None, reason="GEMINI_API_KEY is not set")
 async def test_e2e_generation():
     await run_e2e(standalone=False, prompt=DEFAULT_APP_REQUEST)
 

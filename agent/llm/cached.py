@@ -28,6 +28,10 @@ def normalize(obj):
                 elif k == "cache_control":
                     # ignore cache_control field used to control caching
                     pass
+                elif k == "event_callback":
+                    pass
+                elif callable(v):
+                    pass
                 elif hasattr(v, "cache_key"):
                     normalized_dict[k] = v.cache_key
                 else:
@@ -35,6 +39,9 @@ def normalize(obj):
             return normalized_dict
         case _ if hasattr(obj, "to_dict") and callable(getattr(obj, "to_dict")):
             return normalize(obj.to_dict())
+        case _ if callable(obj):
+            # ignore callable objects as they are not JSON serializable
+            return "__CALLABLE_PLACEHOLDER__"
         case _:
             return obj
 
@@ -75,18 +82,15 @@ class CachedLLM(AsyncLLM):
         max_cache_size: int = 256,
     ):
         self.client = client
-        match cache_mode:
-            case "auto":
-                effective_cache_mode = self._infer_cache_mode()
-                logger.info(f"Inferred cache mode {effective_cache_mode}")
-            case "replay" | "record" | "off" | "lru":
-                effective_cache_mode = cache_mode
-        self.cache_mode = effective_cache_mode
+        self.cache_mode = self._infer_cache_mode() if cache_mode == "auto" else cache_mode
+        if cache_mode == "auto":
+            logger.info(f"Inferred cache mode {self.cache_mode}")
         self.cache_path = cache_path
         self.max_cache_size = max_cache_size
         self._cache: Dict[str, Any] = {}
         self._cache_lru: OrderedDict[str, None] = OrderedDict()
         self.lock = anyio.Lock()
+        self._pending_requests: Dict[str, anyio.Event] = {}
 
         match (self.cache_mode, Path(self.cache_path)):
             case ("replay", file) if not file.exists():
@@ -182,6 +186,62 @@ class CachedLLM(AsyncLLM):
         _compare(norm_params, cache_params)
         return cache_params
 
+    async def _get_or_make_request(
+        self, cache_key: str, norm_params: dict, request_params: dict, use_lru: bool = False
+    ) -> Completion:
+        """handle cache lookup and request coordination."""
+        event = None
+        make_request = False
+        
+        async with self.lock:
+            if cache_key in self._cache:
+                logger.info(f"cache hit: {cache_key}")
+                if use_lru:
+                    self._update_lru_cache(cache_key)
+                return Completion.from_dict(self._cache[cache_key]["data"])
+            elif cache_key in self._pending_requests:
+                event = self._pending_requests[cache_key]
+            else:
+                event = anyio.Event()
+                self._pending_requests[cache_key] = event
+                make_request = True
+        
+        if use_lru:
+            logger.info(f"lru cache miss: {cache_key}")
+        
+        if not make_request:
+            await event.wait()
+            async with self.lock:
+                if use_lru:
+                    self._update_lru_cache(cache_key)
+                return Completion.from_dict(self._cache[cache_key]["data"])
+        
+        try:
+            # Filter out parameters that the underlying client may not accept.
+            # Currently only "event_callback" is known to cause issues for some
+            # model implementations (e.g. AnthropicLLM). We strip it to avoid
+            # unexpected TypeError while keeping the argument available for
+            # caching / higher-level coordination.
+            safe_request_params = {k: v for k, v in request_params.items() if k != "event_callback"}
+
+            response = await self.client.completion(**safe_request_params)
+            
+            async with self.lock:
+                self._cache[cache_key] = {"data": response.to_dict(), "params": norm_params}
+                if use_lru:
+                    self._update_lru_cache(cache_key)
+                else:
+                    self._save_cache()
+                del self._pending_requests[cache_key]
+            
+            event.set()
+            return response
+        except Exception:
+            async with self.lock:
+                del self._pending_requests[cache_key]
+            event.set()
+            raise
+
     async def completion(
         self,
         messages: List[Message],
@@ -196,7 +256,7 @@ class CachedLLM(AsyncLLM):
         """performs LLM completion with caching support."""
         if args:
             raise RuntimeError("args are not expected in this method, use kwargs instead")
-        # Create a dict of all parameters for caching
+        
         request_params = {
             "model": model,
             "messages": messages,
@@ -209,67 +269,22 @@ class CachedLLM(AsyncLLM):
 
         match self.cache_mode:
             case "off":
-                response = await self.client.completion(
-                    model=model,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    *args,
-                    **kwargs,
-                )
-                return response
-
+                return await self.client.completion(**request_params)
+            
             case "record":
-                async with self.lock:
-                    norm_params, cache_key = self._get_cache_key(**request_params)
-                    logger.info(f"Caching response with key: {cache_key}")
-                    if cache_key in self._cache:
-                        logger.info("Fetching from cache")
-                        return Completion.from_dict(self._cache[cache_key]["data"])
-                    else:
-                        response = await self.client.completion(
-                            model=model,
-                            messages=messages,
-                            max_tokens=max_tokens,
-                            temperature=temperature,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            **kwargs,
-                        )
-                        self._cache[cache_key] = {"data": response.to_dict(), "params": norm_params}
-                        self._save_cache()
-                    return response
-
+                norm_params, cache_key = self._get_cache_key(**request_params)
+                logger.info(f"Caching response with key: {cache_key}")
+                return await self._get_or_make_request(cache_key, norm_params, request_params)
+            
             case "lru":
-                async with self.lock:
-                    norm_params, cache_key = self._get_cache_key(**request_params)
-                    if cache_key in self._cache:
-                        logger.info(f"lru cache hit: {cache_key}")
-                        self._update_lru_cache(cache_key)
-                        return Completion.from_dict(self._cache[cache_key]['data'])
-                    else:
-                        logger.info(f"lru cache miss: {cache_key}")
-                        response = await self.client.completion(
-                            model=model,
-                            messages=messages,
-                            max_tokens=max_tokens,
-                            temperature=temperature,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            **kwargs,
-                        )
-                        self._cache[cache_key] = {"data": response.to_dict(), "params": norm_params}
-                        self._update_lru_cache(cache_key)
-                        return response
-
+                norm_params, cache_key = self._get_cache_key(**request_params)
+                return await self._get_or_make_request(cache_key, norm_params, request_params, use_lru=True)
+            
             case "replay":
                 norm_params, cache_key = self._get_cache_key(**request_params)
                 if cache_key in self._cache:
                     logger.info(f"cache hit: {cache_key}")
-                    cached_response = self._cache[cache_key]["data"]
-                    return Completion.from_dict(cached_response)
+                    return Completion.from_dict(self._cache[cache_key]["data"])
                 else:
                     self.report_closest_cache_key(cache_key, norm_params)
                     logger.error(f"Cache miss by {self.client.__class__.__name__}: {normalize(request_params)}")
@@ -277,5 +292,6 @@ class CachedLLM(AsyncLLM):
                         f"No cached response found for this request in replay mode; "
                         f"run in record mode first to populate the cache. Cache_key: {cache_key}"
                     )
+            
             case _:
                 raise ValueError(f"unknown cache mode: {self.cache_mode}")

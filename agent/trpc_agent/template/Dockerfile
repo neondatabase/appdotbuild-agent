@@ -58,4 +58,4 @@ COPY supervisord.conf /etc/supervisord.conf
 
 EXPOSE ${SERVER_PORT} 80
 
-CMD ["sh", "-c", "bun db:push && /usr/bin/supervisord -c /etc/supervisord.conf"]
+CMD ["sh", "-c", "bun db:push-ci && /usr/bin/supervisord -c /etc/supervisord.conf"]

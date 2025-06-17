@@ -374,8 +374,8 @@ def get_all_files_from_project_dir(project_dir_path: str) -> List[FileEntry]:
 
     for root, _, files in os.walk(project_dir_path):
         for filename in files:
-            # Exclude common problematic/temporary files
-            if filename.startswith('.') or filename.endswith(('.patch', '.swp', '.swo', '.rej')):
+            # Exclude common problematic/temporary files but allow .gitignore
+            if (filename.startswith('.') and filename != '.gitignore') or filename.endswith(('.patch', '.swp', '.swo', '.rej')):
                 continue
             
             filepath = os.path.join(root, filename)
@@ -389,7 +389,7 @@ def get_all_files_from_project_dir(project_dir_path: str) -> List[FileEntry]:
     return local_files
 
 
-async def run_chatbot_client(host: str, port: int, state_file: str, settings: Optional[str] = None, autosave=False) -> None:
+async def run_chatbot_client(host: str, port: int, state_file: str, settings: Optional[str] = None, autosave=False, template_id: Optional[str] = None) -> None:
     """
     Async interactive Agent CLI chat.
     """
@@ -894,6 +894,7 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                             content,
                             all_files=all_files_payload, # Pass the files
                             settings=settings_dict,
+                            template_id=template_id,
                             auth_token=auth_token,
                             stream_cb=print_event
                         )
@@ -973,12 +974,13 @@ def spawn_local_server(command: List[str] = ["uv", "run", "server"], host: str =
 def cli(host: str = "",
         port: int = 8001,
         state_file: str = "/tmp/agent_chat_state.json",
+        template_id: Optional[str] = None,
         ):
     if not host:
         with spawn_local_server() as (local_host, local_port):
-            anyio.run(run_chatbot_client, local_host, local_port, state_file, backend="asyncio")
+            anyio.run(run_chatbot_client, local_host, local_port, state_file, None, False, template_id, backend="asyncio")
     else:
-        anyio.run(run_chatbot_client, host, port, state_file, backend="asyncio")
+        anyio.run(run_chatbot_client, host, port, state_file, None, False, template_id, backend="asyncio")
 
 
 if __name__ == "__main__":

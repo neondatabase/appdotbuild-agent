@@ -81,3 +81,16 @@ async def test_external_server_message():
             print(f"Successfully tested external server at {external_server_url}")
         except Exception as e:
             pytest.fail(f"Error testing external server: {e}")
+
+
+async def test_template_id_support(client):
+    """Test that templateId field is properly handled in requests."""
+    # Test with default template (None)
+    events, request = await client.send_message("Hello", template_id=None)
+    assert len(events) > 0, "No events received with default template"
+    assert request.template_id is None, "Template ID should be None by default"
+    
+    # Test with specific template ID
+    events, request = await client.send_message("Hello", template_id="trpc_agent")
+    assert len(events) > 0, "No events received with specific template"
+    assert request.template_id == "trpc_agent", "Template ID should match requested value"

@@ -7,6 +7,7 @@
   ],
   "scripts": {
     "db:push": "bun run --filter app-build-server db:push",
+    "db:push-ci": "bun run --filter app-build-server db:push-ci",
     "dev:server": "bun run --filter app-build-server dev",
     "dev:client": "bun run --filter app-build-client dev",
     "dev:all": "bun run dev:server & bun run dev:client"

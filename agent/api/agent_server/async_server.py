@@ -268,10 +268,21 @@ async def message(
         logger.info(f"Received message request for application {request.application_id}, trace {request.trace_id}")
         set_trace_id(request.trace_id)
         logger.info("Starting SSE stream for application")
+        
+        # Use template_id from request if provided, otherwise use CONFIG default
+        template_id = request.template_id or CONFIG.default_template_id
+        logger.info(f"Using template: {template_id}")
+        
+        # Validate template_id
+        if template_id not in CONFIG.available_templates:
+            logger.warning(f"Unknown template {template_id}, falling back to default")
+            template_id = CONFIG.default_template_id
+        
         agent_type = {
             "template_diff": TemplateDiffAgentImplementation,
             "trpc_agent": TrpcAgentSession,
         }
+        
         return StreamingResponse(
             run_agent(request, agent_type[CONFIG.agent_type]),
             media_type="text/event-stream"
@@ -288,6 +299,15 @@ async def message(
             status_code=500,
             detail=error_response.to_json()
         )
+
+
+@app.get("/templates")
+async def list_templates():
+    """List available templates"""
+    return {
+        "templates": CONFIG.available_templates,
+        "default": CONFIG.default_template_id
+    }
 
 
 @app.get("/health")

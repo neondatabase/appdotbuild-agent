@@ -1,6 +1,7 @@
 import os
 import anyio
 import logging
+from typing import Callable, Awaitable
 from anyio.streams.memory import MemoryObjectSendStream
 import jinja2
 from trpc_agent import playbooks
@@ -31,12 +32,13 @@ async def run_drizzle(node: Node[BaseData]) -> tuple[ExecResult, TextRaw | None]
 class BaseTRPCActor(BaseActor, LLMActor):
     model_params: dict
 
-    def __init__(self, llm: AsyncLLM, workspace: Workspace, model_params: dict, beam_width: int = 5, max_depth: int = 5):
+    def __init__(self, llm: AsyncLLM, workspace: Workspace, model_params: dict, beam_width: int = 5, max_depth: int = 5, event_callback: Callable[[dict[str, str]], Awaitable[None]] | None = None):
         self.llm = llm
         self.workspace = workspace
         self.model_params = model_params
         self.beam_width = beam_width
         self.max_depth = max_depth
+        self.event_callback = event_callback
         logger.info(f"Initialized {self.__class__.__name__} with beam_width={beam_width}, max_depth={max_depth}")
 
     async def search(self, node: Node[BaseData] | None) -> Node[BaseData] | None:
@@ -82,8 +84,8 @@ class BaseTRPCActor(BaseActor, LLMActor):
 class DraftActor(BaseTRPCActor):
     root: Node[BaseData] | None = None
 
-    def __init__(self, llm: AsyncLLM, workspace: Workspace, model_params: dict, beam_width: int = 1, max_depth: int = 5):
-        super().__init__(llm, workspace, model_params, beam_width=beam_width, max_depth=max_depth)
+    def __init__(self, llm: AsyncLLM, workspace: Workspace, model_params: dict, beam_width: int = 1, max_depth: int = 5, event_callback: Callable[[dict[str, str]], Awaitable[None]] | None = None):
+        super().__init__(llm, workspace, model_params, beam_width=beam_width, max_depth=max_depth, event_callback=event_callback)
         self.root = None
 
     async def execute(self, user_prompt: str) -> Node[BaseData]:
@@ -135,7 +137,7 @@ class DraftActor(BaseTRPCActor):
         logger.info("Evaluating draft node")
 
         # Process and write files
-        files_err = await run_write_files(node)
+        files_err = await run_write_files(node, self.event_callback)
         if files_err:
             logger.info("File writing errors detected")
             node.data.messages.append(Message(role="user", content=[files_err]))
@@ -182,8 +184,8 @@ class DraftActor(BaseTRPCActor):
 class HandlersActor(BaseTRPCActor):
     handlers: dict[str, Node[BaseData]]
 
-    def __init__(self, llm: AsyncLLM, workspace: Workspace, model_params: dict, beam_width: int = 1, max_depth: int = 5):
-        super().__init__(llm, workspace, model_params, beam_width=beam_width, max_depth=max_depth)
+    def __init__(self, llm: AsyncLLM, workspace: Workspace, model_params: dict, beam_width: int = 1, max_depth: int = 5, event_callback: Callable[[dict[str, str]], Awaitable[None]] | None = None):
+        super().__init__(llm, workspace, model_params, beam_width=beam_width, max_depth=max_depth, event_callback=event_callback)
         self.handlers = {}
 
     async def execute(self, files: dict[str, str], feedback_data: str | None) -> dict[str, Node[BaseData]]:
@@ -211,9 +213,11 @@ class HandlersActor(BaseTRPCActor):
             async with rx:
                 async for (key, node) in rx:
                     if not node:
-                        raise ValueError(f"No solution found for handler: {key}")
-                    solution[key] = node
-                    logger.info(f"Received solution for handler: {key}")
+                        # FixMe: should we expose this to top level?
+                        logger.warning(f"Handler {key} returned no solution or an empty node, skipping")
+                    else:
+                        solution[key] = node
+                        logger.info(f"Received solution for handler: {key}")
 
         logger.info(f"HandlersActor completed with {len(solution)} solutions")
         return solution
@@ -275,7 +279,7 @@ class HandlersActor(BaseTRPCActor):
         logger.info("Evaluating handler node")
 
         # Process and write files
-        files_err = await run_write_files(node)
+        files_err = await run_write_files(node, self.event_callback)
         if files_err:
             logger.info("File writing errors detected")
             node.data.messages.append(Message(role="user", content=[files_err]))
@@ -323,8 +327,8 @@ class HandlersActor(BaseTRPCActor):
 class FrontendActor(BaseTRPCActor):
     root: Node[BaseData] | None = None
 
-    def __init__(self, llm: AsyncLLM, vlm: AsyncLLM, workspace: Workspace, model_params: dict, beam_width: int = 1, max_depth: int = 5):
-        super().__init__(llm, workspace, {**model_params, "tools": self.tools}, beam_width=beam_width, max_depth=max_depth)
+    def __init__(self, llm: AsyncLLM, vlm: AsyncLLM, workspace: Workspace, model_params: dict, beam_width: int = 1, max_depth: int = 5, event_callback: Callable[[dict[str, str]], Awaitable[None]] | None = None):
+        super().__init__(llm, workspace, {**model_params, "tools": self.tools}, beam_width=beam_width, max_depth=max_depth, event_callback=event_callback)
         self.root = None
         self.playwright_runner = PlaywrightRunner(vlm=vlm)
         self._user_prompt = None
@@ -368,7 +372,7 @@ class FrontendActor(BaseTRPCActor):
     async def eval_node(self, node: Node[BaseData]) -> bool:
         content: list[ContentBlock] = []
         content.extend(await self.run_tools(node))
-        files_err = await run_write_files(node)
+        files_err = await run_write_files(node, self.event_callback)
         if files_err:
             content.append(files_err)
         if node.data.files:

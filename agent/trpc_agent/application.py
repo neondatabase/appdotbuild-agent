@@ -98,7 +98,7 @@ class FSMApplication:
             "1. Application draft. Contains types, database tables and handler declarations only.",
             "2. Core backend implementations and application frontend.",
             "",
-            "The result application will be based on Typescript, Drizzle, tRPC and React."
+            "The result application will be based on Typescript, Drizzle, tRPC and React. The list of available libraries is limited but sufficient to build CRUD apps."
         ])
 
     @classmethod
@@ -143,10 +143,11 @@ class FSMApplication:
             setup_cmd=[["bun", "install"]],
         )
 
-        draft_actor = DraftActor(llm, workspace.clone(), model_params)
+        event_callback = settings.get('event_callback') if settings else None
+        draft_actor = DraftActor(llm, workspace.clone(), model_params, event_callback=event_callback)
         application_actor = ConcurrentActor(
-            handlers=HandlersActor(llm, workspace.clone(), model_params, beam_width=3),
-            frontend=FrontendActor(llm, vlm, workspace.clone(), model_params, beam_width=1, max_depth=20)
+            handlers=HandlersActor(llm, workspace.clone(), model_params, beam_width=3, event_callback=event_callback),
+            frontend=FrontendActor(llm, vlm, workspace.clone(), model_params, beam_width=1, max_depth=20, event_callback=event_callback)
         )
         edit_actor = EditActor(llm, vlm, workspace.clone())
 
@@ -194,7 +195,7 @@ class FSMApplication:
                 FSMState.REVIEW_APPLICATION: State(
                     on={
                         FSMEvent("CONFIRM"): FSMState.COMPLETE,
-                        FSMEvent("FEEDBACK"): FSMState.APPLICATION,
+                        FSMEvent("FEEDBACK"): FSMState.APPLY_FEEDBACK,
                     },
                 ),
                 FSMState.APPLY_FEEDBACK: State(

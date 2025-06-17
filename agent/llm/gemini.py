@@ -112,7 +112,7 @@ class GeminiLLM(common.AsyncLLM):
         for f in files:
             if not os.path.exists(f):
                 raise FileNotFoundError(f"File {f} does not exist")
-            
+
             uploaded = await self._upload_single_file(f)
             result.append(uploaded)
         return result

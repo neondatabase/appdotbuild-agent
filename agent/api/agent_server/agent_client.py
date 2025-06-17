@@ -49,6 +49,7 @@ class AgentApiClient:
                           trace_id: Optional[str] = None,
                           agent_state: Optional[Dict[str, Any]] = None,
                           all_files: Optional[List[Dict[str, str]]] = None,
+                          template_id: Optional[str] = None,
                           settings: Optional[Dict[str, Any]] = None,
                           auth_token: Optional[str] = CONFIG.builder_token,
                           stream_cb: Optional[Callable[[AgentSseEvent], None]] = None
@@ -57,7 +58,7 @@ class AgentApiClient:
         """Send a message to the agent and return the parsed SSE events"""
 
         if request is None:
-            request = self.create_request(message, messages_history, application_id, trace_id, agent_state, all_files, settings)
+            request = self.create_request(message, messages_history, application_id, trace_id, agent_state, all_files, template_id, settings)
         else:
             logger.info(f"Using existing request with trace ID: {request.trace_id}, ignoring some parameters like message, all_files")
             if all_files is not None:
@@ -134,7 +135,8 @@ class AgentApiClient:
                      trace_id: Optional[str] = None,
                      agent_state: Optional[Dict[str, Any]] = None,
                      all_files: Optional[List[Dict[str, str]]] = None,
-                     settings: Optional[Dict[str, Any]] = None) -> AgentRequest:
+                     template_id: Optional[str] = None,
+                     settings: Optional[Dict[str, Any]] = None)  -> AgentRequest:
         """Create a request object for the agent API"""
 
         all_messages_list = list(messages_history) if messages_history else []
@@ -150,7 +152,8 @@ class AgentApiClient:
             traceId=trace_id or uuid.uuid4().hex,
             agentState=agent_state,
             allFiles=file_entries,
-            settings=settings or {"max-iterations": 3}
+            templateId=template_id,
+            settings=settings
         )
 
     @staticmethod

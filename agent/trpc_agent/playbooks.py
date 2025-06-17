@@ -65,7 +65,20 @@ BASE_HANDLER_DECLARATION = """
 <file path="server/src/handlers/create_product.ts">
 import { type CreateProductInput, type Product } from '../schema';
 
-export declare function createProduct(input: CreateProductInput): Promise<Product>;
+export const async createProduct(input: CreateProductInput): Promise<Product> => {
+    // This is a placeholder declaration! Real code should be implemented here.
+    // The goal of this handler is creating a new product persisting it in the database.
+    return Promise.resolve({
+        id: 0, // Placeholder ID
+        name: input.name,
+        description: input.description || null, // Handle nullable field
+        price: input.price,
+        stock_quantity: input.stock_quantity,
+        created_at: new Date() // Placeholder date
+    } as Product
+    )
+}
+
 </file>
 """.strip()
 
@@ -73,7 +86,11 @@ BASE_GET_HANDLER_DECLARATION = """
 <file path="server/src/handlers/get_products.ts">
 import { type Product } from '../schema';
 
-export declare function getProducts(): Promise<Product[]>;
+export const async getProducts(): Promise<Product[]> => {
+    // This is a placeholder declaration! Real code should be implemented here.
+    // The goal of this handler is fetching all products from the database.
+    return [];
+}
 </file>
 """.strip()
 
@@ -500,7 +517,7 @@ Example:
 Example:
 {BASE_DRIZZLE_SCHEMA}
 
-- For each handler write its declaration in corresponding file in server/src/handlers/; prefer simple handlers, follow single responsibility principle
+- For each handler write its dummy stub implementations in corresponding file in server/src/handlers/; prefer simple handlers, follow single responsibility principle, add comments that reflect the purpose of the handler for the future implementation.
 Examples:
 {BASE_HANDLER_DECLARATION}
 
@@ -740,6 +757,8 @@ Example Nested Component (showing import paths):
 - Keep components focused on single responsibility
 
 For the visual aspect, adjust the CSS to match the user prompt to keep the design consistent with the original request in terms of overall mood. E.g. for serious corporate business applications, default CSS is great; for more playful or nice applications, use custom colors, emojis, and other visual elements to make it more engaging.
+
+If and only if user prompt requires specific integration that can't be supported, it is acceptable to use some stubs (dummy data). Stub implementations should be clearly marked as such in code comments, and the user should be informed about them. Do your best to avoid stubs. Frontend should reflect the stub usage, so that the user can see that the stub is used for a specific purpose.
 
 - ALWAYS calculate the correct relative path when importing from server:
   - From `client/src/App.tsx` → use `../../server/src/schema` (2 levels up)

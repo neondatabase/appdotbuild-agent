@@ -39,7 +39,7 @@ async def test_continue_conversation_builds_history(monkeypatch):
         traceId="tid123",
         agentState={"foo": "bar"},  # Some dummy state
         allFiles=None,
-        settings={"max-iterations": 3},
+        settings=None,
     )
 
     # Capture arguments passed to fake_send_message
