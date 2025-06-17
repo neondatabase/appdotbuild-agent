@@ -10,8 +10,7 @@ from core.actors import BaseData
 from core.base_node import Node
 from core.statemachine import MachineCheckpoint
 from core.workspace import Workspace
-from trpc_agent.diff_edit_actor import EditActor
-from trpc_agent.actors import DraftActor, HandlersActor, FrontendActor, ConcurrentActor
+from nicegui_agent.actors import NiceguiActor
 import dagger
 
 # Set up logging
@@ -23,11 +22,8 @@ for package in ['urllib3', 'httpx', 'google_genai.models']:
 
 
 class FSMState(str, enum.Enum):
-    DRAFT = "draft"
-    REVIEW_DRAFT = "review_draft"
     APPLICATION = "application"
     REVIEW_APPLICATION = "review_application"
-    APPLY_FEEDBACK = "apply_feedback"
     COMPLETE = "complete"
     FAILURE = "failure"
 
@@ -66,7 +62,7 @@ class ApplicationContext(Context):
         # Convert dataclass to dictionary
         data = {
             "user_prompt": self.user_prompt,
-            "feedback_data":self.feedback_data,
+            "feedback_data": self.feedback_data,
             "files": self.files,
             "error": self.error
         }
@@ -93,15 +89,6 @@ class FSMApplication:
         return cls(client, fsm)
 
     @classmethod
-    def base_execution_plan(cls) -> str:
-        return "\n".join([
-            "1. Application draft. Contains types, database tables and handler declarations only.",
-            "2. Core backend implementations and application frontend.",
-            "",
-            "The result application will be based on Typescript, Drizzle, tRPC and React."
-        ])
-
-    @classmethod
     async def start_fsm(cls, client: dagger.Client, user_prompt: str, settings: Dict[str, Any] | None = None) -> Self:
         """Create the state machine for the application"""
         states = await cls.make_states(client, settings)
@@ -112,20 +99,14 @@ class FSMApplication:
 
     @classmethod
     async def make_states(cls, client: dagger.Client, settings: Dict[str, Any] | None = None) -> State[ApplicationContext, FSMEvent]:
-        def agg_node_files(solution: Node[BaseData]) -> dict[str, str]:
-            files = {}
-            for node in solution.get_trajectory():
-                files.update(node.data.files)
-            return {k: v for k, v in files.items() if v is not None}
 
         # Define actions to update context
-        async def update_node_files(ctx: ApplicationContext, result: Node[BaseData] | Dict[str, Node[BaseData]]) -> None:
+        async def update_node_files(ctx: ApplicationContext, result: Node[BaseData]) -> None:
             logger.info("Updating context files from result")
-            if isinstance(result, Node):
-                ctx.files.update(agg_node_files(result))
-            elif isinstance(result, dict):
-                for key, node in result.items():
-                    ctx.files.update(agg_node_files(node))
+            files = {}
+            for node in result.get_trajectory():
+                files.update(node.data.files)
+            ctx.files.update({k: v for k, v in files.items() if v is not None})
 
         async def set_error(ctx: ApplicationContext, error: Exception) -> None:
             """Set error in context"""
@@ -134,53 +115,34 @@ class FSMApplication:
             ctx.error = str(error)
 
         llm = get_llm_client()
-        vlm = get_llm_client(model_name="gemini-flash-lite")
-        model_params = settings or {}
         workspace = await Workspace.create(
             client=client,
-            base_image="oven/bun:1.2.5-alpine",
-            context=client.host().directory("./trpc_agent/template"),
-            setup_cmd=[["bun", "install"]],
+            base_image="alpine:3.21.3",
+            context=client.host().directory("./nicegui_agent/template"),
+            setup_cmd=[
+                ["apk", "add", "--update", "--no-cache", "curl", "python3"],
+                ["sh", "-c", "curl -LsSf https://astral.sh/uv/install.sh | XDG_BIN_HOME=/usr/local/bin sh"],
+                ["uv", "sync"],
+            ],
         )
 
-        draft_actor = DraftActor(llm, workspace.clone(), model_params)
-        application_actor = ConcurrentActor(
-            handlers=HandlersActor(llm, workspace.clone(), model_params, beam_width=3),
-            frontend=FrontendActor(llm, vlm, workspace.clone(), model_params, beam_width=1, max_depth=20)
+        nicegui_actor = NiceguiActor(
+            llm=llm,
+            workspace=workspace,
+            beam_width=1,
         )
-        edit_actor = EditActor(llm, vlm, workspace.clone())
 
         # Define state machine states
         states = State[ApplicationContext, FSMEvent](
             on={
-                FSMEvent("CONFIRM"): FSMState.DRAFT,
-                FSMEvent("FEEDBACK"): FSMState.APPLY_FEEDBACK,
+                FSMEvent("CONFIRM"): FSMState.APPLICATION,
+                FSMEvent("FEEDBACK"): FSMState.APPLICATION,
             },
             states={
-                FSMState.DRAFT: State(
-                    invoke={
-                        "src": draft_actor,
-                        "input_fn": lambda ctx: (ctx.feedback_data or ctx.user_prompt,),
-                        "on_done": {
-                            "target": FSMState.REVIEW_DRAFT,
-                            "actions": [update_node_files],
-                        },
-                        "on_error": {
-                            "target": FSMState.FAILURE,
-                            "actions": [set_error],
-                        },
-                    },
-                ),
-                FSMState.REVIEW_DRAFT: State(
-                    on={
-                        FSMEvent("CONFIRM"): FSMState.APPLICATION,
-                        FSMEvent("FEEDBACK"): FSMState.DRAFT,
-                    },
-                ),
                 FSMState.APPLICATION: State(
                     invoke={
-                        "src": application_actor,
-                        "input_fn": lambda ctx: (ctx.user_prompt, ctx.files, ctx.feedback_data),
+                        "src": nicegui_actor,
+                        "input_fn": lambda ctx: (ctx.files, ctx.feedback_data or ctx.user_prompt,),
                         "on_done": {
                             "target": FSMState.REVIEW_APPLICATION,
                             "actions": [update_node_files],
@@ -196,20 +158,6 @@ class FSMApplication:
                         FSMEvent("CONFIRM"): FSMState.COMPLETE,
                         FSMEvent("FEEDBACK"): FSMState.APPLICATION,
                     },
-                ),
-                FSMState.APPLY_FEEDBACK: State(
-                    invoke={
-                        "src": edit_actor,
-                        "input_fn": lambda ctx: (ctx.files, ctx.user_prompt, ctx.feedback_data),
-                        "on_done": {
-                            "target": FSMState.COMPLETE,
-                            "actions": [update_node_files]
-                        },
-                        "on_error": {
-                            "target": FSMState.FAILURE,
-                            "actions": [set_error],
-                        },
-                    }
                 ),
                 FSMState.COMPLETE: State(),
                 FSMState.FAILURE: State(),
@@ -249,8 +197,6 @@ class FSMApplication:
     @property
     def state_output(self) -> dict:
         match self.current_state:
-            case FSMState.REVIEW_DRAFT:
-                return {"draft": self.fsm.context.files}
             case FSMState.REVIEW_APPLICATION:
                 return {"application": self.truncated_files}
             case FSMState.COMPLETE:
@@ -265,7 +211,7 @@ class FSMApplication:
     def available_actions(self) -> dict[str, str]:
         actions = {}
         match self.current_state:
-            case FSMState.REVIEW_DRAFT | FSMState.REVIEW_APPLICATION:
+            case FSMState.REVIEW_APPLICATION:
                 actions = {"confirm": "Accept current output and continue"}
                 logger.debug(f"Review state detected: {self.current_state}, offering confirm action")
             case FSMState.COMPLETE:
@@ -284,72 +230,37 @@ class FSMApplication:
 
     async def get_diff_with(self, snapshot: dict[str, str]) -> str:
         logger.info(f"SERVER get_diff_with: Received snapshot with {len(snapshot)} files.")
+        ctx = self.client.host().directory("./nicegui_agent/template")
+        start = self.client.container().from_("alpine/git").with_workdir("/app").with_directory("/app", ctx)
+        start = start.with_exec(["git", "init"]).with_exec(["git", "config", "--global", "user.email", "agent@appbuild.com"])
         if snapshot:
             # Sort keys for consistent sample logging, especially in tests
             sorted_snapshot_keys = sorted(snapshot.keys())
             logger.info(f"SERVER get_diff_with: Snapshot sample paths (up to 5): {sorted_snapshot_keys[:5]}")
-            if len(snapshot) > 5:
-                logger.debug(f"SERVER get_diff_with: All snapshot paths: {sorted_snapshot_keys}")
-            # Log content of a very small, specific file if it exists, for deep debugging
-            # Example: if "client/src/App.tsx" in snapshot:
-            #    logger.debug(f"SERVER get_diff_with: Content of snapshot file 'client/src/App.tsx':\n{snapshot['client/src/App.tsx'][:200]}...")
+            for file_path, content in snapshot.items():
+                start = start.with_new_file(file_path, content)
+            start = start.with_exec(["git", "add", "."]).with_exec(["git", "commit", "-m", "'initial'"])
         else:
             logger.info("SERVER get_diff_with: Snapshot is empty. Diff will be against template + FSM context files.")
 
-        logger.debug("SERVER get_diff_with: Initializing Dagger context from empty directory")
-        context = self.client.directory()
-
-        gitignore_path = "./trpc_agent/template/.gitignore"
-        try:
-            gitignore_file = self.client.host().file(gitignore_path)
-            context = context.with_file(".gitignore", gitignore_file)
-            logger.info(f"SERVER get_diff_with: Added .gitignore from {gitignore_path} to Dagger context.")
-        except Exception as e:
-            logger.warning(f"SERVER get_diff_with: Could not load/add .gitignore from {gitignore_path}: {e}. Proceeding without.")
-
-        logger.info(f"SERVER get_diff_with: Writing {len(snapshot)} files from received snapshot to Dagger context.")
-        for key, value in snapshot.items():
-            logger.debug(f"SERVER get_diff_with:  Adding snapshot file to Dagger context: {key}")
-            context = context.with_new_file(key, value)
-
-        logger.info("SERVER get_diff_with: Creating Dagger workspace for diff generation.")
-        workspace = await Workspace.create(self.client, base_image="alpine/git", context=context)
-        logger.debug("SERVER get_diff_with: Dagger workspace created with initial snapshot context.")
-
-        template_dir_path = "./trpc_agent/template"
-        try:
-            template_dir = self.client.host().directory(template_dir_path)
-            workspace.ctr = workspace.ctr.with_directory(".", template_dir)
-            logger.info(f"SERVER get_diff_with: Template directory {template_dir_path} merged into Dagger workspace root.")
-        except Exception as e:
-            logger.error(f"SERVER get_diff_with: FAILED to merge template directory {template_dir_path} into workspace: {e}")
-
-        fsm_files_count = len(self.fsm.context.files)
-        logger.info(f"SERVER get_diff_with: Writing {fsm_files_count} files from FSM context to Dagger workspace (overlaying snapshot & template).")
-        if fsm_files_count > 0:
-             logger.debug(f"SERVER get_diff_with: FSM files (sample): {list(self.fsm.context.files.keys())[:5]}")
-        for key, value in self.fsm.context.files.items():
-            logger.debug(f"SERVER get_diff_with:  Writing FSM file to Dagger workspace: {key} (Length: {len(value)})")
-            try:
-                workspace.write_file(key, value)
-            except Exception as e:
-                logger.error(f"SERVER get_diff_with: FAILED to write FSM file {key} to workspace: {e}")
+        for file_path, content in self.fsm.context.files.items():
+            start = start.with_new_file(file_path, content)
 
         logger.info("SERVER get_diff_with: Calling workspace.diff() to generate final diff.")
-        final_diff_output = ""
+        diff = ""
         try:
-            final_diff_output = await workspace.diff()
-            logger.info(f"SERVER get_diff_with: workspace.diff() Succeeded. Diff length: {len(final_diff_output)}")
-            if not final_diff_output:
-                 logger.warning("SERVER get_diff_with: Diff output is EMPTY. This might be expected if states match or an issue.")
+            diff = await start.with_exec(["git", "add", "."]).with_exec(["git", "diff", "HEAD"]).stdout()
+            logger.info(f"SERVER get_diff_with: workspace.diff() Succeeded. Diff length: {len(diff)}")
+            if not diff:
+                logger.warning("SERVER get_diff_with: Diff output is EMPTY. This might be expected if states match or an issue.")
         except Exception as e:
             logger.exception("SERVER get_diff_with: Error during workspace.diff() execution.")
-            final_diff_output = f"# ERROR GENERATING DIFF: {e}"
+            diff = f"# ERROR GENERATING DIFF: {e}"
 
-        return final_diff_output
+        return diff
 
 
-async def main(user_prompt="Minimal persistent counter application"):
+async def main(user_prompt="Minimal counter button application"):
     async with dagger.Connection(dagger.Config(log_output=open(os.devnull, "w"))) as client:
         fsm_app: FSMApplication = await FSMApplication.start_fsm(client, user_prompt)
 
@@ -362,6 +273,10 @@ async def main(user_prompt="Minimal persistent counter application"):
         else:
             logger.info("Application run completed successfully")
             logger.info(f"Generated {len(context.files)} files")
+            diff = await fsm_app.get_diff_with({})
+            logger.info("Diff:")
+            logger.info(diff)
+            snapshot = fsm_app.fsm.context.files
             logger.info("Applying edit to application.")
             await fsm_app.apply_changes("Add header that says 'Hello World'")
 
@@ -369,6 +284,9 @@ async def main(user_prompt="Minimal persistent counter application"):
                 logger.error(f"Failed to apply edit: {context.error or 'Unknown error'}")
             else:
                 logger.info("Edit applied successfully")
+                diff = await fsm_app.get_diff_with(snapshot)
+                logger.info("Diff:")
+                logger.info(diff)
 
 
 if __name__ == "__main__":

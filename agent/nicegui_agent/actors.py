@@ -254,6 +254,7 @@ class NiceguiActor(BaseActor, LLMActor):
                         result.append(ToolUseResult.from_tool_use(block, tool_content))
                     case "delete_file":
                         node.data.workspace.rm(block.input["path"]) # pyright: ignore[reportIndexIssue]
+                        node.data.files.update({block.input["path"]: None}) # pyright: ignore[reportIndexIssue]
                         result.append(ToolUseResult.from_tool_use(block, "success"))
                     case "uv_add":
                         packages = block.input["packages"] # pyright: ignore[reportIndexIssue]
@@ -269,6 +270,8 @@ class NiceguiActor(BaseActor, LLMActor):
                         if not self.has_modifications(node):
                             raise ValueError("Can not complete without writing any changes.")
                         check_err = await self.run_checks(node, user_prompt)
+                        if check_err:
+                            logger.error(f"Failed to complete: {check_err}")
                         result.append(ToolUseResult.from_tool_use(block, check_err or "success"))
                         is_completed = check_err is None
                     case unknown:

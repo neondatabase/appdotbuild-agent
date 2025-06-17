@@ -14,7 +14,7 @@ import hashlib
 class BaseData:
     workspace: Workspace
     messages: list[Message]
-    files: dict[str, str] = dataclasses.field(default_factory=dict)
+    files: dict[str, str | None] = dataclasses.field(default_factory=dict)
 
     def head(self) -> Message:
         if (num_messages := len(self.messages)) != 1:
@@ -42,7 +42,10 @@ class BaseActor(statemachine.Actor):
 
     async def load_data(self, data: dict, workspace: Workspace) -> BaseData:
         for file, content in data["files"].items():
-            workspace.write_file(file, content)
+            if content is not None:
+                workspace.write_file(file, content)
+            else:
+                workspace.rm(file)
         messages = [Message.from_dict(msg) for msg in data["messages"]]
         return BaseData(workspace, messages, data["files"])
 

@@ -251,6 +251,7 @@ class EditActor(BaseActor, LLMActor):
                         result.append(ToolUseResult.from_tool_use(block, tool_content))
                     case "delete_file":
                         node.data.workspace.rm(block.input["path"]) # pyright: ignore[reportIndexIssue]
+                        node.data.files.update({block.input["path"]: None}) # pyright: ignore[reportIndexIssue]
                         result.append(ToolUseResult.from_tool_use(block, "success"))
                     case "complete":
                         if not self.has_modifications(node):
