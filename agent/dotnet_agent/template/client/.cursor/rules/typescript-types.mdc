@@ -1,0 +1,19 @@
+---
+description: TypeScript Type Safety
+globs: ["**/*.tsx", "**/*.ts"]
+alwaysApply: true
+---
+
+- Provide explicit types for all callbacks and event handlers:
+  - `onChange={(e: React.ChangeEvent<HTMLInputElement>) => ...}`
+  - `setData((prev: DataType) => ...)`
+  - `items.map((item: ItemType) => ...)`
+- State initialization should match API return types exactly
+- Use numbers directly from API - no additional conversion needed
+- Date objects from backend work directly: `date.toLocaleDateString()`
+- Check actual handler return types before assuming field names or structure
+- Use type guards for runtime type checking when necessary
+- Always import types with `type` keyword: `import type { Entity } from '../../server/src/schema'`
+- Prefer interface over type for component props and complex object types
+- Use union types for state that can have multiple values: `'loading' | 'success' | 'error'`
+- Avoid `any` type - use `unknown` for truly unknown data and narrow with type guards

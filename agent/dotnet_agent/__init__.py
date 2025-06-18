@@ -1,0 +1,1 @@
+# .NET Agent for generating ASP.NET Core + React applications

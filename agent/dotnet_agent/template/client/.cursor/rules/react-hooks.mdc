@@ -1,0 +1,23 @@
+---
+description: React Hook Dependencies and Effects
+globs: ["**/*.tsx"]
+alwaysApply: true
+---
+
+- Follow React Hook rules strictly - include all dependencies in arrays
+- Wrap functions used in useEffect with useCallback if they use state/props
+- Use empty dependency array `[]` only for mount-only effects
+- Example pattern:
+  ```typescript
+  const loadData = useCallback(async () => {
+    // data loading logic
+  }, [dependency1, dependency2]);
+  
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+  ```
+- Always provide explicit types for callback parameters
+- Avoid creating functions inside useEffect - extract to useCallback instead
+- Use useMemo for expensive calculations that depend on specific values
+- When state depends on previous state, use functional updates: `setState(prev => ...)`

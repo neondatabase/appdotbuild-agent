@@ -1,0 +1,23 @@
+---
+description: Radix UI and Tailwind CSS Usage
+globs: ["**/components/**/*.tsx", "**/App.tsx"]
+alwaysApply: true
+---
+
+- Use Radix UI components for interactive elements (Button, Input, Dialog, Select, etc.)
+- Apply Tailwind classes directly in JSX - avoid @apply unless creating reusable styles
+- When using @apply, only use in @layer components, never @layer base
+- Adjust visual styling to match user prompt mood (corporate vs playful)
+- Use consistent spacing and typography patterns across components
+- Leverage Tailwind's responsive utilities for mobile-friendly designs
+- Prefer composition over customization - use Radix primitives with Tailwind styling
+- Use semantic color classes: `text-muted-foreground`, `bg-background`, `border-border`
+- Implement proper focus states and accessibility with Radix components
+- Use Tailwind's design tokens for consistent spacing: `space-y-4`, `gap-6`, `p-4`
+- Apply hover and focus states consistently: `hover:bg-muted`, `focus:ring-2`
+- Use Tailwind's grid and flexbox utilities for layout: `grid grid-cols-1 md:grid-cols-2`
+- Implement loading states with Skeleton components and disabled states
+- Use proper contrast ratios and semantic HTML elements
+- Apply consistent border radius and shadows: `rounded-lg`, `shadow-sm`
+
+@base-ui-component.tsx

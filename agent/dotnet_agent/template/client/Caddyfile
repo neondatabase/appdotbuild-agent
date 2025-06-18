@@ -1,0 +1,35 @@
+:80 {
+	log {
+		output stderr
+		level INFO
+	}
+	root * /app/client/dist
+	request_body {
+		max_size 10M
+	}
+	header {
+		X-Frame-Options "SAMEORIGIN"
+		X-XSS-Protection "1; mode=block"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' http://localhost:2022"
+	}
+
+	route {
+		@api path /api/*
+		handle @api {
+			uri strip_prefix /api
+			reverse_proxy localhost:2022 {
+				header_up Host {host}
+				header_up X-Real-IP {remote_ip}
+				header_up X-Forwarded-For {remote_ip}
+				header_up X-Forwarded-Proto {scheme}
+				flush_interval -1
+			}
+		}
+		handle {
+			try_files {path} {path}/ /index.html
+			file_server
+		}
+	}
+}

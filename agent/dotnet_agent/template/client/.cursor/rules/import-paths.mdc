@@ -1,0 +1,13 @@
+---
+description: TypeScript Import Paths from Server
+globs: ["**/*.tsx", "**/*.ts"]
+alwaysApply: true
+---
+
+- ALWAYS calculate correct relative paths when importing from server:
+  - From `client/src/App.tsx` → use `../../server/src/schema`
+  - From `client/src/components/Component.tsx` → use `../../../server/src/schema`
+  - From `client/src/components/nested/Component.tsx` → use `../../../../server/src/schema`
+- Count levels precisely: go up to client/, then to project root, then down to server/
+- Always use type-only imports: `import type { Product } from '../../server/src/schema'`
+- Verify import paths resolve correctly before committing code

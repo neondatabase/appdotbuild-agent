@@ -1,0 +1,27 @@
+---
+description: JSX Syntax and Common Errors
+globs: ["**/*.tsx"]
+alwaysApply: true
+---
+
+- Double-check JSX syntax for common mistakes:
+  - Proper comma separation in import lists: `import { A, B, C } from ...`
+  - Component names have no spaces: `AlertDialogFooter` not `AlertDialog Footer`
+  - Self-closing tags where appropriate: `<Input />` not `<Input></Input>`
+- Use meaningful variable names and avoid abbreviations
+- Ensure proper nesting of HTML elements
+- Handle conditional rendering safely with proper boolean checks
+- Use proper JSX attribute syntax:
+  - Boolean attributes: `disabled` not `disabled={true}`
+  - Event handlers: `onClick={() => handleClick()}` with proper typing
+  - className instead of class: `className="text-lg"` not `class="text-lg"`
+- Escape special characters properly in JSX text content
+- Use fragments `<>` or `<React.Fragment>` instead of unnecessary wrapper divs
+- Ensure all JSX elements are properly closed and nested
+- Use proper key props for all list items: `key={item.id}` with unique, stable values
+- Handle undefined/null values safely in JSX expressions with fallbacks
+- Use logical AND (`&&`) carefully - prefer ternary for complex conditions
+- Apply consistent indentation and formatting for readability
+- Group related JSX elements logically with proper spacing
+- Use descriptive variable names for complex JSX expressions
+- Extract complex conditional logic into variables before JSX return

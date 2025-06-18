@@ -34,6 +34,7 @@ from api.agent_server.models import (
 )
 from api.agent_server.interface import AgentInterface
 from trpc_agent.agent_session import TrpcAgentSession
+from dotnet_agent.agent_server_session import DotNetAgentSession
 from api.agent_server.template_diff_impl import TemplateDiffAgentImplementation
 from api.config import CONFIG
 
@@ -281,6 +282,7 @@ async def message(
         agent_type = {
             "template_diff": TemplateDiffAgentImplementation,
             "trpc_agent": TrpcAgentSession,
+            "dotnet_agent": DotNetAgentSession,
         }
         
         return StreamingResponse(

@@ -1,0 +1,23 @@
+---
+description: Error Handling and Loading States
+globs: ["**/*.tsx"]
+alwaysApply: true
+---
+
+- Always handle loading states during API calls with explicit boolean state
+- Display meaningful error messages to users, not raw error objects
+- Use try/catch blocks for all async operations (tRPC calls, form submissions)
+- Show loading indicators during form submissions and data fetching
+- Handle empty states gracefully (no data to display) with helpful messaging
+- Provide fallback UI for error scenarios with retry options when appropriate
+- Log errors to console for debugging: `console.error('Operation failed:', error)`
+- Use consistent error state management across components
+- Implement optimistic updates where appropriate, with rollback on error
+- Show specific validation errors for form fields when available
+- Use toast notifications or alerts for user feedback on operations
+- Disable form controls during submission to prevent duplicate requests
+- Handle network errors differently from validation errors
+- Provide loading skeletons for better perceived performance
+- Clear error states when user retries or navigates away
+- Use error boundaries for catching unexpected React errors
+- Implement proper error recovery flows (retry, refresh, fallback data)

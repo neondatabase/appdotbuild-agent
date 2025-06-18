@@ -1,0 +1,21 @@
+---
+description: Form Handling and State Management
+globs: ["**/*.tsx"]
+alwaysApply: true
+---
+
+- Initialize state to match API return types exactly
+- For controlled inputs, always provide defined values: `value={formData.field || ''}`
+- Convert between display (string) and storage (null) appropriately:
+  ```typescript
+  onChange={(e) => setFormData(prev => ({
+    ...prev,
+    description: e.target.value || null // Empty string → null
+  }))}
+  ```
+- Use explicit TypeScript types for all state setters and event handlers
+- Handle nullable database fields correctly in forms
+- Reset forms after successful submissions
+- Validate form data before submission using Zod schemas
+
+@base-form-component.tsx

@@ -1,0 +1,19 @@
+{
+  "name": "dotnet-react-app",
+  "private": true,
+  "workspaces": [
+    "client"
+  ],
+  "scripts": {
+    "dev:client": "cd client && npm run dev",
+    "dev:server": "cd server && dotnet run",
+    "dev:all": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "build": "cd client && npm run build && cd ../server && dotnet build -c Release",
+    "build:server": "cd server && dotnet build -c Release",
+    "build:client": "cd client && npm run build",
+    "migrate": "cd server && dotnet ef database update"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

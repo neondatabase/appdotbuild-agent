@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: appdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  server:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    ports:
+      - "5000:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=db;Database=appdb;Username=postgres;Password=password
+    depends_on:
+      - db
+    volumes:
+      - ./server:/app/server:cached
+    command: ["dotnet", "watch", "run", "--project", "/app/server"]
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./client:/app:cached
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:5000/api
+
+volumes:
+  postgres_data:

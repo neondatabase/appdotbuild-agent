@@ -1,0 +1,15 @@
+---
+description: tRPC Integration and API Communication
+globs: ["**/*.tsx", "**/*.ts"]
+alwaysApply: true
+---
+
+- Import tRPC client from `@/utils/trpc`
+- Use `.query()` for read operations, `.mutate()` for write operations
+- Always handle loading and error states in components
+- Store complete API responses before accessing properties
+- Transform data after fetching if component needs different structure
+- Never use mock data - always fetch real data from API
+- Handle tRPC errors gracefully with try/catch blocks
+
+@base-trpc-usage.tsx

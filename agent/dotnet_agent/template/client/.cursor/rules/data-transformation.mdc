@@ -1,0 +1,26 @@
+---
+description: Data Transformation and Display
+globs: ["**/*.tsx"]
+alwaysApply: true
+---
+
+- Transform API data after fetching, not in state type definitions
+- Handle nullable values in display logic: `{product.description && <p>{product.description}</p>}`
+- Use proper formatting for numbers: `product.price.toFixed(2)` for currency
+- Format dates appropriately: `date.toLocaleDateString()` or `date.toISOString()`
+- Handle arrays safely with length checks before mapping
+- Provide key props for all list items: `key={item.id}` with unique, stable values
+- Use conditional rendering for optional content with proper null checks
+- Apply consistent data formatting across components (currency, dates, numbers)
+- Handle empty states gracefully with meaningful messages
+- Transform complex API responses into simpler component-friendly formats
+- Use helper functions for repeated data transformations
+- Implement proper sorting and filtering logic before rendering
+- Handle pagination data correctly (total count, current page, etc.)
+- Use memoization for expensive data transformations: `useMemo(() => transformData(data), [data])`
+- Convert server timestamps to user's timezone when displaying
+- Implement proper number localization for international users
+- Handle long text truncation with expand/collapse functionality
+- Apply consistent empty value representations ("--", "N/A", "None")
+
+@base-component.tsx
