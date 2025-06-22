@@ -87,8 +87,8 @@ class FSMApplication:
         self.client = client
 
     @classmethod
-    async def load(cls, client: dagger.Client, data: MachineCheckpoint) -> Self:
-        root = await cls.make_states(client)
+    async def load(cls, client: dagger.Client, data: MachineCheckpoint, settings: Dict[str, Any] | None = None) -> Self:
+        root = await cls.make_states(client, settings)
         fsm = await StateMachine[ApplicationContext, FSMEvent].load(root, data, ApplicationContext)
         return cls(client, fsm)
 
@@ -149,7 +149,7 @@ class FSMApplication:
             handlers=HandlersActor(llm, workspace.clone(), model_params, beam_width=3, event_callback=event_callback),
             frontend=FrontendActor(llm, vlm, workspace.clone(), model_params, beam_width=1, max_depth=20, event_callback=event_callback)
         )
-        edit_actor = EditActor(llm, vlm, workspace.clone())
+        edit_actor = EditActor(llm, vlm, workspace.clone(), event_callback=event_callback)
 
         # Define state machine states
         states = State[ApplicationContext, FSMEvent](

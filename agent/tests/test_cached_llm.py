@@ -136,7 +136,7 @@ async def test_gemini_with_image():
         "image.png",
     )
     resp = await client.completion(
-        messages=[Message(role="user", content=[TextRaw("Answer only what is written in the image, single word")])],
+        messages=[Message(role="user", content=[TextRaw("Answer only what is written in the image (single word, dot is allowed)")])],
         max_tokens=512,
         attach_files=AttachedFiles(files=[image_path], _cache_key="test")
     )

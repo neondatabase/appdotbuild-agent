@@ -22,6 +22,7 @@ import dagger
 import os
 import json
 from brotli_asgi import BrotliMiddleware
+from dotenv import load_dotenv
 
 from api.agent_server.models import (
     AgentRequest,
@@ -43,7 +44,15 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Load environment variables from .env file
+    load_dotenv()
     logger.info("Initializing Async Agent Server API")
+    logger.info(f"Current working directory: {os.getcwd()}")
+    logger.info(f"PREFER_OLLAMA: {os.getenv('PREFER_OLLAMA', 'NOT_SET')}")
+    logger.info(f"AWS_SECRET_ACCESS_KEY: {'SET' if os.getenv('AWS_SECRET_ACCESS_KEY') else 'NOT_SET'}")
+    logger.info(f"ANTHROPIC_API_KEY: {'SET' if os.getenv('ANTHROPIC_API_KEY') else 'NOT_SET'}")
+    logger.info(f"GEMINI_API_KEY: {'SET' if os.getenv('GEMINI_API_KEY') else 'NOT_SET'}")
+    
     yield
     logger.info("Shutting down Async Agent Server API")
 

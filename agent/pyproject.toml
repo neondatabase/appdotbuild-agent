@@ -19,6 +19,7 @@ dependencies = [
     "aiohttp>=3.12.4",
     "tenacity>=9.1.2",
     "brotli-asgi>=1.4.0",
+    "python-dotenv>=1.1.0",
 ]
 
 [build-system]
@@ -33,6 +34,7 @@ server = "api.agent_server.async_server:main"
 test = "commands:run_tests_with_cache"
 test_e2e = "commands:run_e2e_tests"
 update_cache = "commands:update_cache"
+record = "commands:update_cache"
 lint = "commands:run_lint"
 type_check = "commands:type_check"
 format = "commands:run_format"
@@ -45,6 +47,7 @@ server = "Runs the API server. Example: uv run server"
 test = "Runs pytest with VCR cache in replay mode. Accepts pytest arguments. Example: uv run test -k test_specific_function"
 test_e2e = "Runs end-to-end tests (subset of 'test' focused on e2e). Example: uv run test_e2e"
 update_cache = "Updates VCR cache for tests by running pytest in record mode. Example: uv run update_cache tests/test_specific_file.py"
+record = "Updates VCR cache for tests by running pytest in record mode (alias for update_cache). Example: uv run record tests/test_specific_file.py"
 lint = "Runs ruff to check and fix linting issues. Example: uv run lint"
 type_check = "Runs type checking with pyright. Example: uv run type_check"
 format = "Runs ruff to format code, optionally accepts target. Example: uv run format [file.py]"

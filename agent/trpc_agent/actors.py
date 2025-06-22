@@ -13,6 +13,7 @@ from trpc_agent.playwright import PlaywrightRunner, drizzle_push
 from core.workspace import ExecResult
 
 from trpc_agent.utils import run_write_files, run_tsc_compile, run_frontend_build, run_tests
+from trpc_agent.notification_utils import notify_if_callback
 
 logger = logging.getLogger(__name__)
 
@@ -90,11 +91,17 @@ class DraftActor(BaseTRPCActor):
 
     async def execute(self, user_prompt: str) -> Node[BaseData]:
         logger.info(f"Executing DraftActor with user prompt: '{user_prompt}'")
+        
+        await notify_if_callback(self.event_callback, "🎯 Starting application draft generation...", "draft start")
+        
         await self.cmd_create(user_prompt)
         solution = await self.search(self.root)
         if solution is None:
             logger.error("Draft actor failed to find a solution")
             raise ValueError("No solution found")
+        
+        await notify_if_callback(self.event_callback, "✅ Application draft generated successfully!", "draft completion")
+        
         logger.info("Draft actor completed successfully")
         return solution
 
@@ -144,7 +151,7 @@ class DraftActor(BaseTRPCActor):
             return False
 
         # TypeScript compilation check
-        _, tsc_err = await run_tsc_compile(node)
+        _, tsc_err = await run_tsc_compile(node, self.event_callback)
         if tsc_err:
             logger.info("TypeScript compilation errors detected")
             node.data.messages.append(Message(role="user", content=[tsc_err]))
@@ -191,8 +198,11 @@ class HandlersActor(BaseTRPCActor):
     async def execute(self, files: dict[str, str], feedback_data: str | None) -> dict[str, Node[BaseData]]:
         logger.info(f"Executing HandlersActor with {len(files)} input files")
 
+        await notify_if_callback(self.event_callback, "🔧 Generating backend API handlers...", "handlers start")
+
         async def task_fn(node: Node[BaseData], key: str, tx: MemoryObjectSendStream[tuple[str, Node[BaseData] | None]]):
             logger.info(f"Starting search for handler: {key}")
+            await notify_if_callback(self.event_callback, f"⚡ Working on {key} handler...", "handler progress")
             result = await self.search(node)
             logger.info(f"Completed search for handler: {key}")
             async with tx:
@@ -218,6 +228,8 @@ class HandlersActor(BaseTRPCActor):
                     else:
                         solution[key] = node
                         logger.info(f"Received solution for handler: {key}")
+
+        await notify_if_callback(self.event_callback, "✅ All backend handlers generated!", "handlers completion")
 
         logger.info(f"HandlersActor completed with {len(solution)} solutions")
         return solution
@@ -293,7 +305,7 @@ class HandlersActor(BaseTRPCActor):
             return False
 
         # Run tests
-        _, test_err = await run_tests(node)
+        _, test_err = await run_tests(node, self.event_callback)
         if test_err:
             logger.info("Test failures detected")
             node.data.messages.append(Message(role="user", content=[test_err]))
@@ -335,11 +347,17 @@ class FrontendActor(BaseTRPCActor):
 
     async def execute(self, user_prompt: str, server_files: dict[str, str]) -> Node[BaseData]:
         logger.info(f"Executing frontend actor with user prompt: {user_prompt}")
+        
+        await notify_if_callback(self.event_callback, "🎨 Starting frontend application generation...", "frontend start")
+        
         self._user_prompt = user_prompt
         await self.cmd_create(user_prompt, server_files)
         solution = await self.search(self.root)
         if solution is None:
             raise ValueError("No solution found")
+        
+        await notify_if_callback(self.event_callback, "✅ Frontend application generated!", "frontend completion")
+        
         return solution
 
     async def cmd_create(self, user_prompt: str, server_files: dict[str, str]):
@@ -383,7 +401,7 @@ class FrontendActor(BaseTRPCActor):
             node.data.messages.append(Message(role="user", content=content))
             return False
 
-        build_err = await run_frontend_build(node)
+        build_err = await run_frontend_build(node, self.event_callback)
         if build_err:
             content.append(TextRaw(build_err))
             node.data.messages.append(Message(role="user", content=content))

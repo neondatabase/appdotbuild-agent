@@ -9,6 +9,7 @@ from llm.common import AsyncLLM, Message, TextRaw, Tool, ToolUse, ToolUseResult
 from trpc_agent import playbooks
 from trpc_agent.actors import run_tests, run_tsc_compile, run_frontend_build
 from trpc_agent.playwright import PlaywrightRunner
+from trpc_agent.notification_utils import notify_if_callback, notify_files_processed
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +50,10 @@ def extract_files(content: str) -> list[File | FileDiff]:
     return files
 
 
-async def run_write_files(node: Node[BaseData]) -> TextRaw | None:
+async def run_write_files(node: Node[BaseData], event_callback = None) -> TextRaw | None:
     errors = []
     files_written = 0
+    all_files_written = []
 
     for block in node.data.head().content:
         if not (isinstance(block, TextRaw)):
@@ -69,6 +71,7 @@ async def run_write_files(node: Node[BaseData]) -> TextRaw | None:
                         node.data.workspace.write_file(path, content)
                         node.data.files.update({path: content})
                         files_written += 1
+                        all_files_written.append(path)
                         logger.debug(f"Written file: {path}")
                     case FileDiff(path, search, replace):
                         try:
@@ -83,6 +86,7 @@ async def run_write_files(node: Node[BaseData]) -> TextRaw | None:
                                 node.data.workspace.write_file(path, new_content)
                                 node.data.files.update({path: new_content})
                                 files_written += 1
+                                all_files_written.append(path)
                                 logger.debug(f"Written diff block: {path}")
                             case num_hits:
                                 raise ValueError(f"'{search}' found {num_hits} times in file '{path}'")
@@ -103,6 +107,17 @@ async def run_write_files(node: Node[BaseData]) -> TextRaw | None:
 
     if files_written > 0:
         logger.debug(f"Written {files_written} files to workspace")
+        # Calculate edit vs new file counts
+        edit_count = sum(1 for item in parsed_files if isinstance(item, FileDiff))
+        new_count = sum(1 for item in parsed_files if isinstance(item, File))
+        
+        await notify_files_processed(
+            event_callback, 
+            all_files_written, 
+            edit_count=edit_count, 
+            new_count=new_count, 
+            operation_type="edit"
+        )
 
     if errors:
         errors.append(f"Only those files should be written: {node.data.workspace.allowed}")
@@ -120,6 +135,7 @@ class EditActor(BaseActor, LLMActor):
         workspace: Workspace,
         beam_width: int = 3,
         max_depth: int = 30,
+        event_callback = None,
     ):
         self.llm = llm
         self.workspace = workspace
@@ -127,6 +143,7 @@ class EditActor(BaseActor, LLMActor):
         self.max_depth = max_depth
         self.root = None
         self.playwright = PlaywrightRunner(vlm)
+        self.event_callback = event_callback
         logger.info(f"Initialized {self.__class__.__name__} with beam_width={beam_width}, max_depth={max_depth}")
 
     async def execute(
@@ -135,6 +152,8 @@ class EditActor(BaseActor, LLMActor):
         user_prompt: str,
         feedback: str,
     ) -> Node[BaseData]:
+        await notify_if_callback(self.event_callback, "🛠️ Applying requested changes...", "edit start")
+        
         workspace = self.workspace.clone()
         logger.info(f"Start EditActor execution with files: {files.keys()}")
         for file_path, content in files.items():
@@ -169,6 +188,8 @@ class EditActor(BaseActor, LLMActor):
                 logger.info("No candidates to evaluate, search terminated")
                 break
 
+            await notify_if_callback(self.event_callback, f"🔄 Working on changes (iteration {iteration})...", "iteration progress")
+
             logger.info(f"Iteration {iteration}: Running LLM on {len(candidates)} candidates")
             nodes = await self.run_llm(
                 candidates,
@@ -182,6 +203,7 @@ class EditActor(BaseActor, LLMActor):
                 logger.info(f"Evaluating node {i+1}/{len(nodes)}")
                 if await self.eval_node(new_node, user_prompt):
                     logger.info(f"Found solution at depth {new_node.depth}")
+                    await notify_if_callback(self.event_callback, "✅ Changes applied successfully!", "edit completion")
                     solution = new_node
                     break
         if solution is None:
@@ -273,7 +295,7 @@ class EditActor(BaseActor, LLMActor):
         return result, is_completed
 
     async def eval_node(self, node: Node[BaseData], user_prompt: str) -> bool:
-        files_errors = await run_write_files(node)
+        files_errors = await run_write_files(node, self.event_callback)
         tool_calls, is_completed = await self.run_tools(node, user_prompt)
         err_content = tool_calls + ([files_errors] if files_errors else [])
         if err_content:
@@ -292,26 +314,37 @@ class EditActor(BaseActor, LLMActor):
         return False
 
     async def run_checks(self, node: Node[BaseData], user_prompt: str) -> str | None:
-        _, tsc_compile_err = await run_tsc_compile(node)
+        await notify_if_callback(self.event_callback, "🔍 Validating changes...", "validation start")
+
+        _, tsc_compile_err = await run_tsc_compile(node, self.event_callback)
         if tsc_compile_err:
             return f"TypeScript compile errors (backend):\n{tsc_compile_err.text}\n"
 
         # client tsc compile - should be refactored for the consistency
+        await notify_if_callback(self.event_callback, "🔧 Compiling frontend TypeScript...", "frontend compile start")
+        
         tsc_result = await node.data.workspace.exec(["bun", "run", "tsc", "-p", "tsconfig.app.json", "--noEmit"], cwd="client")
         if tsc_result.exit_code != 0:
+            await notify_if_callback(self.event_callback, "❌ Frontend TypeScript compilation failed", "frontend compile failure")
             return f"TypeScript compile errors (frontend): {tsc_result.stdout}"
 
-        _, test_result = await run_tests(node)
+        _, test_result = await run_tests(node, self.event_callback)
         if test_result:
             return f"Test errors:\n{test_result.text}\n"
 
-        build_result = await run_frontend_build(node)
+        build_result = await run_frontend_build(node, self.event_callback)
         if build_result:
             return build_result
 
+        await notify_if_callback(self.event_callback, "🎭 Running UI validation...", "playwright start")
+
         playwright_result = await self.playwright.evaluate(node, user_prompt, mode="full")
         if playwright_result:
+            await notify_if_callback(self.event_callback, "❌ UI validation failed - adjusting...", "playwright failure")
             return "\n".join(playwright_result)
+        
+        await notify_if_callback(self.event_callback, "✅ All validations passed!", "validation success")
+        
         return None
 
     @property
