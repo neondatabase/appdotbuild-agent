@@ -233,13 +233,14 @@ class FSMApplication:
         ctx = self.client.host().directory("./nicegui_agent/template")
         start = self.client.container().from_("alpine/git").with_workdir("/app").with_directory("/app", ctx)
         start = start.with_exec(["git", "init"]).with_exec(["git", "config", "--global", "user.email", "agent@appbuild.com"])
+        start = start.with_exec(["touch", "README.md"]).with_exec(["git", "add", "."]).with_exec(["git", "commit", "-m", "'initial'"])
         if snapshot:
             # Sort keys for consistent sample logging, especially in tests
             sorted_snapshot_keys = sorted(snapshot.keys())
             logger.info(f"SERVER get_diff_with: Snapshot sample paths (up to 5): {sorted_snapshot_keys[:5]}")
             for file_path, content in snapshot.items():
                 start = start.with_new_file(file_path, content)
-            start = start.with_exec(["git", "add", "."]).with_exec(["git", "commit", "-m", "'initial'"])
+            start = start.with_exec(["git", "add", "."]).with_exec(["git", "commit", "-m", "'snapshot'"])
         else:
             logger.info("SERVER get_diff_with: Snapshot is empty. Diff will be against template + FSM context files.")
 
@@ -276,7 +277,7 @@ async def main(user_prompt="Minimal counter button application"):
             diff = await fsm_app.get_diff_with({})
             logger.info("Diff:")
             logger.info(diff)
-            snapshot = fsm_app.fsm.context.files
+            snapshot = {k: v for k, v in fsm_app.fsm.context.files.items()}
             logger.info("Applying edit to application.")
             await fsm_app.apply_changes("Add header that says 'Hello World'")
 
