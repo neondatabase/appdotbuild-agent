@@ -1,4 +1,4 @@
-from typing import Literal, Protocol, Self, Iterable, TypedDict, TypeAlias, Union, Required, NotRequired, Sequence
+from typing import Literal, Protocol, Self, Iterable, TypedDict, TypeAlias, Union, Required, NotRequired
 from dataclasses import dataclass
 import hashlib
 
