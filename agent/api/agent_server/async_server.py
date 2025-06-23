@@ -294,7 +294,7 @@ async def message(
             template_id = CONFIG.agent_type
 
         return StreamingResponse(
-            run_agent(request, agent_types[CONFIG.agent_type]),
+            run_agent(request, agent_types[template_id]),
             media_type="text/event-stream"
         )
 
