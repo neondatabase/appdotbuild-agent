@@ -89,6 +89,14 @@ class FSMApplication:
         return cls(client, fsm)
 
     @classmethod
+    def base_execution_plan(cls) -> str:
+        return "\n".join([
+            "1. NiceGUI application development based on user requirements.",
+            "",
+            "The result application will be based on Python and NiceGUI framework. The application can include various UI components, event handling, and state management."
+        ])
+
+    @classmethod
     async def start_fsm(cls, client: dagger.Client, user_prompt: str, settings: Dict[str, Any] | None = None) -> Self:
         """Create the state machine for the application"""
         states = await cls.make_states(client, settings)
