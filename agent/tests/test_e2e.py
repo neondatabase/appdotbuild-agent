@@ -48,6 +48,7 @@ def latest_app_name_and_commit_message(events):
     return app_name, commit_message
 
 async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=None):
+    breakpoint()
     context = empty_context() if standalone else spawn_local_server()
     with context:
         async with AgentApiClient() as client:
