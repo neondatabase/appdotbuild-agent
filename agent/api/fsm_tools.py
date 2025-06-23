@@ -244,7 +244,7 @@ class FSMToolProcessor[T: FSMInterface]:
 
         prompt = f"""You need to compact a conversation thread to fit within a token limit.
         Make sure to keep the context and important information, but remove any parts that are not essential for understanding the conversation or outdated.
-        Code snippets are not crucial for understanding the conversation, so you they can be dropped or replaced with a summary.
+        Code snippets are not crucial for understanding the conversation, so they can be dropped or replaced with a summary.
         Keep all the details about the user intent, and current status of generation.
         Final output is expected to be ~10 times smaller than the original thread.
 
@@ -345,8 +345,7 @@ class FSMToolProcessor[T: FSMInterface]:
                 fsm_status = FSMStatus.WIP  # continue processing
 
         full_thread = messages + thread
-        # if input_tokens + output_tokens > self.max_messages_tokens:
-        if (input_tokens + output_tokens) % 2:  # just a debug condition to trigger compaction often
+        if input_tokens + output_tokens > self.max_messages_tokens:
             logger.warning(f"Message size exceeds max tokens ({self.max_messages_tokens}), compacting thread")
             full_thread = await self.compact_thread(full_thread, llm)
 
