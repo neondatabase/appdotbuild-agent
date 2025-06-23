@@ -146,7 +146,7 @@ class TrpcAgentSession(AgentInterface):
                     metadata.update(req_metadata)
             else:
                 logger.info(f"Initializing new session for trace {self.trace_id}")
-            
+
             # Unconditional initialization with event callback
             self.processor_instance = FSMToolProcessor(self.client, FSMApplication, fsm_app=fsm_app, settings=fsm_settings, event_callback=emit_intermediate_message)
             agent_state: AgentState = {
@@ -163,14 +163,14 @@ class TrpcAgentSession(AgentInterface):
             top_level_agent_llm = get_llm_client(model_name="gemini-flash")
 
             while True:
-                new_messages, fsm_status = await self.processor_instance.step(
+                new_messages, fsm_status, full_thread = await self.processor_instance.step(
                     agent_state["fsm_messages"],
                     top_level_agent_llm,
                     self.model_params
                 )
 
                 # Add messages for agentic loop
-                agent_state["fsm_messages"] += new_messages
+                agent_state["fsm_messages"] = full_thread
                 messages_to_user = self.filter_messages_for_user(new_messages)
 
                 if self.processor_instance.fsm_app is not None:

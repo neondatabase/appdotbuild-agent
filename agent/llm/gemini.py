@@ -2,7 +2,7 @@ from typing import List
 
 from google import genai
 from google.genai import types as genai_types
-from google.genai.errors import APIError
+from google.genai.errors import ServerError
 import os
 from llm import common
 from log import get_logger
@@ -21,22 +21,14 @@ class RetryableError(RuntimeError):
 retry_gemini_errors = retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential_jitter(initial=1.5, max=30),
-    retry=retry_if_exception_type((RetryableError, APIError, RuntimeError)),
+    retry=retry_if_exception_type((RetryableError, ServerError, RuntimeError)),
     before_sleep=before_sleep_log(logger, logging.WARNING)
 )
-
-# retry decorator for file upload errors (5xx only)
-def is_server_error(exception):
-    """Check if the exception is a 5xx server error."""
-    if isinstance(exception, APIError):
-        if hasattr(exception, 'status_code') and 500 <= exception.status_code < 600:
-            return True
-    return False
 
 retry_file_upload = retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential_jitter(initial=0.5, max=1.5),
-    retry=is_server_error,
+    retry=retry_if_exception_type(ServerError),
     before_sleep=before_sleep_log(logger, logging.WARNING)
 )
 
@@ -50,7 +42,6 @@ class GeminiLLM(common.AsyncLLM):
 
         _client = genai.Client(api_key=api_key or os.environ["GEMINI_API_KEY"], **(client_params or {}))
         self._async_client = _client.aio
-
         self.model_name = model_name
 
     async def completion(
