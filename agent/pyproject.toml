@@ -55,6 +55,12 @@ generate = "Generates code based on a prompt. Example: uv run generate --prompt=
 interactive = "Starts an interactive CLI session with the agent. Examples: uv run interactive (local server), uv run interactive --host=prod-agent-service-alb-999031216.us-west-2.elb.amazonaws.com --port=80 (remote server). Make sure to use BUILDER_TOKEN env fvar for access grant."
 help = "Displays this help message. Example: uv run help"
 
+[tool.ruff]
+exclude = ["trpc_agent/template", "nicegui_agent/template"]
+
+[tool.pytest.ini_options]
+addopts = ["--ignore=nicegui_agent/template"]
+
 [dependency-groups]
 dev = [
     "coloredlogs>=15.0.1",
