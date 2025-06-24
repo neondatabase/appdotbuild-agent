@@ -1,13 +1,10 @@
 from typing import Awaitable, Callable, Self, Protocol, runtime_checkable, Dict, Any, Tuple
-import anyio
 import dagger
-from fire import Fire
 
 import enum
 from core.application import ApplicationBase
-from llm.utils import AsyncLLM
-from llm.common import InternalMessage, ToolUse, ToolResult as CommonToolResult
-from llm.common import ToolUseResult, TextRaw, Tool
+from llm.utils import AsyncLLM, extract_tag
+from llm.common import InternalMessage, ToolUse, ToolResult as CommonToolResult, ToolUseResult, TextRaw, Tool
 from log import get_logger
 import ujson as json
 
@@ -24,10 +21,9 @@ class FSMInterface(ApplicationBase, Protocol):
     @classmethod
     def base_execution_plan(cls) -> str: ...
     @property
-    def available_actions(self) -> dict[str, str]: ...# FSMTools Specific
+    def available_actions(self) -> dict[str, str]: ...  # FSMTools Specific
     @classmethod
-    def template_path(cls) -> str: ...# Path to template directory
-
+    def template_path(cls) -> str: ...  # Path to template directory
 
 
 class FSMStatus(enum.Enum):
@@ -50,7 +46,15 @@ class FSMToolProcessor[T: FSMInterface]:
     fsm_app: T | None
     settings: Dict[str, Any]
 
-    def __init__(self, client: dagger.Client, fsm_class: type[T], fsm_app: T | None = None, settings: Dict[str, Any] | None = None, event_callback: Callable[[str], Awaitable[None]] | None = None):
+    def __init__(
+        self,
+        client: dagger.Client,
+        fsm_class: type[T],
+        fsm_app: T | None = None,
+        settings: Dict[str, Any] | None = None,
+        event_callback: Callable[[str], Awaitable[None]] | None = None,
+        max_messages_tokens: int = 512 * 1024,
+    ):
         """
         Initialize the FSM Tool Processor
 
@@ -65,6 +69,7 @@ class FSMToolProcessor[T: FSMInterface]:
         self.settings = settings or {}
         self.client = client
         self.event_callback = event_callback
+        self.max_messages_tokens = max_messages_tokens
 
         # Define tool definitions for the AI agent using the common Tool structure
         self.tool_definitions: list[Tool] = [
@@ -76,20 +81,16 @@ class FSMToolProcessor[T: FSMInterface]:
                     "properties": {
                         "app_description": {
                             "type": "string",
-                            "description": "Description for the application to generate"
+                            "description": "Description for the application to generate",
                         }
                     },
-                    "required": ["app_description"]
-                }
+                    "required": ["app_description"],
+                },
             },
             {
                 "name": "confirm_state",
                 "description": "Accept the current FSM state output and advance to the next state",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
+                "input_schema": {"type": "object", "properties": {}, "required": []},
             },
             {
                 "name": "change",
@@ -99,21 +100,17 @@ class FSMToolProcessor[T: FSMInterface]:
                     "properties": {
                         "feedback": {
                             "type": "string",
-                            "description": "Complete and improved instructions to produce the desired output"
+                            "description": "Complete and improved instructions to produce the desired output",
                         },
                     },
-                    "required": ["feedback"]
-                }
+                    "required": ["feedback"],
+                },
             },
             {
                 "name": "complete_fsm",
                 "description": "Finalize and return all generated artifacts from the FSM",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            }
+                "input_schema": {"type": "object", "properties": {}, "required": []},
+            },
         ]
 
         # Map tool names to their implementation methods
@@ -121,7 +118,7 @@ class FSMToolProcessor[T: FSMInterface]:
             "start_fsm": self.tool_start_fsm,
             "confirm_state": self.tool_confirm_state,
             "change": self.tool_change,
-            "complete_fsm": self.tool_complete_fsm
+            "complete_fsm": self.tool_complete_fsm,
         }
 
     async def tool_start_fsm(self, app_description: str) -> CommonToolResult:
@@ -132,12 +129,17 @@ class FSMToolProcessor[T: FSMInterface]:
             # Check if there's an active session first
             if self.fsm_app:
                 logger.warning("There's an active FSM session already. Completing it before starting a new one.")
-                return CommonToolResult(content="An active FSM session already exists. Please explain why do you even need to create a new one instead of using existing one. Should you use `change` tool instead?", is_error=True)
+                return CommonToolResult(
+                    content="An active FSM session already exists. Please explain why do you even need to create a new one instead of using existing one. Should you use `change` tool instead?",
+                    is_error=True,
+                )
 
-            self.fsm_app = await self.fsm_class.start_fsm(self.client, user_prompt=app_description, settings=self.settings)
+            self.fsm_app = await self.fsm_class.start_fsm(
+                self.client, user_prompt=app_description, settings=self.settings
+            )
 
             # Check for errors
-            if (error_msg := self.fsm_app.maybe_error()):
+            if error_msg := self.fsm_app.maybe_error():
                 return CommonToolResult(content=f"FSM initialization failed: {error_msg}", is_error=True)
 
             # Prepare the result
@@ -166,7 +168,7 @@ class FSMToolProcessor[T: FSMInterface]:
             current_state = self.fsm_app.current_state
 
             # Check for errors
-            if (error_msg := self.fsm_app.maybe_error()):
+            if error_msg := self.fsm_app.maybe_error():
                 return CommonToolResult(content=f"FSM confirmation failed: {error_msg}", is_error=True)
 
             # Prepare result
@@ -195,7 +197,7 @@ class FSMToolProcessor[T: FSMInterface]:
             new_state = self.fsm_app.current_state
 
             # Check for errors
-            if (error_msg := self.fsm_app.maybe_error()):
+            if error_msg := self.fsm_app.maybe_error():
                 return CommonToolResult(content=f"FSM while processing feedback: {error_msg}", is_error=True)
 
             # Prepare result
@@ -218,7 +220,7 @@ class FSMToolProcessor[T: FSMInterface]:
             await self.fsm_app.complete_fsm()
 
             # Check for errors
-            if (error_msg := self.fsm_app.maybe_error()):
+            if error_msg := self.fsm_app.maybe_error():
                 return CommonToolResult(content=f"FSM failed with error: {error_msg}", is_error=True)
 
             # Prepare result based on state
@@ -230,7 +232,72 @@ class FSMToolProcessor[T: FSMInterface]:
             logger.exception(f"Error completing FSM: {str(e)}")
             return CommonToolResult(content=f"Failed to complete FSM: {str(e)}", is_error=True)
 
-    async def step(self, messages: list[InternalMessage], llm: AsyncLLM, model_params: dict) -> Tuple[list[InternalMessage], FSMStatus]:
+    async def compact_thread(self, messages: list[InternalMessage], llm: AsyncLLM) -> list[InternalMessage]:
+        last_message = messages[-1]
+        match last_message.role:
+            case "assistant":
+                thread = messages  # we can keep the whole thread for compacting
+                residual_messages = []
+            case "user":
+                thread = messages[:-1]  # remove the last user message
+                residual_messages = [last_message]  # keep the last user message for context
+
+        formatted_thread = json.dumps([msg.to_dict() for msg in thread], indent=2, ensure_ascii=False)
+
+        prompt = f"""You need to compact a conversation thread to fit within a token limit.
+        Make sure to keep the context and important information, but remove any parts that are not essential for understanding the conversation or outdated.
+        Code snippets are not crucial for understanding the conversation, so they can be dropped or replaced with a summary.
+        Keep all the details about the user intent, and current status of generation.
+        Final output is expected to be ~10 times smaller than the original thread.
+
+        The final output should be structured as two parts: user message and assistant message. Wrap each part in <user> and <assistant> tags respectively.
+
+        Example:
+        <user>
+        I want to build a web application that allows users to share photos. It should have user authentication, photo upload, and a feed where users can see photos from others.
+        </user>
+
+        <assistant>
+        After some work, the application is ready and verified to be working correctly. It includes user authentication, photo upload functionality, and a feed where users can see photos from others.
+        I used tools to verify the application and ensure it meets the requirements.
+        Feel free to ask for any additional features or improvements!
+        </assistant>
+
+        The conversation thread is as follows:
+        {formatted_thread}
+        """
+
+        user_message = None
+        assistant_message = None
+
+        result = await llm.completion(
+            messages=[InternalMessage.from_dict({"role": "user", "content": [{"type": "text", "text": prompt}]})],
+            max_tokens=64 * 1024,
+        )
+        (content,) = result.content
+
+        match content:
+            case TextRaw(text):
+                user_message = extract_tag(text, "user")
+                assistant_message = extract_tag(text, "assistant")
+            case _:
+                raise ValueError(f"Unexpected content type in LLM response: {type(content)}")
+
+        if not user_message or not assistant_message:
+            raise ValueError("Compacted thread does not contain both user and assistant messages.")
+
+        thread = [
+            InternalMessage.from_dict({"role": "user", "content": [{"type": "text", "text": user_message}]}),
+            InternalMessage.from_dict({"role": "assistant", "content": [{"type": "text", "text": assistant_message}]}),
+        ]
+        logger.info(f"New compacted user message: {user_message}")
+        logger.info(f"New compacted assistant message: {assistant_message}")
+        thread += residual_messages  # add back the last user message if it was removed
+        return thread
+
+    async def step(
+        self, messages: list[InternalMessage], llm: AsyncLLM, model_params: dict
+    ) -> Tuple[list[InternalMessage], FSMStatus, list[InternalMessage]]:
         model_args = {
             "system_prompt": self.system_prompt,
             "tools": self.tool_definitions,
@@ -238,6 +305,9 @@ class FSMToolProcessor[T: FSMInterface]:
         }
 
         response = await llm.completion(messages, **model_args)
+        input_tokens = response.input_tokens
+        output_tokens = response.output_tokens
+
         tool_results = []
         for block in response.content:
             match block:
@@ -246,35 +316,42 @@ class FSMToolProcessor[T: FSMInterface]:
                 case ToolUse(name):
                     match self.tool_mapping.get(name):
                         case None:
-                            tool_results.append(ToolUseResult.from_tool_use(
-                                tool_use=block,
-                                content=f"Unknow tool name: {name}",
-                                is_error=True,
-                            ))
+                            tool_results.append(
+                                ToolUseResult.from_tool_use(
+                                    tool_use=block,
+                                    content=f"Unknow tool name: {name}",
+                                    is_error=True,
+                                )
+                            )
                         case tool_method if isinstance(block.input, dict):
                             result = await tool_method(**block.input)
                             logger.info(f"Tool call: {name} with input: {block.input}")
                             logger.debug(f"Tool result: {result.content}")
-                            tool_results.append(ToolUseResult.from_tool_use(
-                                tool_use=block,
-                                content=result.content
-                            ))
+                            tool_results.append(ToolUseResult.from_tool_use(tool_use=block, content=result.content))
                         case _:
                             raise RuntimeError(f"Invalid tool call: {block}")
 
         thread = [InternalMessage(role="assistant", content=response.content)]
         if tool_results:
-            thread += [InternalMessage(role="user", content=[*tool_results, TextRaw("Analyze tool results.")])] # TODO: change this for assistant message since it's not a user message
+            thread += [
+                InternalMessage(role="user", content=[*tool_results, TextRaw("Analyze tool results.")])
+            ]  # TODO: change this for assistant message since it's not a user message
         match (tool_results, self.fsm_app):
             case (_, app) if app and app.maybe_error():
                 fsm_status = FSMStatus.FAILED
             case (_, app) if app and app.is_completed:
                 fsm_status = FSMStatus.COMPLETED
             case ([], app):
-                fsm_status = FSMStatus.REFINEMENT_REQUEST # no tools used, always exit
+                fsm_status = FSMStatus.REFINEMENT_REQUEST  # no tools used, always exit
             case _:
-                fsm_status = FSMStatus.WIP # continue processing
-        return thread, fsm_status
+                fsm_status = FSMStatus.WIP  # continue processing
+
+        full_thread = messages + thread
+        if input_tokens + output_tokens > self.max_messages_tokens:
+            logger.info(f"Message size exceeds max tokens ({self.max_messages_tokens}), compacting thread")
+            full_thread = await self.compact_thread(full_thread, llm)
+
+        return thread, fsm_status, full_thread
 
     def fsm_as_result(self) -> dict:
         if self.fsm_app is None:
@@ -325,49 +402,3 @@ If the user's problem requires a specific integration that is not available, mak
 
 Make sure to appreciate the best software engineering practices, no matter what the user asks. Even stupid requests should be handled professionally.
 Do not consider the work complete until all components have been generated and the complete_fsm tool has been called.""".strip()
-
-
-async def main(initial_prompt: str = "A simple greeting app that says hello in five languages"):
-    """
-    Main entry point for the FSM tools module.
-    Initializes an FSM tool processor and interacts with top-level agent.
-    """
-    import os
-    import dagger
-    from trpc_agent.application import FSMApplication
-    from llm.utils import get_llm_client
-    logger.info("Initializing FSM tools...")
-    client = get_llm_client()
-    model_params = {"max_tokens": 8192 }
-
-
-    async with dagger.Connection(dagger.Config(log_output=open(os.devnull, "w"))) as dagger_client:
-        # Create processor without FSM instance - it will be created in start_fsm tool
-        processor = FSMToolProcessor(dagger_client, FSMApplication)
-        logger.info("FSM tools initialized successfully")
-
-        # Create the initial prompt for the AI agent
-        logger.info("Sending request to LLM...")
-        current_messages = [
-            InternalMessage(role="user", content=[TextRaw(initial_prompt)]),
-        ]
-        # Main interaction loop
-        while True:
-            new_messages = await processor.step(current_messages, client, model_params)
-
-            logger.debug(f"New messages: {new_messages}")
-            if new_messages:
-                current_messages += new_messages
-
-            logger.info(f"Iteration completed: {len(current_messages) - 1}")
-
-            break # Early out until feedback is wired to component name
-
-    logger.info("FSM interaction completed successfully")
-    return new_messages
-
-def run_main(initial_prompt: str = "A simple greeting app that says hello in five languages and stores history of greetings"):
-    return anyio.run(main, initial_prompt)
-
-if __name__ == "__main__":
-    Fire(run_main)

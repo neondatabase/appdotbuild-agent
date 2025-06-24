@@ -1,5 +1,6 @@
 import itertools
 import os
+import re
 from typing import Literal, Dict, Sequence
 from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
 from llm.common import AsyncLLM, Message, TextRaw, ContentBlock
@@ -26,6 +27,14 @@ def merge_text(content: list[ContentBlock]) -> list[ContentBlock]:
             merged.extend(g)
     return merged
 
+def extract_tag(source: str | None, tag: str):
+    if source is None:
+        return None
+    pattern = re.compile(rf"<{tag}>(.*?)</{tag}>", re.DOTALL)
+    match = pattern.search(source)
+    if match:
+        return match.group(1).strip()
+    return None
 
 async def loop_completion(m_client: AsyncLLM, messages: list[Message], system_prompt: str | None = None, **kwargs) -> Message:
     content: list[ContentBlock] = []

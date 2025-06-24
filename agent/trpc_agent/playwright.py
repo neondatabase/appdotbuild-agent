@@ -1,5 +1,5 @@
-import os
 import re
+import os
 import logging
 import contextlib
 from collections import defaultdict
@@ -12,7 +12,7 @@ from core.workspace import ExecResult
 from core.actors import BaseData
 from core.postgres_utils import create_postgres_service, pg_health_check_cmd
 from llm.common import AsyncLLM, Message, TextRaw, AttachedFiles
-from llm.utils import merge_text
+from llm.utils import merge_text, extract_tag
 
 import dagger
 
@@ -36,16 +36,6 @@ async def drizzle_push(client: dagger.Client, ctr: dagger.Container, postgresdb:
     )
     result = await ExecResult.from_ctr(push_ctr)
     return result
-
-
-def extract_tag(source: str | None, tag: str):
-    if source is None:
-        return None
-    pattern = re.compile(rf"<{tag}>(.*?)</{tag}>", re.DOTALL)
-    match = pattern.search(source)
-    if match:
-        return match.group(1).strip()
-    return None
 
 
 @contextlib.contextmanager
