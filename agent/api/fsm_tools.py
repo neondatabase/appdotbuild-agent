@@ -288,8 +288,8 @@ class FSMToolProcessor[T: FSMInterface]:
             InternalMessage.from_dict({"role": "user", "content": [{"type": "text", "text": user_message}]}),
             InternalMessage.from_dict({"role": "assistant", "content": [{"type": "text", "text": assistant_message}]}),
         ]
-        logger.warning(f"New compacted user message: {user_message}")
-        logger.warning(f"New compacted assistant message: {assistant_message}")
+        logger.info(f"New compacted user message: {user_message}")
+        logger.info(f"New compacted assistant message: {assistant_message}")
         thread += residual_messages  # add back the last user message if it was removed
         return thread
 
@@ -346,7 +346,7 @@ class FSMToolProcessor[T: FSMInterface]:
 
         full_thread = messages + thread
         if input_tokens + output_tokens > self.max_messages_tokens:
-            logger.warning(f"Message size exceeds max tokens ({self.max_messages_tokens}), compacting thread")
+            logger.info(f"Message size exceeds max tokens ({self.max_messages_tokens}), compacting thread")
             full_thread = await self.compact_thread(full_thread, llm)
 
         return thread, fsm_status, full_thread
