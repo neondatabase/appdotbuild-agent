@@ -17,7 +17,7 @@ import dagger
 logger = logging.getLogger(__name__)
 
 logging.basicConfig(level=logging.INFO)
-for package in ['urllib3', 'httpx', 'google_genai.models']:
+for package in ["urllib3", "httpx", "google_genai.models"]:
     logging.getLogger(package).setLevel(logging.WARNING)
 
 
@@ -28,7 +28,9 @@ class FSMState(str, enum.Enum):
     FAILURE = "failure"
 
 
-@dataclass(frozen=True) # Use dataclass for easier serialization, frozen=True makes it hashable by default if needed
+@dataclass(
+    frozen=True
+)  # Use dataclass for easier serialization, frozen=True makes it hashable by default if needed
 class FSMEvent:
     type_: Literal["CONFIRM", "FEEDBACK"]
     feedback: Optional[str] = None
@@ -52,6 +54,7 @@ class FSMEvent:
 @dataclass
 class ApplicationContext(Context):
     """Context for the fullstack application state machine"""
+
     user_prompt: str
     feedback_data: Optional[str] = None
     files: Dict[str, str] = field(default_factory=dict)
@@ -64,7 +67,7 @@ class ApplicationContext(Context):
             "user_prompt": self.user_prompt,
             "feedback_data": self.feedback_data,
             "files": self.files,
-            "error": self.error
+            "error": self.error,
         }
         return data
 
@@ -77,43 +80,61 @@ class ApplicationContext(Context):
 
 
 class FSMApplication:
-
-    def __init__(self, client: dagger.Client, fsm: StateMachine[ApplicationContext, FSMEvent]):
+    def __init__(
+        self, client: dagger.Client, fsm: StateMachine[ApplicationContext, FSMEvent]
+    ):
         self.fsm = fsm
         self.client = client
 
     @classmethod
-    async def load(cls, client: dagger.Client, data: MachineCheckpoint) -> Self:
-        root = await cls.make_states(client)
-        fsm = await StateMachine[ApplicationContext, FSMEvent].load(root, data, ApplicationContext)
+    async def load(
+        cls,
+        client: dagger.Client,
+        data: MachineCheckpoint,
+        settings: Dict[str, Any] | None = None,
+    ) -> Self:
+        root = await cls.make_states(client, settings)
+        fsm = await StateMachine[ApplicationContext, FSMEvent].load(
+            root, data, ApplicationContext
+        )
         return cls(client, fsm)
 
     @classmethod
     def base_execution_plan(cls) -> str:
-        return "\n".join([
-            "1. NiceGUI application development based on user requirements.",
-            "",
-            "The result application will be based on Python and NiceGUI framework. The application can include various UI components, event handling, and state management."
-        ])
-    
+        return "\n".join(
+            [
+                "1. NiceGUI application development based on user requirements.",
+                "",
+                "The result application will be based on Python and NiceGUI framework. The application can include various UI components, event handling, and state management.",
+            ]
+        )
+
     @classmethod
     def template_path(cls) -> str:
         return "./nicegui_agent/template"
 
     @classmethod
-    async def start_fsm(cls, client: dagger.Client, user_prompt: str, settings: Dict[str, Any] | None = None) -> Self:
+    async def start_fsm(
+        cls,
+        client: dagger.Client,
+        user_prompt: str,
+        settings: Dict[str, Any] | None = None,
+    ) -> Self:
         """Create the state machine for the application"""
         states = await cls.make_states(client, settings)
         context = ApplicationContext(user_prompt=user_prompt)
         fsm = StateMachine[ApplicationContext, FSMEvent](states, context)
-        await fsm.send(FSMEvent("CONFIRM")) # confirm running first stage immediately
+        await fsm.send(FSMEvent("CONFIRM"))  # confirm running first stage immediately
         return cls(client, fsm)
 
     @classmethod
-    async def make_states(cls, client: dagger.Client, settings: Dict[str, Any] | None = None) -> State[ApplicationContext, FSMEvent]:
-
+    async def make_states(
+        cls, client: dagger.Client, settings: Dict[str, Any] | None = None
+    ) -> State[ApplicationContext, FSMEvent]:
         # Define actions to update context
-        async def update_node_files(ctx: ApplicationContext, result: Node[BaseData]) -> None:
+        async def update_node_files(
+            ctx: ApplicationContext, result: Node[BaseData]
+        ) -> None:
             logger.info("Updating context files from result")
             files = {}
             for node in result.get_trajectory():
@@ -133,7 +154,11 @@ class FSMApplication:
             context=client.host().directory("./nicegui_agent/template"),
             setup_cmd=[
                 ["apk", "add", "--update", "--no-cache", "curl", "python3"],
-                ["sh", "-c", "curl -LsSf https://astral.sh/uv/install.sh | XDG_BIN_HOME=/usr/local/bin sh"],
+                [
+                    "sh",
+                    "-c",
+                    "curl -LsSf https://astral.sh/uv/install.sh | XDG_BIN_HOME=/usr/local/bin sh",
+                ],
                 ["uv", "sync"],
             ],
         )
@@ -154,7 +179,10 @@ class FSMApplication:
                 FSMState.APPLICATION: State(
                     invoke={
                         "src": nicegui_actor,
-                        "input_fn": lambda ctx: (ctx.files, ctx.feedback_data or ctx.user_prompt,),
+                        "input_fn": lambda ctx: (
+                            ctx.files,
+                            ctx.feedback_data or ctx.user_prompt,
+                        ),
                         "on_done": {
                             "target": FSMState.REVIEW_APPLICATION,
                             "actions": [update_node_files],
@@ -186,12 +214,15 @@ class FSMApplication:
         await self.fsm.send(FSMEvent("FEEDBACK"))
 
     async def complete_fsm(self):
-        while (self.current_state not in (FSMState.COMPLETE, FSMState.FAILURE)):
+        while self.current_state not in (FSMState.COMPLETE, FSMState.FAILURE):
             await self.fsm.send(FSMEvent("CONFIRM"))
 
     @property
     def is_completed(self) -> bool:
-        return self.current_state == FSMState.COMPLETE or self.current_state == FSMState.FAILURE
+        return (
+            self.current_state == FSMState.COMPLETE
+            or self.current_state == FSMState.FAILURE
+        )
 
     def maybe_error(self) -> str | None:
         return self.fsm.context.error
@@ -204,7 +235,10 @@ class FSMApplication:
 
     @property
     def truncated_files(self) -> dict[str, str]:
-        return {k: "large file truncated" if len(v) > 256 else v for k, v in self.fsm.context.files.items()}
+        return {
+            k: "large file truncated" if len(v) > 256 else v
+            for k, v in self.fsm.context.files.items()
+        }
 
     @property
     def state_output(self) -> dict:
@@ -216,7 +250,9 @@ class FSMApplication:
             case FSMState.FAILURE:
                 return {"error": self.fsm.context.error or "Unknown error"}
             case _:
-                logger.debug(f"State {self.current_state} is a processing state, returning processing status")
+                logger.debug(
+                    f"State {self.current_state} is a processing state, returning processing status"
+                )
                 return {"status": "processing"}
 
     @property
@@ -225,7 +261,9 @@ class FSMApplication:
         match self.current_state:
             case FSMState.REVIEW_APPLICATION:
                 actions = {"confirm": "Accept current output and continue"}
-                logger.debug(f"Review state detected: {self.current_state}, offering confirm action")
+                logger.debug(
+                    f"Review state detected: {self.current_state}, offering confirm action"
+                )
             case FSMState.COMPLETE:
                 actions = {
                     "complete": "Finalize and get all artifacts",
@@ -237,47 +275,85 @@ class FSMApplication:
                 logger.debug("FSM is in FAILURE state, offering get_error action")
             case _:
                 actions = {"wait": "Wait for processing to complete"}
-                logger.debug(f"FSM is in processing state: {self.current_state}, offering wait action")
+                logger.debug(
+                    f"FSM is in processing state: {self.current_state}, offering wait action"
+                )
         return actions
 
     async def get_diff_with(self, snapshot: dict[str, str]) -> str:
-        logger.info(f"SERVER get_diff_with: Received snapshot with {len(snapshot)} files.")
-        ctx = self.client.host().directory("./nicegui_agent/template")
-        start = self.client.container().from_("alpine/git").with_workdir("/app").with_directory("/app", ctx)
-        start = start.with_exec(["git", "init"]).with_exec(["git", "config", "--global", "user.email", "agent@appbuild.com"])
-        start = start.with_exec(["touch", "README.md"]).with_exec(["git", "add", "."]).with_exec(["git", "commit", "-m", "'initial'"])
+        logger.info(
+            f"SERVER get_diff_with: Received snapshot with {len(snapshot)} files."
+        )
+
+        # Start with empty directory and git init
+        start = self.client.container().from_("alpine/git").with_workdir("/app")
+        start = start.with_exec(["git", "init"]).with_exec(
+            ["git", "config", "--global", "user.email", "agent@appbuild.com"]
+        )
         if snapshot:
             # Sort keys for consistent sample logging, especially in tests
             sorted_snapshot_keys = sorted(snapshot.keys())
-            logger.info(f"SERVER get_diff_with: Snapshot sample paths (up to 5): {sorted_snapshot_keys[:5]}")
+            logger.info(
+                f"SERVER get_diff_with: Snapshot sample paths (up to 5): {sorted_snapshot_keys[:5]}"
+            )
             for file_path, content in snapshot.items():
                 start = start.with_new_file(file_path, content)
-            start = start.with_exec(["git", "add", "."]).with_exec(["git", "commit", "-m", "'snapshot'"])
+            start = start.with_exec(["git", "add", "."]).with_exec(
+                ["git", "commit", "-m", "'snapshot'"]
+            )
         else:
-            logger.info("SERVER get_diff_with: Snapshot is empty. Diff will be against template + FSM context files.")
+            logger.info(
+                "SERVER get_diff_with: Snapshot is empty. Diff will be against template + FSM context files."
+            )
+            # If no snapshot, create an empty initial commit
+            start = (
+                start.with_exec(["touch", "README.md"])
+                .with_exec(["git", "add", "."])
+                .with_exec(["git", "commit", "-m", "'initial'"])
+            )
 
+        # Add template files (they will appear in diff if not in snapshot)
+        template_dir = self.client.host().directory("./nicegui_agent/template")
+        start = start.with_directory(".", template_dir)
+        logger.info("SERVER get_diff_with: Added template directory to workspace")
+
+        # Add FSM context files on top
         for file_path, content in self.fsm.context.files.items():
             start = start.with_new_file(file_path, content)
 
-        logger.info("SERVER get_diff_with: Calling workspace.diff() to generate final diff.")
+        logger.info(
+            "SERVER get_diff_with: Calling workspace.diff() to generate final diff."
+        )
         diff = ""
         try:
-            diff = await start.with_exec(["git", "add", "."]).with_exec(["git", "diff", "HEAD"]).stdout()
-            logger.info(f"SERVER get_diff_with: workspace.diff() Succeeded. Diff length: {len(diff)}")
+            diff = (
+                await start.with_exec(["git", "add", "."])
+                .with_exec(["git", "diff", "HEAD"])
+                .stdout()
+            )
+            logger.info(
+                f"SERVER get_diff_with: workspace.diff() Succeeded. Diff length: {len(diff)}"
+            )
             if not diff:
-                logger.warning("SERVER get_diff_with: Diff output is EMPTY. This might be expected if states match or an issue.")
+                logger.warning(
+                    "SERVER get_diff_with: Diff output is EMPTY. This might be expected if states match or an issue."
+                )
         except Exception as e:
-            logger.exception("SERVER get_diff_with: Error during workspace.diff() execution.")
+            logger.exception(
+                "SERVER get_diff_with: Error during workspace.diff() execution."
+            )
             diff = f"# ERROR GENERATING DIFF: {e}"
 
         return diff
 
 
 async def main(user_prompt="Minimal counter button application"):
-    async with dagger.Connection(dagger.Config(log_output=open(os.devnull, "w"))) as client:
+    async with dagger.Connection(
+        dagger.Config(log_output=open(os.devnull, "w"))
+    ) as client:
         fsm_app: FSMApplication = await FSMApplication.start_fsm(client, user_prompt)
 
-        while (fsm_app.current_state not in (FSMState.COMPLETE, FSMState.FAILURE)):
+        while fsm_app.current_state not in (FSMState.COMPLETE, FSMState.FAILURE):
             await fsm_app.fsm.send(FSMEvent("CONFIRM"))
 
         context = fsm_app.fsm.context
@@ -294,7 +370,9 @@ async def main(user_prompt="Minimal counter button application"):
             await fsm_app.apply_changes("Add header that says 'Hello World'")
 
             if fsm_app.maybe_error():
-                logger.error(f"Failed to apply edit: {context.error or 'Unknown error'}")
+                logger.error(
+                    f"Failed to apply edit: {context.error or 'Unknown error'}"
+                )
             else:
                 logger.info("Edit applied successfully")
                 diff = await fsm_app.get_diff_with(snapshot)

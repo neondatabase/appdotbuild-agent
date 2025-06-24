@@ -43,23 +43,24 @@ def project_dir_context():
             shutil.rmtree(project_dir)
 
 
-
 current_server_process = None
 
 HISTORY_FILE = os.path.expanduser("~/.agent_chat_history")
 HISTORY_SIZE = 1000  # Maximum number of history entries to save
 
+
 def setup_readline():
     """Configure readline for command history"""
     try:
         if not os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, 'w') as _:
+            with open(HISTORY_FILE, "w") as _:
                 pass
 
         readline.read_history_file(HISTORY_FILE)
         readline.set_history_length(HISTORY_SIZE)
 
         import atexit
+
         atexit.register(readline.write_history_file, HISTORY_FILE)
 
         return True
@@ -67,27 +68,32 @@ def setup_readline():
         print(f"Warning: Could not configure readline history: {e}")
         return False
 
+
 def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, str]:
     try:
-        logger.info(f"Preparing to apply patch to directory: '{target_dir}', template '{template_path}'")
+        logger.info(
+            f"Preparing to apply patch to directory: '{target_dir}', template '{template_path}'"
+        )
         target_dir = os.path.abspath(target_dir)
         os.makedirs(target_dir, exist_ok=True)
 
         # Parse the diff to extract file information first
-        with tempfile.NamedTemporaryFile(suffix='.patch', delete=False) as tmp:
-            tmp.write(diff.encode('utf-8'))
+        with tempfile.NamedTemporaryFile(suffix=".patch", delete=False) as tmp:
+            tmp.write(diff.encode("utf-8"))
             tmp_path = tmp.name
             print(f"Wrote patch to temporary file: {tmp_path}")
 
         # First detect all target paths from the patch
         file_paths = []
-        with open(tmp_path, 'rb') as patch_file:
+        with open(tmp_path, "rb") as patch_file:
             patch_set = PatchSet(patch_file)
             for item in patch_set.items:
                 # Decode the target paths and extract them
                 if item.target:
-                    target_path = item.target.decode('utf-8')
-                    if target_path.startswith('b/'):  # Remove prefix from git style patches
+                    target_path = item.target.decode("utf-8")
+                    if target_path.startswith(
+                        "b/"
+                    ):  # Remove prefix from git style patches
                         target_path = target_path[2:]
                     file_paths.append(target_path)
 
@@ -102,7 +108,6 @@ def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, s
                 template_root = os.path.abspath(
                     os.path.join(os.path.dirname(__file__), "../..", template_path)
                 )
-
                 if os.path.isdir(template_root):
                     print(f"Creating symlinks from template ({template_root})")
 
@@ -116,7 +121,11 @@ def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, s
                         """
                         for root, dirs, files in os.walk(base_dir):
                             # Remove excluded directories and hidden directories from dirs to prevent recursion into them
-                            dirs[:] = [d for d in dirs if d not in excluded_dirs and not d.startswith('.')]
+                            dirs[:] = [
+                                d
+                                for d in dirs
+                                if d not in excluded_dirs and not d.startswith(".")
+                            ]
 
                             # Get relative path from template root
                             rel_path = os.path.relpath(root, base_dir)
@@ -125,7 +134,7 @@ def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, s
 
                             for file in files:
                                 # Skip hidden files
-                                if file.startswith('.') or file.endswith('.md'):
+                                if file.startswith(".") or file.endswith(".md"):
                                     continue
 
                                 src_file = os.path.join(root, file)
@@ -141,7 +150,9 @@ def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, s
                                         shutil.copy2(src_file, dest_file)
                                         print(f"  ↳ copied file {rel_file_path}")
                                     except Exception as cp_err:
-                                        print(f"Warning: could not copy file {rel_file_path}: {cp_err}")
+                                        print(
+                                            f"Warning: could not copy file {rel_file_path}: {cp_err}"
+                                        )
 
                     # Copy all template files recursively (except excluded dirs)
                     copy_template_files(template_root, target_dir, dirs_only=True)
@@ -163,7 +174,9 @@ def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, s
                                     os.symlink(template_file, dest_file)
                                     print(f"  ↳ symlinked {rel_path}")
                                 except Exception as link_err:
-                                    print(f"Warning: could not symlink {rel_path}: {link_err}")
+                                    print(
+                                        f"Warning: could not symlink {rel_path}: {link_err}"
+                                    )
 
                     # After creating symlinks, we immediately convert them into
                     # *real* files (copy-once).  This still saves time because
@@ -180,7 +193,9 @@ def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, s
                                 os.unlink(dest_file)
                                 shutil.copy2(target_path, dest_file)
                             except Exception as cp_err:
-                                print(f"Warning: could not materialise copy for {rel_path}: {cp_err}")
+                                print(
+                                    f"Warning: could not materialise copy for {rel_path}: {cp_err}"
+                                )
         except Exception as link_copy_err:
             # Non-fatal – the patch may still succeed without template files
             print(f"Warning: could not prepare template symlinks: {link_copy_err}")
@@ -192,7 +207,7 @@ def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, s
 
             # Pre-create all the directories needed for files
             for filepath in file_paths:
-                if '/' in filepath:
+                if "/" in filepath:
                     directory = os.path.dirname(filepath)
                     if directory:
                         os.makedirs(directory, exist_ok=True)
@@ -200,7 +215,7 @@ def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, s
 
             # Apply the patch
             print("Applying patch using python-patch-ng")
-            with open(tmp_path, 'rb') as patch_file:
+            with open(tmp_path, "rb") as patch_file:
                 patch_set = PatchSet(patch_file)
                 # We use strip=0 because patch_ng already handles the removal of
                 # leading "a/" and "b/" prefixes from the diff paths. Using strip=1
@@ -211,7 +226,7 @@ def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, s
 
             # Check if any files ended up in the wrong place and move them if needed
             for filepath in file_paths:
-                if '/' in filepath:
+                if "/" in filepath:
                     basename = os.path.basename(filepath)
                     dirname = os.path.dirname(filepath)
                     # If the file exists at the root but should be in a subdirectory
@@ -221,9 +236,15 @@ def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, s
                         os.rename(basename, filepath)
 
             if success:
-                return True, f"Successfully applied the patch to the directory '{target_dir}'"
+                return (
+                    True,
+                    f"Successfully applied the patch to the directory '{target_dir}'",
+                )
             else:
-                return False, "Failed to apply the patch (some hunks may have been rejected)"
+                return (
+                    False,
+                    "Failed to apply the patch (some hunks may have been rejected)",
+                )
         finally:
             os.chdir(original_dir)
             os.unlink(tmp_path)
@@ -242,7 +263,9 @@ def latest_unified_diff(events: List[AgentSseEvent]) -> Optional[str]:
             if diff_val is not None:
                 # Handle special marker for valid empty diffs
                 if diff_val.startswith("# Note: This is a valid empty diff"):
-                    return "(No changes from template - files were created from scratch)"
+                    return (
+                        "(No changes from template - files were created from scratch)"
+                    )
                 return diff_val
         except AttributeError:
             continue
@@ -262,13 +285,17 @@ def get_multiline_input(prompt: str) -> str:
         first_line = input()
 
         # Add non-empty, non-command inputs to history
-        if first_line.strip() and not first_line.strip().startswith('/'):
+        if first_line.strip() and not first_line.strip().startswith("/"):
             # Add to readline history if not already the last item
-            if readline.get_current_history_length() == 0 or readline.get_history_item(readline.get_current_history_length()) != first_line:
+            if (
+                readline.get_current_history_length() == 0
+                or readline.get_history_item(readline.get_current_history_length())
+                != first_line
+            ):
                 readline.add_history(first_line)
 
         # If it's a command (starts with '/' or '+'), return it immediately
-        if first_line.strip().startswith('/') or first_line.strip().startswith('+'):
+        if first_line.strip().startswith("/") or first_line.strip().startswith("+"):
             return first_line
 
         lines = [first_line]
@@ -285,7 +312,9 @@ def get_multiline_input(prompt: str) -> str:
             line = input()
 
             if not line.strip():  # Empty line terminates input
-                if not lines or (len(lines) == 1 and not lines[0].strip()):  # Don't allow empty input
+                if not lines or (
+                    len(lines) == 1 and not lines[0].strip()
+                ):  # Don't allow empty input
                     continue
                 break
 
@@ -297,18 +326,36 @@ def get_multiline_input(prompt: str) -> str:
     full_input = "\n".join(lines)
 
     if len(lines) > 1:
-        readline.add_history(full_input.replace('\n', ' '))
+        readline.add_history(full_input.replace("\n", " "))
 
     return full_input
 
 
-def apply_latest_diff(events: List[AgentSseEvent], custom_dir: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
+def get_template_path_from_id(template_id: Optional[str]) -> str:
+    """Map template_id to the corresponding template path."""
+    if template_id == "trpc_agent":
+        return "./trpc_agent/template"
+    elif template_id == "nicegui_agent":
+        return "./nicegui_agent/template"
+    elif template_id == "template_diff":
+        return "./template_diff/template"
+    else:
+        # Default to trpc_agent if not specified
+        return "./trpc_agent/template"
+
+
+def apply_latest_diff(
+    events: List[AgentSseEvent],
+    custom_dir: Optional[str] = None,
+    template_id: Optional[str] = None,
+) -> Tuple[bool, str, Optional[str]]:
     """
     Apply the latest diff to a directory.
 
     Args:
         events: List of AgentSseEvent objects
         custom_dir: Optional custom base directory path
+        template_id: Optional template ID to determine the template path
 
     Returns:
         Tuple containing:
@@ -334,8 +381,11 @@ def apply_latest_diff(events: List[AgentSseEvent], custom_dir: Optional[str] = N
         # Create the full project directory path
         target_dir = os.path.join(base_dir, project_name)
 
+        # Get the template path based on template_id
+        template_path = get_template_path_from_id(template_id)
+
         # Apply the patch
-        success, message = apply_patch(diff, target_dir)
+        success, message = apply_patch(diff, target_dir, template_path)
 
         if success:
             return True, message, target_dir
@@ -359,30 +409,38 @@ def cleanup_docker_projects():
         if os.path.exists(project_dir):
             print(f"Cleaning up Docker resources in {project_dir}")
             try:
-                stop_docker_compose(project_dir, None)  # No project name, will use directory name
+                stop_docker_compose(
+                    project_dir, None
+                )  # No project name, will use directory name
             except Exception as e:
                 print(f"Error during cleanup of {project_dir}: {e}")
 
+
 atexit.register(cleanup_docker_projects)
+
 
 # Function to get all files from the project directory
 def get_all_files_from_project_dir(project_dir_path: str) -> List[FileEntry]:
     local_files: List[FileEntry] = []
     if not os.path.exists(project_dir_path):
         # This case should ideally be handled by project_dir_context ensuring it exists
-        logger.warning(f"Project directory {project_dir_path} does not exist during file scan.")
+        logger.warning(
+            f"Project directory {project_dir_path} does not exist during file scan."
+        )
         return local_files
 
     for root, _, files in os.walk(project_dir_path):
         for filename in files:
             # Exclude common problematic/temporary files but allow .gitignore
-            if (filename.startswith('.') and filename != '.gitignore') or filename.endswith(('.patch', '.swp', '.swo', '.rej')):
+            if (
+                filename.startswith(".") and filename != ".gitignore"
+            ) or filename.endswith((".patch", ".swp", ".swo", ".rej")):
                 continue
 
             filepath = os.path.join(root, filename)
             relative_path = os.path.relpath(filepath, project_dir_path)
             try:
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, "r", encoding="utf-8") as f:
                     content = f.read()
                 local_files.append(FileEntry(path=relative_path, content=content))
             except Exception as e:
@@ -390,7 +448,14 @@ def get_all_files_from_project_dir(project_dir_path: str) -> List[FileEntry]:
     return local_files
 
 
-async def run_chatbot_client(host: str, port: int, state_file: str, settings: Optional[str] = None, autosave=False, template_id: Optional[str] = None) -> None:
+async def run_chatbot_client(
+    host: str,
+    port: int,
+    state_file: str,
+    settings: Optional[str] = None,
+    autosave=False,
+    template_id: Optional[str] = None,
+) -> None:
     """
     Async interactive Agent CLI chat.
     """
@@ -443,7 +508,7 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
         base_url = f"http://{host}:{port}"
         print(f"Connected to {base_url}")
     else:
-        base_url = None # Use ASGI transport for local testing
+        base_url = None  # Use ASGI transport for local testing
 
     def print_event(event: AgentSseEvent) -> None:
         logger.info(f"Got an event: {event.status} {event.message.kind}")
@@ -452,21 +517,30 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                 for msg_block in event.message.messages:
                     content = msg_block.content.strip()
                     if content:
-                        timestamp = msg_block.timestamp.strftime("%H:%M:%S") if hasattr(msg_block, 'timestamp') and msg_block.timestamp else ""
+                        timestamp = (
+                            msg_block.timestamp.strftime("%H:%M:%S")
+                            if hasattr(msg_block, "timestamp") and msg_block.timestamp
+                            else ""
+                        )
                         if timestamp:
                             print(f"\033[90m[{timestamp}]\033[0m {content}")
                         else:
                             print(content)
-            #TODO: remove. Fallback to deprecated content field for backward compatibility
-            elif hasattr(event.message, 'content') and event.message.content:
+            # TODO: remove. Fallback to deprecated content field for backward compatibility
+            elif hasattr(event.message, "content") and event.message.content:
                 try:
                     items = json.loads(event.message.content)
                     for item in items:
                         if isinstance(item, dict):
                             if item.get("role") == "assistant":
                                 for part in item.get("content", []):
-                                    if isinstance(part, dict) and part.get("type") == "text":
-                                        print(part.get("text", ""), end="\n", flush=True)
+                                    if (
+                                        isinstance(part, dict)
+                                        and part.get("type") == "text"
+                                    ):
+                                        print(
+                                            part.get("text", ""), end="\n", flush=True
+                                        )
                 except json.JSONDecodeError:
                     # If content is not valid JSON, print it as-is
                     print(event.message.content)
@@ -482,15 +556,18 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
             if event.message.diff_stat:
                 print("\033[36mDiff Statistics:\033[0m")
                 for stat in event.message.diff_stat:
-                    print(f"\033[36m  {stat.filename}: +{stat.additions} -{stat.deletions}\033[0m")
+                    print(
+                        f"\033[36m  {stat.filename}: +{stat.additions} -{stat.deletions}\033[0m"
+                    )
 
             # Display app_name and commit_message when present
             if event.message.app_name:
                 print(f"\n\033[35m🚀 App Name: {event.message.app_name}\033[0m")
 
             if event.message.commit_message:
-                print(f"\033[35m📝 Commit Message: {event.message.commit_message}\033[0m\n")
-
+                print(
+                    f"\033[35m📝 Commit Message: {event.message.commit_message}\033[0m\n"
+                )
 
     async with AgentApiClient(base_url=base_url) as client:
         with project_dir_context() as project_dir:
@@ -507,8 +584,8 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                 if not cmd:
                     continue
 
-                first_line = cmd.split('\n', 1)[0].strip()
-                if first_line.startswith('/'):
+                first_line = cmd.split("\n", 1)[0].strip()
+                if first_line.startswith("/"):
                     action, *rest = first_line.split(None, 1)
                     cmd = first_line
                 else:
@@ -550,11 +627,20 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                         for evt in reversed(previous_events):
                             try:
                                 if evt.message:
-                                    if app_name is None and evt.message.app_name is not None:
+                                    if (
+                                        app_name is None
+                                        and evt.message.app_name is not None
+                                    ):
                                         app_name = evt.message.app_name
-                                    if commit_message is None and evt.message.commit_message is not None:
+                                    if (
+                                        commit_message is None
+                                        and evt.message.commit_message is not None
+                                    ):
                                         commit_message = evt.message.commit_message
-                                    if app_name is not None and commit_message is not None:
+                                    if (
+                                        app_name is not None
+                                        and commit_message is not None
+                                    ):
                                         break
                                 if evt.trace_id is not None:
                                     trace_id = evt.trace_id
@@ -578,12 +664,18 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                         continue
                     case "/save":
                         with open(state_file, "w") as f:
-                            json.dump({
-                                "events": [e.model_dump() for e in previous_events],
-                                "messages": previous_messages,
-                                "agent_state": request.agent_state if request else None,
-                                "timestamp": datetime.now().isoformat()
-                            }, f, indent=2)
+                            json.dump(
+                                {
+                                    "events": [e.model_dump() for e in previous_events],
+                                    "messages": previous_messages,
+                                    "agent_state": request.agent_state
+                                    if request
+                                    else None,
+                                    "timestamp": datetime.now().isoformat(),
+                                },
+                                f,
+                                indent=2,
+                            )
                         print(f"State saved to {state_file}")
                         continue
                     case "/messages":
@@ -597,21 +689,28 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                                 continue
 
                             # Show event metadata
-                            status_color = "\033[92m" if event.status == "idle" else "\033[93m"  # Green for idle, yellow for running
+                            status_color = (
+                                "\033[92m" if event.status == "idle" else "\033[93m"
+                            )  # Green for idle, yellow for running
                             kind_color = "\033[94m"  # Blue for kind
-                            print(f"\n\033[90m[Event {i+1}]\033[0m {status_color}{event.status}\033[0m | {kind_color}{event.message.kind}\033[0m")
+                            print(
+                                f"\n\033[90m[Event {i + 1}]\033[0m {status_color}{event.status}\033[0m | {kind_color}{event.message.kind}\033[0m"
+                            )
 
                             # Show structured messages if available
                             if event.message.messages:
                                 for j, msg_block in enumerate(event.message.messages):
                                     timestamp_str = ""
-                                    if hasattr(msg_block, 'timestamp') and msg_block.timestamp:
+                                    if (
+                                        hasattr(msg_block, "timestamp")
+                                        and msg_block.timestamp
+                                    ):
                                         timestamp_str = f" \033[90m[{msg_block.timestamp.strftime('%H:%M:%S')}]\033[0m"
 
                                     content = msg_block.content.strip()
                                     if content:
                                         # Add indentation for readability
-                                        lines = content.split('\n')
+                                        lines = content.split("\n")
                                         for line_idx, line in enumerate(lines):
                                             if line_idx == 0:
                                                 print(f"  {timestamp_str} {line}")
@@ -622,10 +721,18 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                                 try:
                                     items = json.loads(event.message.content)
                                     for item in items:
-                                        if isinstance(item, dict) and item.get("role") == "assistant":
+                                        if (
+                                            isinstance(item, dict)
+                                            and item.get("role") == "assistant"
+                                        ):
                                             for part in item.get("content", []):
-                                                if isinstance(part, dict) and part.get("type") == "text":
-                                                    lines = part.get("text", "").split('\n')
+                                                if (
+                                                    isinstance(part, dict)
+                                                    and part.get("type") == "text"
+                                                ):
+                                                    lines = part.get("text", "").split(
+                                                        "\n"
+                                                    )
                                                     for line in lines:
                                                         if line.strip():
                                                             print(f"    {line}")
@@ -634,11 +741,17 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
 
                             # Show additional info if present
                             if event.message.app_name:
-                                print(f"  \033[35m🚀 App: {event.message.app_name}\033[0m")
+                                print(
+                                    f"  \033[35m🚀 App: {event.message.app_name}\033[0m"
+                                )
                             if event.message.commit_message:
-                                print(f"  \033[35m📝 Commit: {event.message.commit_message}\033[0m")
+                                print(
+                                    f"  \033[35m📝 Commit: {event.message.commit_message}\033[0m"
+                                )
                             if event.message.unified_diff:
-                                diff_lines = len(event.message.unified_diff.splitlines())
+                                diff_lines = len(
+                                    event.message.unified_diff.splitlines()
+                                )
                                 print(f"  \033[36m📄 Diff: {diff_lines} lines\033[0m")
 
                         print("\n\033[1m=== End History ===\033[0m\n")
@@ -651,7 +764,9 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                         # Find the most recent event with messages
                         latest_event = None
                         for event in reversed(previous_events):
-                            if event.message and (event.message.messages or event.message.content):
+                            if event.message and (
+                                event.message.messages or event.message.content
+                            ):
                                 latest_event = event
                                 break
 
@@ -660,19 +775,26 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                             continue
 
                         print("\n\033[1m=== Latest Messages ===\033[0m")
-                        status_color = "\033[92m" if latest_event.status == "idle" else "\033[93m"
+                        status_color = (
+                            "\033[92m" if latest_event.status == "idle" else "\033[93m"
+                        )
                         kind_color = "\033[94m"
-                        print(f"{status_color}{latest_event.status}\033[0m | {kind_color}{latest_event.message.kind}\033[0m")
+                        print(
+                            f"{status_color}{latest_event.status}\033[0m | {kind_color}{latest_event.message.kind}\033[0m"
+                        )
 
                         if latest_event.message.messages:
                             for msg_block in latest_event.message.messages:
                                 timestamp_str = ""
-                                if hasattr(msg_block, 'timestamp') and msg_block.timestamp:
+                                if (
+                                    hasattr(msg_block, "timestamp")
+                                    and msg_block.timestamp
+                                ):
                                     timestamp_str = f"\033[90m[{msg_block.timestamp.strftime('%H:%M:%S')}]\033[0m "
 
                                 content = msg_block.content.strip()
                                 if content:
-                                    lines = content.split('\n')
+                                    lines = content.split("\n")
                                     for line_idx, line in enumerate(lines):
                                         if line_idx == 0:
                                             print(f"{timestamp_str}{line}")
@@ -682,9 +804,15 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                             try:
                                 items = json.loads(latest_event.message.content)
                                 for item in items:
-                                    if isinstance(item, dict) and item.get("role") == "assistant":
+                                    if (
+                                        isinstance(item, dict)
+                                        and item.get("role") == "assistant"
+                                    ):
                                         for part in item.get("content", []):
-                                            if isinstance(part, dict) and part.get("type") == "text":
+                                            if (
+                                                isinstance(part, dict)
+                                                and part.get("type") == "text"
+                                            ):
                                                 print(part.get("text", ""))
                             except json.JSONDecodeError:
                                 print(latest_event.message.content)
@@ -700,12 +828,23 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                             # Check if we're in a COMPLETE state - if so, this is unexpected
                             for evt in reversed(previous_events):
                                 try:
-                                    if (evt.message and evt.message.agent_state and
-                                        "fsm_state" in evt.message.agent_state and
-                                        "current_state" in evt.message.agent_state["fsm_state"] and
-                                        evt.message.agent_state["fsm_state"]["current_state"] == "complete"):
-                                        print("\nWARNING: Application is in COMPLETE state but no diff is available.")
-                                        print("This is likely a bug - the diff should be generated in the final state.")
+                                    if (
+                                        evt.message
+                                        and evt.message.agent_state
+                                        and "fsm_state" in evt.message.agent_state
+                                        and "current_state"
+                                        in evt.message.agent_state["fsm_state"]
+                                        and evt.message.agent_state["fsm_state"][
+                                            "current_state"
+                                        ]
+                                        == "complete"
+                                    ):
+                                        print(
+                                            "\nWARNING: Application is in COMPLETE state but no diff is available."
+                                        )
+                                        print(
+                                            "This is likely a bug - the diff should be generated in the final state."
+                                        )
                                         break
                                 except (AttributeError, KeyError):
                                     continue
@@ -719,13 +858,22 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                             target_dir: str
                             if rest and rest[0]:
                                 target_dir = os.path.abspath(rest[0])
-                                print(f"Target directory for applying patch: {target_dir}")
+                                print(
+                                    f"Target directory for applying patch: {target_dir}"
+                                )
                             else:
-                                target_dir = project_dir # project_dir is already absolute
-                                print(f"Applying patch directly to current project folder: {target_dir}")
+                                target_dir = (
+                                    project_dir  # project_dir is already absolute
+                                )
+                                print(
+                                    f"Applying patch directly to current project folder: {target_dir}"
+                                )
 
                             # Apply the patch directly to target_dir
-                            success, message = apply_patch(diff, target_dir)
+                            template_path = get_template_path_from_id(template_id)
+                            success, message = apply_patch(
+                                diff, target_dir, template_path
+                            )
                             print(message)
                         except Exception as e:
                             print(f"Error applying diff: {e}")
@@ -746,7 +894,10 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                         continue
                     case "/run":
                         # First, stop any running server
-                        if current_server_process and current_server_process.poll() is None:
+                        if (
+                            current_server_process
+                            and current_server_process.poll() is None
+                        ):
                             print("Stopping currently running server...")
                             try:
                                 current_server_process.terminate()
@@ -761,7 +912,9 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
 
                         # Apply the diff to create a new project
                         custom_dir = rest[0] if rest else None
-                        success, message, target_dir = apply_latest_diff(previous_events, custom_dir)
+                        success, message, target_dir = apply_latest_diff(
+                            previous_events, custom_dir, template_id
+                        )
                         print(message)
 
                         if success and target_dir:
@@ -780,7 +933,7 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                                 success, error_message = start_docker_compose(
                                     target_dir,
                                     container_names["project_name"],
-                                    build=True
+                                    build=True,
                                 )
 
                                 if not success:
@@ -791,7 +944,9 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
 
                                     # Simple message about web access
                                     print("\n🌐 Web UI is available at:")
-                                    print("   http://localhost:80 (for web servers, default HTTP port)")
+                                    print(
+                                        "   http://localhost:80 (for web servers, default HTTP port)"
+                                    )
 
                                     # Use Popen to follow the logs
                                     current_server_process = subprocess.Popen(
@@ -799,24 +954,30 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                                         cwd=target_dir,
                                         stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT,
-                                        text=True
+                                        text=True,
                                     )
 
                                     # Wait briefly and then print a few lines of output
                                     print("\nServer starting, initial output:")
-                                    for _ in range(10):  # Print up to 10 lines of output
+                                    for _ in range(
+                                        10
+                                    ):  # Print up to 10 lines of output
                                         line = current_server_process.stdout.readline()
                                         if not line:
                                             break
                                         print(f"  {line.rstrip()}")
 
                                     print(f"\nServer running in {target_dir}")
-                                    print("Use /stop command to stop the server when done.")
+                                    print(
+                                        "Use /stop command to stop the server when done."
+                                    )
 
                             except subprocess.CalledProcessError as e:
                                 print(f"Error during project setup: {e}")
                             except FileNotFoundError:
-                                print("Error: 'docker' command not found. Please make sure Docker is installed.")
+                                print(
+                                    "Error: 'docker' command not found. Please make sure Docker is installed."
+                                )
                         continue
                     case "/stop":
                         if not current_server_process:
@@ -848,7 +1009,9 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                                 # Wait for up to 5 seconds for the process to terminate
                                 current_server_process.wait(timeout=5)
                             except subprocess.TimeoutExpired:
-                                print("Logs process did not terminate gracefully. Forcing shutdown...")
+                                print(
+                                    "Logs process did not terminate gracefully. Forcing shutdown..."
+                                )
                                 current_server_process.kill()
                                 current_server_process.wait()
 
@@ -876,10 +1039,16 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                         content = cmd
 
                 # --- Prepare allFiles from project_dir for the request ---
-                files_for_snapshot: List[FileEntry] = get_all_files_from_project_dir(project_dir)
-                print(f"Client: Preparing request. Content: '{content[:50].replace('\n', ' ')}...'. Snapshot from '{project_dir}' contains {len(files_for_snapshot)} files.")
+                files_for_snapshot: List[FileEntry] = get_all_files_from_project_dir(
+                    project_dir
+                )
+                print(
+                    f"Client: Preparing request. Content: '{content[:50].replace('\n', ' ')}...'. Snapshot from '{project_dir}' contains {len(files_for_snapshot)} files."
+                )
                 if files_for_snapshot:
-                    print(f"Client: Snapshot sample paths: {[f.path for f in files_for_snapshot[:3]]}")
+                    print(
+                        f"Client: Snapshot sample paths: {[f.path for f in files_for_snapshot[:3]]}"
+                    )
                 else:
                     print("Client: Snapshot is empty.")
 
@@ -893,11 +1062,11 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                         logger.info("Sending new message")
                         events, request = await client.send_message(
                             content,
-                            all_files=all_files_payload, # Pass the files
+                            all_files=all_files_payload,  # Pass the files
                             settings=settings_dict,
                             template_id=template_id,
                             auth_token=auth_token,
-                            stream_cb=print_event
+                            stream_cb=print_event,
                         )
                     else:
                         logger.info("Sending continuation")
@@ -905,9 +1074,9 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                             previous_events,
                             request,
                             content,
-                            all_files=all_files_payload, # Pass the files
+                            all_files=all_files_payload,  # Pass the files
                             settings=settings_dict,
-                            stream_cb=print_event
+                            stream_cb=print_event,
                         )
                     # Ensure newline after streaming events
                     print()
@@ -917,18 +1086,27 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
 
                     if autosave:
                         with open(state_file, "w") as f:
-                            json.dump({
-                                "events": [e.model_dump() for e in previous_events],
-                                "messages": previous_messages,
-                                "agent_state": request.agent_state,
-                                "timestamp": datetime.now().isoformat()
-                            }, f, indent=2)
+                            json.dump(
+                                {
+                                    "events": [e.model_dump() for e in previous_events],
+                                    "messages": previous_messages,
+                                    "agent_state": request.agent_state,
+                                    "timestamp": datetime.now().isoformat(),
+                                },
+                                f,
+                                indent=2,
+                            )
                 except Exception as e:
                     print(f"\nError in command/interaction cycle: {e}")
                     traceback.print_exc()
 
+
 @contextlib.contextmanager
-def spawn_local_server(command: List[str] = ["uv", "run", "server"], host: str = "localhost", port: int = 8001):
+def spawn_local_server(
+    command: List[str] = ["uv", "run", "server"],
+    host: str = "localhost",
+    port: int = 8001,
+):
     """
     Spawns a local server process and yields connection details.
 
@@ -948,12 +1126,11 @@ def spawn_local_server(command: List[str] = ["uv", "run", "server"], host: str =
         temp_dir = tempfile.mkdtemp()
         std_err_file = open(os.path.join(temp_dir, "server_stderr.log"), "a+")
         proc = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=std_err_file,
-            text=True
+            command, stdout=subprocess.PIPE, stderr=std_err_file, text=True
         )
-        logger.info(f"Local server started, pid {proc.pid}, check `tail -f {std_err_file.name}` for logs")
+        logger.info(
+            f"Local server started, pid {proc.pid}, check `tail -f {std_err_file.name}` for logs"
+        )
 
         yield (host, port)
     finally:
@@ -972,24 +1149,45 @@ def spawn_local_server(command: List[str] = ["uv", "run", "server"], host: str =
             logger.info(f"Removed temporary directory: {temp_dir}")
 
 
-def cli(host: str = "",
-        port: int = 8001,
-        state_file: str = "/tmp/agent_chat_state.json",
-        template_id: Optional[str] = None,
-        ):
+def cli(
+    host: str = "",
+    port: int = 8001,
+    state_file: str = "/tmp/agent_chat_state.json",
+    template_id: Optional[str] = None,
+):
     if not host:
         with spawn_local_server() as (local_host, local_port):
-            anyio.run(run_chatbot_client, local_host, local_port, state_file, None, False, template_id, backend="asyncio")
+            anyio.run(
+                run_chatbot_client,
+                local_host,
+                local_port,
+                state_file,
+                None,
+                False,
+                template_id,
+                backend="asyncio",
+            )
     else:
-        anyio.run(run_chatbot_client, host, port, state_file, None, False, template_id, backend="asyncio")
+        anyio.run(
+            run_chatbot_client,
+            host,
+            port,
+            state_file,
+            None,
+            False,
+            template_id,
+            backend="asyncio",
+        )
 
 
 if __name__ == "__main__":
     try:
         import coloredlogs
+
         coloredlogs.install(level="INFO")
     except ImportError:
         pass
 
     from fire import Fire
+
     Fire(cli)

@@ -45,7 +45,7 @@ async def test_continue_conversation_builds_history(monkeypatch):
     # Capture arguments passed to fake_send_message
     captured = {}
 
-    async def fake_send_message(self, *, message, messages_history, application_id, trace_id, agent_state, all_files, settings, stream_cb, auth_token=None, request=None):
+    async def fake_send_message(self, *, message, messages_history, application_id, trace_id, agent_state, all_files, settings, stream_cb, auth_token=None, request=None, template_id=None):
         captured.update(
             message=message,
             history=messages_history,

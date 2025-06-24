@@ -1,5 +1,5 @@
 import logging
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Dict, Any, Optional, TypedDict, List, Union, Type
 from datetime import datetime
 from uuid import uuid4
@@ -58,6 +58,11 @@ class BaseAgentSession(AgentInterface, ABC):
         self.client = client
         self._sse_counter = 0
         self._snapshot_key = self.trace_id + "_" + datetime.now().strftime("%m%d%H%M%S")
+
+    @property
+    def template_path(self) -> str:
+        """Get the template path for this agent session."""
+        return self.fsm_application_class.template_path()
 
     @staticmethod
     def convert_agent_messages_to_llm_messages(saved_messages: List[ConversationMessage | InternalMessage]) -> List[InternalMessage]:
@@ -165,14 +170,14 @@ class BaseAgentSession(AgentInterface, ABC):
             top_level_agent_llm = get_llm_client(model_name="gemini-flash")
 
             while True:
-                new_messages, fsm_status = await self.processor_instance.step(
+                new_messages, fsm_status, full_thread = await self.processor_instance.step(
                     agent_state["fsm_messages"],
                     top_level_agent_llm,
                     self.model_params
                 )
 
                 # Add messages for agentic loop
-                agent_state["fsm_messages"] += new_messages
+                agent_state["fsm_messages"] = full_thread
                 messages_to_user = self.filter_messages_for_user(new_messages)
 
                 if self.processor_instance.fsm_app is not None:

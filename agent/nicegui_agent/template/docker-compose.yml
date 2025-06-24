@@ -1,14 +1,45 @@
 services:
   app:
     build: .
+    container_name: ${BACKEND_CONTAINER_NAME:-app}
     ports:
       - "80:8080"
     environment:
       - NICEGUI_STORAGE_SECRET=${NICEGUI_STORAGE_SECRET:-STORAGE_SECRET}
       - NICEGUI_PORT=8080
+      - APP_DATABASE_URL=${APP_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/postgres}
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       interval: 5s
       timeout: 3s
       retries: 5
       start_period: 10s
+
+  postgres:
+    container_name: ${POSTGRES_CONTAINER_NAME:-postgres}
+    image: postgres:17-alpine3.21
+    hostname: postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 1s
+      timeout: 20s
+      retries: 5
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: ${NETWORK_NAME:-app_network}
+    driver: bridge

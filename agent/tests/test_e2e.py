@@ -58,6 +58,7 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=Non
                     previous_events=events,
                     previous_request=request,
                     message="just do it! no more questions, please",
+                    template_id=template_id,
                 )
 
             diff = latest_unified_diff(events)
@@ -75,6 +76,7 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=Non
                     previous_events=events,
                     previous_request=request,
                     message=DEFAULT_EDIT_REQUEST,
+                    template_id=template_id,
                 )
                 updated_diff = latest_unified_diff(new_events)
                 assert updated_diff, "No diff was generated in the agent response after edit"
@@ -88,9 +90,8 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=Non
                     "trpc_agent": "trpc_agent/template",
                     None: "trpc_agent/template"  # default
                 }
-                template_path = template_paths.get(template_id, "trpc_agent/template")
 
-                success, message = apply_patch(diff, temp_dir, template_path)
+                success, message = apply_patch(diff, temp_dir, template_paths[template_id])
                 assert success, f"Failed to apply patch: {message}"
 
                 original_dir = os.getcwd()
@@ -101,7 +102,6 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=Non
 
                     success, error_message = start_docker_compose(temp_dir, container_names["project_name"])
                     if not success:
-                        breakpoint()
                         # Get logs if possible for debugging
                         try:
                             logs = get_container_logs([
@@ -141,8 +141,9 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=Non
                     stop_docker_compose(temp_dir, container_names["project_name"])
 
 @pytest.mark.skipif(os.getenv("GEMINI_API_KEY") is None, reason="GEMINI_API_KEY is not set")
-async def test_e2e_generation():
-    await run_e2e(standalone=False, prompt=DEFAULT_APP_REQUEST)
+@pytest.mark.parametrize("template_id", ["nicegui_agent", "trpc_agent"])
+async def test_e2e_generation(template_id):
+    await run_e2e(standalone=False, prompt=DEFAULT_APP_REQUEST, template_id=template_id)
 
 def create_app(prompt):
     import coloredlogs

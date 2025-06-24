@@ -92,7 +92,8 @@ class AgentApiClient:
                                    message: str,
                                    all_files: Optional[List[Dict[str, str]]] = None,
                                    settings: Optional[Dict[str, Any]] = None,
-                                   stream_cb: Optional[Callable[[AgentSseEvent], None]] = None
+                                   stream_cb: Optional[Callable[[AgentSseEvent], None]] = None,
+                                   template_id: Optional[str] = None
                                   ) -> Tuple[List[AgentSseEvent], AgentRequest]:
         """Continue a conversation using the agent state from previous events."""
         # Use agent_state from the latest event (if any)
@@ -123,7 +124,8 @@ class AgentApiClient:
             agent_state=agent_state,
             all_files=all_files,
             settings=settings,
-            stream_cb=stream_cb
+            stream_cb=stream_cb,
+            template_id=template_id,
         )
 
         return events, request

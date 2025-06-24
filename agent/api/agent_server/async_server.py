@@ -278,8 +278,6 @@ async def message(
         logger.info(f"Received message request for application {request.application_id}, trace {request.trace_id}")
         set_trace_id(request.trace_id)
         logger.info("Starting SSE stream for application")
-
-        # Use template_id from request if provided, otherwise use CONFIG default
         template_id = request.template_id or CONFIG.agent_type
         logger.info(f"Using template: {template_id}")
 
