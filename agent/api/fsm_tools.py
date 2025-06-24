@@ -25,6 +25,8 @@ class FSMInterface(ApplicationBase, Protocol):
     def base_execution_plan(cls) -> str: ...
     @property
     def available_actions(self) -> dict[str, str]: ...# FSMTools Specific
+    @classmethod
+    def template_path(cls) -> str: ...# Path to template directory
 
 
 

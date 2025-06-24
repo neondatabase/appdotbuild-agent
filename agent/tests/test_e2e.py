@@ -48,7 +48,6 @@ def latest_app_name_and_commit_message(events):
     return app_name, commit_message
 
 async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=None):
-    breakpoint()
     context = empty_context() if standalone else spawn_local_server()
     with context:
         async with AgentApiClient() as client:
@@ -83,17 +82,26 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=Non
                 assert updated_diff != diff, "Edit did not produce a new diff"
 
             with tempfile.TemporaryDirectory() as temp_dir:
+                # Determine template path based on template_id
+                template_paths = {
+                    "nicegui_agent": "nicegui_agent/template",
+                    "trpc_agent": "trpc_agent/template",
+                    None: "trpc_agent/template"  # default
+                }
+                template_path = template_paths.get(template_id, "trpc_agent/template")
 
-                success, message = apply_patch(diff, temp_dir)
+                success, message = apply_patch(diff, temp_dir, template_path)
                 assert success, f"Failed to apply patch: {message}"
 
                 original_dir = os.getcwd()
                 container_names = setup_docker_env()
+
                 try:
                     os.chdir(temp_dir)
 
                     success, error_message = start_docker_compose(temp_dir, container_names["project_name"])
                     if not success:
+                        breakpoint()
                         # Get logs if possible for debugging
                         try:
                             logs = get_container_logs([

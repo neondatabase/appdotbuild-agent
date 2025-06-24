@@ -100,6 +100,10 @@ class FSMApplication:
             "",
             "The result application will be based on Typescript, Drizzle, tRPC and React. The list of available libraries is limited but sufficient to build CRUD apps."
         ])
+    
+    @classmethod
+    def template_path(cls) -> str:
+        return "./trpc_agent/template"
 
     @classmethod
     async def start_fsm(cls, client: dagger.Client, user_prompt: str, settings: Dict[str, Any] | None = None) -> Self:

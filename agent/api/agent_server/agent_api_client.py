@@ -67,9 +67,9 @@ def setup_readline():
         print(f"Warning: Could not configure readline history: {e}")
         return False
 
-def apply_patch(diff: str, target_dir: str) -> Tuple[bool, str]:
+def apply_patch(diff: str, target_dir: str, template_path: str) -> Tuple[bool, str]:
     try:
-        print(f"Preparing to apply patch to directory: '{target_dir}'")
+        logger.info(f"Preparing to apply patch to directory: '{target_dir}', template '{template_path}'")
         target_dir = os.path.abspath(target_dir)
         os.makedirs(target_dir, exist_ok=True)
 
@@ -97,9 +97,10 @@ def apply_patch(diff: str, target_dir: str) -> Tuple[bool, str]:
         # the required context while ensuring we don't modify the original
         # template sources.
         try:
-            if any(p.startswith(("client/", "server/")) for p in file_paths):
+            # Check if any files from the patch are likely template files
+            if file_paths and template_path:
                 template_root = os.path.abspath(
-                    os.path.join(os.path.dirname(__file__), "../../trpc_agent/template")
+                    os.path.join(os.path.dirname(__file__), "../..", template_path)
                 )
 
                 if os.path.isdir(template_root):
@@ -377,7 +378,7 @@ def get_all_files_from_project_dir(project_dir_path: str) -> List[FileEntry]:
             # Exclude common problematic/temporary files but allow .gitignore
             if (filename.startswith('.') and filename != '.gitignore') or filename.endswith(('.patch', '.swp', '.swo', '.rej')):
                 continue
-            
+
             filepath = os.path.join(root, filename)
             relative_path = os.path.relpath(filepath, project_dir_path)
             try:
@@ -469,7 +470,7 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                 except json.JSONDecodeError:
                     # If content is not valid JSON, print it as-is
                     print(event.message.content)
-                
+
             if event.message.unified_diff:
                 print("\n\n\033[36m--- Auto-Detected Diff ---\033[0m")
                 diff_lines = event.message.unified_diff.splitlines()
@@ -477,12 +478,12 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                     print(f"\033[36m{diff_lines[i]}\033[0m")
                 if len(diff_lines) > 5:
                     print("\033[36m... (use /diff to see full diff)\033[0m")
-            
+
             if event.message.diff_stat:
                 print("\033[36mDiff Statistics:\033[0m")
                 for stat in event.message.diff_stat:
                     print(f"\033[36m  {stat.filename}: +{stat.additions} -{stat.deletions}\033[0m")
-            
+
             # Display app_name and commit_message when present
             if event.message.app_name:
                 print(f"\n\033[35m🚀 App Name: {event.message.app_name}\033[0m")
@@ -564,7 +565,7 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                             print(f"\033[35m🚀 App Name: {app_name}\033[0m")
                         else:
                             print("\033[33mNo app name available\033[0m")
-                            
+
                         if trace_id:
                             print(f"\033[35m🔑 Trace ID: {trace_id}\033[0m")
                         else:
@@ -589,24 +590,24 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                         if not previous_events:
                             print("No message history available.")
                             continue
-                        
+
                         print("\n\033[1m=== Message History ===\033[0m")
                         for i, event in enumerate(previous_events):
                             if not event.message:
                                 continue
-                            
+
                             # Show event metadata
                             status_color = "\033[92m" if event.status == "idle" else "\033[93m"  # Green for idle, yellow for running
                             kind_color = "\033[94m"  # Blue for kind
                             print(f"\n\033[90m[Event {i+1}]\033[0m {status_color}{event.status}\033[0m | {kind_color}{event.message.kind}\033[0m")
-                            
+
                             # Show structured messages if available
                             if event.message.messages:
                                 for j, msg_block in enumerate(event.message.messages):
                                     timestamp_str = ""
                                     if hasattr(msg_block, 'timestamp') and msg_block.timestamp:
                                         timestamp_str = f" \033[90m[{msg_block.timestamp.strftime('%H:%M:%S')}]\033[0m"
-                                    
+
                                     content = msg_block.content.strip()
                                     if content:
                                         # Add indentation for readability
@@ -630,7 +631,7 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                                                             print(f"    {line}")
                                 except json.JSONDecodeError:
                                     print(f"    {event.message.content}")
-                            
+
                             # Show additional info if present
                             if event.message.app_name:
                                 print(f"  \033[35m🚀 App: {event.message.app_name}\033[0m")
@@ -639,36 +640,36 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                             if event.message.unified_diff:
                                 diff_lines = len(event.message.unified_diff.splitlines())
                                 print(f"  \033[36m📄 Diff: {diff_lines} lines\033[0m")
-                        
+
                         print("\n\033[1m=== End History ===\033[0m\n")
                         continue
                     case "/last":
                         if not previous_events:
                             print("No message history available.")
                             continue
-                        
+
                         # Find the most recent event with messages
                         latest_event = None
                         for event in reversed(previous_events):
                             if event.message and (event.message.messages or event.message.content):
                                 latest_event = event
                                 break
-                        
+
                         if not latest_event:
                             print("No recent messages found.")
                             continue
-                        
+
                         print("\n\033[1m=== Latest Messages ===\033[0m")
                         status_color = "\033[92m" if latest_event.status == "idle" else "\033[93m"
                         kind_color = "\033[94m"
                         print(f"{status_color}{latest_event.status}\033[0m | {kind_color}{latest_event.message.kind}\033[0m")
-                        
+
                         if latest_event.message.messages:
                             for msg_block in latest_event.message.messages:
                                 timestamp_str = ""
                                 if hasattr(msg_block, 'timestamp') and msg_block.timestamp:
                                     timestamp_str = f"\033[90m[{msg_block.timestamp.strftime('%H:%M:%S')}]\033[0m "
-                                
+
                                 content = msg_block.content.strip()
                                 if content:
                                     lines = content.split('\n')
@@ -687,7 +688,7 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                                                 print(part.get("text", ""))
                             except json.JSONDecodeError:
                                 print(latest_event.message.content)
-                        
+
                         print("\n")
                         continue
                     case "/diff":
@@ -881,7 +882,7 @@ async def run_chatbot_client(host: str, port: int, state_file: str, settings: Op
                     print(f"Client: Snapshot sample paths: {[f.path for f in files_for_snapshot[:3]]}")
                 else:
                     print("Client: Snapshot is empty.")
-                    
+
                 all_files_payload = [f.model_dump() for f in files_for_snapshot]
 
                 # Send or continue conversation

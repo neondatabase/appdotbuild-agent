@@ -95,6 +95,10 @@ class FSMApplication:
             "",
             "The result application will be based on Python and NiceGUI framework. The application can include various UI components, event handling, and state management."
         ])
+    
+    @classmethod
+    def template_path(cls) -> str:
+        return "./nicegui_agent/template"
 
     @classmethod
     async def start_fsm(cls, client: dagger.Client, user_prompt: str, settings: Dict[str, Any] | None = None) -> Self:

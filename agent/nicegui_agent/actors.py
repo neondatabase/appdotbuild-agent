@@ -271,7 +271,7 @@ class NiceguiActor(BaseActor, LLMActor):
                             raise ValueError("Can not complete without writing any changes.")
                         check_err = await self.run_checks(node, user_prompt)
                         if check_err:
-                            logger.error(f"Failed to complete: {check_err}")
+                            logger.info(f"Failed to complete: {check_err}")
                         result.append(ToolUseResult.from_tool_use(block, check_err or "success"))
                         is_completed = check_err is None
                     case unknown:
@@ -328,6 +328,11 @@ class NiceguiActor(BaseActor, LLMActor):
         repo_files = set(files.keys())
         repo_files.update(f"tests/{file_path}" for file_path in await workspace.ls("tests"))
         repo_files.update(f"app/{file_path}" for file_path in await workspace.ls("app"))
+        # Include root-level files
+        root_files = await workspace.ls(".")
+        for file_path in root_files:
+            if file_path in ["docker-compose.yml", "Dockerfile", "pyproject.toml", "main.py", "pytest.ini"]:
+                repo_files.add(file_path)
         return sorted(list(repo_files))
 
     async def dump(self) -> object:
