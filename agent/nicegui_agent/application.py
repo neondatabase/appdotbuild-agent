@@ -24,6 +24,7 @@ for package in ["urllib3", "httpx", "google_genai.models"]:
 class FSMState(str, enum.Enum):
     APPLICATION = "application"
     REVIEW_APPLICATION = "review_application"
+    APPLY_FEEDBACK = "apply_feedback"
     COMPLETE = "complete"
     FAILURE = "failure"
 
@@ -173,7 +174,7 @@ class FSMApplication:
         states = State[ApplicationContext, FSMEvent](
             on={
                 FSMEvent("CONFIRM"): FSMState.APPLICATION,
-                FSMEvent("FEEDBACK"): FSMState.APPLICATION,
+                FSMEvent("FEEDBACK"): FSMState.APPLY_FEEDBACK,
             },
             states={
                 FSMState.APPLICATION: State(
@@ -196,7 +197,24 @@ class FSMApplication:
                 FSMState.REVIEW_APPLICATION: State(
                     on={
                         FSMEvent("CONFIRM"): FSMState.COMPLETE,
-                        FSMEvent("FEEDBACK"): FSMState.APPLICATION,
+                        FSMEvent("FEEDBACK"): FSMState.APPLY_FEEDBACK,
+                    },
+                ),
+                FSMState.APPLY_FEEDBACK: State(
+                    invoke={
+                        "src": nicegui_actor,
+                        "input_fn": lambda ctx: (
+                            ctx.files,
+                            ctx.feedback_data,
+                        ),
+                        "on_done": {
+                            "target": FSMState.COMPLETE,
+                            "actions": [update_node_files],
+                        },
+                        "on_error": {
+                            "target": FSMState.FAILURE,
+                            "actions": [set_error],
+                        },
                     },
                 ),
                 FSMState.COMPLETE: State(),
