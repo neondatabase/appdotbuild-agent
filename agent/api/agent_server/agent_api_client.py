@@ -510,9 +510,34 @@ async def run_chatbot_client(
     else:
         base_url = None  # Use ASGI transport for local testing
 
-    def print_event(event: AgentSseEvent) -> None:
-        logger.info(f"Got an event: {event.status} {event.message.kind}")
+    # Keep track of diffs we've already applied to avoid duplicate applications
+    applied_diffs: set[str] = set()
+
+    def process_event(event: AgentSseEvent) -> None:
+        logger.info(f"Got an event: {event.status} {getattr(event.message, 'kind', '')}")
+
+        # --------------- Helper to actually apply a diff -----------------
+        def _maybe_apply_diff(diff_text: str) -> None:
+            """Apply diff to the current project directory if not already applied."""
+            if not diff_text or diff_text in applied_diffs:
+                return
+
+            template_path = get_template_path_from_id(template_id)
+            success, msg = apply_patch(diff_text, project_dir, template_path)
+
+            # Remember this diff so we do not attempt to apply again
+            applied_diffs.add(diff_text)
+
+            # Notify the user about the result
+            if success:
+                print(f"\033[32m✅ Auto-applied diff to {project_dir}\033[0m")
+            else:
+                print(f"\033[31m❌ Failed to auto-apply diff: {msg}\033[0m")
+
+        # -----------------------------------------------------------------
+
         if event.message:
+            # ---------- Structured / streaming markdown blocks ------------
             if event.message.messages:
                 for msg_block in event.message.messages:
                     content = msg_block.content.strip()
@@ -531,43 +556,38 @@ async def run_chatbot_client(
                 try:
                     items = json.loads(event.message.content)
                     for item in items:
-                        if isinstance(item, dict):
-                            if item.get("role") == "assistant":
-                                for part in item.get("content", []):
-                                    if (
-                                        isinstance(part, dict)
-                                        and part.get("type") == "text"
-                                    ):
-                                        print(
-                                            part.get("text", ""), end="\n", flush=True
-                                        )
+                        if isinstance(item, dict) and item.get("role") == "assistant":
+                            for part in item.get("content", []):
+                                if isinstance(part, dict) and part.get("type") == "text":
+                                    print(part.get("text", ""), end="\n", flush=True)
                 except json.JSONDecodeError:
                     # If content is not valid JSON, print it as-is
                     print(event.message.content)
 
+            # ----------------------- Diff handling -----------------------
             if event.message.unified_diff:
+                diff_preview_lines = event.message.unified_diff.splitlines()
                 print("\n\n\033[36m--- Auto-Detected Diff ---\033[0m")
-                diff_lines = event.message.unified_diff.splitlines()
-                for i in range(min(5, len(diff_lines))):
-                    print(f"\033[36m{diff_lines[i]}\033[0m")
-                if len(diff_lines) > 5:
+                for i in range(min(5, len(diff_preview_lines))):
+                    print(f"\033[36m{diff_preview_lines[i]}\033[0m")
+                if len(diff_preview_lines) > 5:
                     print("\033[36m... (use /diff to see full diff)\033[0m")
 
+                # Attempt to auto-apply the diff
+                _maybe_apply_diff(event.message.unified_diff)
+
+            # ------------------- Diff statistics -------------------------
             if event.message.diff_stat:
                 print("\033[36mDiff Statistics:\033[0m")
                 for stat in event.message.diff_stat:
-                    print(
-                        f"\033[36m  {stat.filename}: +{stat.additions} -{stat.deletions}\033[0m"
-                    )
+                    print(f"\033[36m  {stat.filename}: +{stat.additions} -{stat.deletions}\033[0m")
 
             # Display app_name and commit_message when present
             if event.message.app_name:
                 print(f"\n\033[35m🚀 App Name: {event.message.app_name}\033[0m")
 
             if event.message.commit_message:
-                print(
-                    f"\033[35m📝 Commit Message: {event.message.commit_message}\033[0m\n"
-                )
+                print(f"\033[35m📝 Commit Message: {event.message.commit_message}\033[0m\n")
 
     async with AgentApiClient(base_url=base_url) as client:
         with project_dir_context() as project_dir:
@@ -1066,7 +1086,7 @@ async def run_chatbot_client(
                             settings=settings_dict,
                             template_id=template_id,
                             auth_token=auth_token,
-                            stream_cb=print_event,
+                            stream_cb=process_event,
                         )
                     else:
                         logger.info("Sending continuation")
@@ -1076,7 +1096,7 @@ async def run_chatbot_client(
                             content,
                             all_files=all_files_payload,  # Pass the files
                             settings=settings_dict,
-                            stream_cb=print_event,
+                            stream_cb=process_event,
                         )
                     # Ensure newline after streaming events
                     print()
