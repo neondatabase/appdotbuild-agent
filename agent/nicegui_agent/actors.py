@@ -2,6 +2,7 @@ import re
 import jinja2
 import logging
 import dataclasses
+import anyio
 from core.base_node import Node
 from core.workspace import Workspace
 from core.actors import BaseData, BaseActor, LLMActor
@@ -242,7 +243,7 @@ class NiceguiActor(BaseActor, LLMActor):
             },
             {
                 "name": "uv_add",
-                "description": "Install packages",
+                "description": "Install additional packages",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -348,10 +349,54 @@ class NiceguiActor(BaseActor, LLMActor):
             cur_node = cur_node.parent
         return False
 
-    async def run_checks(self, node: Node[BaseData], user_prompt: str) -> str | None:
+    async def run_type_checks(self, node: Node[BaseData]) -> str | None:
+        type_check_result = await node.data.workspace.exec(["uv", "run", "pyright", "."])
+        if type_check_result.exit_code != 0:
+            return f"{type_check_result.stdout}\n{type_check_result.stderr}"
+        return None
+
+    async def run_lint_checks(self, node: Node[BaseData]) -> str | None:
+        lint_result = await node.data.workspace.exec(["uv", "run", "ruff", "check", ".", "--fix"])
+        if lint_result.exit_code != 0:
+            return f"{lint_result.stdout}\n{lint_result.stderr}"
+        return None
+
+    async def run_tests(self, node: Node[BaseData]) -> str | None:
         pytest_result = await node.data.workspace.exec(["uv", "run", "pytest"])
         if pytest_result.exit_code != 0:
             return f"{pytest_result.stdout}\n{pytest_result.stderr}"
+        return None
+
+    async def run_checks(self, node: Node[BaseData], user_prompt: str) -> str | None:
+        all_errors = ""
+        results = {}
+
+        async with anyio.create_task_group() as tg:
+            async def run_and_store(key, coro):
+                """Helper to run a coroutine and store its result in the results dict."""
+                try:
+                    results[key] = await coro
+                except Exception as e:
+                    # Catch unexpected exceptions during check execution
+                    logger.error(f"Error running check {key}: {e}")
+                    results[key] = f"Internal error running check {key}: {e}"
+
+            tg.start_soon(run_and_store, "lint", self.run_lint_checks(node))
+            tg.start_soon(run_and_store, "type_check", self.run_type_checks(node))
+            tg.start_soon(run_and_store, "tests", self.run_tests(node))
+
+        if lint_result := results.get("lint"):
+            logger.info(f"Lint checks failed: {lint_result}")
+            all_errors += f"Lint errors:\n{lint_result}\n"
+        if type_check_result := results.get("type_check"):
+            logger.info(f"Type checks failed: {type_check_result}")
+            all_errors += f"Type errors:\n{type_check_result}\n"
+        if test_result := results.get("tests"):
+            logger.info(f"Tests failed: {test_result}")
+            all_errors += f"Test errors:\n{test_result}\n"
+
+        if all_errors:
+            return all_errors.strip()
         return None
 
     @property

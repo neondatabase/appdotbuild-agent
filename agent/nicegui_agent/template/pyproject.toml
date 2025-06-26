@@ -6,6 +6,23 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "nicegui>=2.19.0",
+    "pydantic>=2.11.7",
     "pytest-asyncio>=1.0.0",
     "pytest-selenium>=4.1.0",
 ]
+
+[dependency-groups]
+dev = ["ruff>=0.11.5", "pyright>=1.1.400"]
+
+[tool.ruff]
+exclude = [".git", ".git-rewrite", ".pytest_cache", ".ruff_cache", ".venv"]
+
+line-length = 120
+indent-width = 4
+target-version = "py312"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

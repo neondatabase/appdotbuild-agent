@@ -154,7 +154,7 @@ class FSMApplication:
             base_image="alpine:3.21.3",
             context=client.host().directory("./nicegui_agent/template"),
             setup_cmd=[
-                ["apk", "add", "--update", "--no-cache", "curl", "python3"],
+                ["apk", "add", "--update", "--no-cache", "curl", "python3", "nodejs"],  # node for pyright
                 [
                     "sh",
                     "-c",
