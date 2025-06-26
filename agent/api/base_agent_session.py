@@ -51,7 +51,6 @@ class BaseAgentSession(AgentInterface, ABC):
         self.settings = settings or {}
         self.fsm_application_class = fsm_application_class
         self.processor_instance = FSMToolProcessor(client, fsm_application_class)
-        # self.llm_client: AsyncLLM = get_best_coding_llm_client()
         self.model_params = {
             "max_tokens": 8192,
         }
