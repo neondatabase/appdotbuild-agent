@@ -318,7 +318,7 @@ class NiceguiActor(BaseActor, LLMActor):
                         )
                         is_completed = check_err is None
                         if is_completed:
-                            res = await node.data.workspace.exec_mut(
+                            await node.data.workspace.exec_mut(
                                 [
                                     "uv",
                                     "export",
