@@ -175,7 +175,7 @@ class FSMApplication:
         nicegui_actor = NiceguiActor(
             llm=llm,
             workspace=workspace,
-            beam_width=2,
+            beam_width=1,
             max_depth=50,
         )
 

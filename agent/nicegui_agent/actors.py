@@ -318,15 +318,19 @@ class NiceguiActor(BaseActor, LLMActor):
                         )
                         is_completed = check_err is None
                         if is_completed:
-                            await node.data.workspace.exec_mut(
+                            res = await node.data.workspace.exec_mut(
                                 [
                                     "uv",
                                     "export",
                                     "--no-hashes",
                                     "--format",
                                     "requirements-txt",
+                                    "--output-file",
+                                    "app/requirements.txt",
+                                    "--no-dev"
                                 ]
                             )
+
                     case unknown:
                         raise ValueError(f"Unknown tool: {unknown}")
             except FileNotFoundError as e:
