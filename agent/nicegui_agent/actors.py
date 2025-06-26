@@ -317,6 +317,16 @@ class NiceguiActor(BaseActor, LLMActor):
                             ToolUseResult.from_tool_use(block, check_err or "success")
                         )
                         is_completed = check_err is None
+                        if is_completed:
+                            await node.data.workspace.exec_mut(
+                                [
+                                    "uv",
+                                    "export",
+                                    "--no-hashes",
+                                    "--format",
+                                    "requirements-txt",
+                                ]
+                            )
                     case unknown:
                         raise ValueError(f"Unknown tool: {unknown}")
             except FileNotFoundError as e:
@@ -350,13 +360,17 @@ class NiceguiActor(BaseActor, LLMActor):
         return False
 
     async def run_type_checks(self, node: Node[BaseData]) -> str | None:
-        type_check_result = await node.data.workspace.exec(["uv", "run", "pyright", "."])
+        type_check_result = await node.data.workspace.exec(
+            ["uv", "run", "pyright", "."]
+        )
         if type_check_result.exit_code != 0:
             return f"{type_check_result.stdout}\n{type_check_result.stderr}"
         return None
 
     async def run_lint_checks(self, node: Node[BaseData]) -> str | None:
-        lint_result = await node.data.workspace.exec(["uv", "run", "ruff", "check", ".", "--fix"])
+        lint_result = await node.data.workspace.exec(
+            ["uv", "run", "ruff", "check", ".", "--fix"]
+        )
         if lint_result.exit_code != 0:
             return f"{lint_result.stdout}\n{lint_result.stderr}"
         return None
@@ -372,6 +386,7 @@ class NiceguiActor(BaseActor, LLMActor):
         results = {}
 
         async with anyio.create_task_group() as tg:
+
             async def run_and_store(key, coro):
                 """Helper to run a coroutine and store its result in the results dict."""
                 try:

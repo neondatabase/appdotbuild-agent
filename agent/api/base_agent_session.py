@@ -8,7 +8,7 @@ import dagger
 from anyio.streams.memory import MemoryObjectSendStream
 
 from llm.common import ContentBlock, InternalMessage, TextRaw
-from llm.utils import AsyncLLM, get_best_coding_llm_client, get_ultra_fast_llm_client
+from llm.utils import AsyncLLM, get_ultra_fast_llm_client, get_universal_llm_client, get_best_coding_llm_client
 from api.fsm_tools import FSMToolProcessor, FSMStatus, FSMInterface
 from api.snapshot_utils import snapshot_saver
 from core.statemachine import MachineCheckpoint
@@ -51,7 +51,7 @@ class BaseAgentSession(AgentInterface, ABC):
         self.settings = settings or {}
         self.fsm_application_class = fsm_application_class
         self.processor_instance = FSMToolProcessor(client, fsm_application_class)
-        self.llm_client: AsyncLLM = get_best_coding_llm_client()
+        # self.llm_client: AsyncLLM = get_best_coding_llm_client()
         self.model_params = {
             "max_tokens": 8192,
         }
@@ -163,7 +163,7 @@ class BaseAgentSession(AgentInterface, ABC):
             logger.info(f"Last user message: {fsm_message_history[-1].content}")
 
             lite_client = get_ultra_fast_llm_client()
-            top_level_agent_llm = get_best_coding_llm_client()
+            top_level_agent_llm = get_universal_llm_client()
 
             while True:
                 logger.info("Looping into next step")
@@ -192,12 +192,12 @@ class BaseAgentSession(AgentInterface, ABC):
                         unified_diff=None,
                         app_name=app_name
                     )
-                    
+
                     logger.info("Getting initial template diff")
-                    
+
                     # Communicate the app name and commit message and template diff to the client
                     initial_template_diff = await self.processor_instance.fsm_app.get_diff_with({})
-                    
+
                     logger.info("Sending initial template diff")
                     agent_state["metadata"].update({"app_name": app_name, "template_diff_sent": True})
                     await self.send_event(

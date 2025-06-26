@@ -304,6 +304,7 @@ app/metrics_tabs.py
 
 - Each block starts with a complete file path followed by newline with content enclosed with pair of ```.
 - SEARCH / REPLACE requires precise matching indentation for both search and replace parts.
+- Only one SEARCH / REPLACE when the change is small and can be applied locally. Otherwise use WHOLE format.
 """.strip()
 
 

@@ -5,7 +5,7 @@ import enum
 from typing import Dict, Self, Optional, Literal, Any
 from dataclasses import dataclass, field
 from core.statemachine import StateMachine, State, Context
-from llm.utils import get_llm_client
+from llm.utils import get_best_coding_llm_client
 from core.actors import BaseData
 from core.base_node import Node
 from core.statemachine import MachineCheckpoint
@@ -148,13 +148,21 @@ class FSMApplication:
             logger.exception("Setting error in context:", exc_info=error)
             ctx.error = str(error)
 
-        llm = get_llm_client()
+        llm = get_best_coding_llm_client()
         workspace = await Workspace.create(
             client=client,
             base_image="alpine:3.21.3",
             context=client.host().directory("./nicegui_agent/template"),
             setup_cmd=[
-                ["apk", "add", "--update", "--no-cache", "curl", "python3", "nodejs"],  # node for pyright
+                [
+                    "apk",
+                    "add",
+                    "--update",
+                    "--no-cache",
+                    "curl",
+                    "python3",
+                    "nodejs",
+                ],  # node for pyright
                 [
                     "sh",
                     "-c",
@@ -167,7 +175,8 @@ class FSMApplication:
         nicegui_actor = NiceguiActor(
             llm=llm,
             workspace=workspace,
-            beam_width=1,
+            beam_width=2,
+            max_depth=50,
         )
 
         # Define state machine states
