@@ -148,6 +148,26 @@ class FSMApplication:
             logger.exception("Setting error in context:", exc_info=error)
             ctx.error = str(error)
 
+        async def export_requirements(
+            ctx: ApplicationContext, result: Node[BaseData]
+        ) -> None:
+            await result.data.workspace.exec_mut(
+                    [
+                        "uv",
+                        "export",
+                        "--no-hashes",
+                        "--format",
+                        "requirements-txt",
+                        "--output-file",
+                        "requirements.txt",
+                        "--no-dev"
+                    ]
+                )
+            reqs = await result.data.workspace.read_file("requirements.txt")
+            if reqs:
+                ctx.files["requirements.txt"] = reqs
+
+
         llm = get_best_coding_llm_client()
         workspace = await Workspace.create(
             client=client,
@@ -195,7 +215,7 @@ class FSMApplication:
                         ),
                         "on_done": {
                             "target": FSMState.REVIEW_APPLICATION,
-                            "actions": [update_node_files],
+                            "actions": [update_node_files, export_requirements],
                         },
                         "on_error": {
                             "target": FSMState.FAILURE,

@@ -317,19 +317,6 @@ class NiceguiActor(BaseActor, LLMActor):
                             ToolUseResult.from_tool_use(block, check_err or "success")
                         )
                         is_completed = check_err is None
-                        if is_completed:
-                            await node.data.workspace.exec_mut(
-                                [
-                                    "uv",
-                                    "export",
-                                    "--no-hashes",
-                                    "--format",
-                                    "requirements-txt",
-                                    "--output-file",
-                                    "app/requirements.txt",
-                                    "--no-dev"
-                                ]
-                            )
 
                     case unknown:
                         raise ValueError(f"Unknown tool: {unknown}")
