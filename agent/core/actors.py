@@ -15,6 +15,7 @@ class BaseData:
     workspace: Workspace
     messages: list[Message]
     files: dict[str, str | None] = dataclasses.field(default_factory=dict)
+    should_branch: bool = False
 
     def head(self) -> Message:
         if (num_messages := len(self.messages)) != 1:
@@ -38,6 +39,7 @@ class BaseActor(statemachine.Actor):
         return {
             "messages": [msg.to_dict() for msg in data.messages],
             "files": data.files,
+            "should_branch": data.should_branch,
         }
 
     async def load_data(self, data: dict, workspace: Workspace) -> BaseData:
@@ -47,7 +49,7 @@ class BaseActor(statemachine.Actor):
             else:
                 workspace.rm(file)
         messages = [Message.from_dict(msg) for msg in data["messages"]]
-        return BaseData(workspace, messages, data["files"])
+        return BaseData(workspace, messages, data["files"], data.get("should_branch", False))
 
     async def dump_node(self, node: Node[BaseData]) -> list[dict]:
         stack, result = [node], []

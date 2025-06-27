@@ -205,15 +205,14 @@ class NiceguiActor(BaseActor, LLMActor):
         return solution
 
     def select(self, node: Node[BaseData]) -> list[Node[BaseData]]:
-        if node.is_leaf:
-            logger.info(f"Selecting root node {self.beam_width} times (beam search)")
-            return [node] * self.beam_width
-
-        def is_expandable(node: Node[BaseData]) -> bool:
-            return node.is_leaf and node.depth <= self.max_depth
-
-        candidates = [n for n in node.get_all_children() if is_expandable(n)]
-        logger.debug(f"Selected {len(candidates)} leaf nodes for evaluation")
+        candidates = []
+        for n in node.get_all_children():
+            if n.is_leaf and n.depth <= self.max_depth:
+                if n.data.should_branch:
+                    candidates.extend([n] * self.beam_width)
+                else:
+                    candidates.append(n)
+        logger.info(f"Selected {len(candidates)} leaf nodes for evaluation")
         return candidates
 
     @property
@@ -316,6 +315,7 @@ class NiceguiActor(BaseActor, LLMActor):
                         result.append(
                             ToolUseResult.from_tool_use(block, check_err or "success")
                         )
+                        node.data.should_branch = True
                         is_completed = check_err is None
 
                     case unknown:
