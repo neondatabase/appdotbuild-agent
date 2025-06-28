@@ -110,12 +110,12 @@ async def run_write_files(node: Node[BaseData], event_callback = None) -> TextRa
         # Calculate edit vs new file counts
         edit_count = sum(1 for item in parsed_files if isinstance(item, FileDiff))
         new_count = sum(1 for item in parsed_files if isinstance(item, File))
-        
+
         await notify_files_processed(
-            event_callback, 
-            all_files_written, 
-            edit_count=edit_count, 
-            new_count=new_count, 
+            event_callback,
+            all_files_written,
+            edit_count=edit_count,
+            new_count=new_count,
             operation_type="edit"
         )
 
@@ -153,7 +153,7 @@ class EditActor(BaseActor, LLMActor):
         feedback: str,
     ) -> Node[BaseData]:
         await notify_if_callback(self.event_callback, "🛠️ Applying requested changes...", "edit start")
-        
+
         workspace = self.workspace.clone()
         logger.info(f"Start EditActor execution with files: {files.keys()}")
         for file_path, content in files.items():
@@ -177,7 +177,7 @@ class EditActor(BaseActor, LLMActor):
             feedback=feedback
         )
         message = Message(role="user", content=[TextRaw(user_prompt_rendered)])
-        self.root = Node(BaseData(workspace, [message], {}))
+        self.root = Node(BaseData(workspace, [message], {}, True))
 
         solution: Node[BaseData] | None = None
         iteration = 0
@@ -212,15 +212,14 @@ class EditActor(BaseActor, LLMActor):
         return solution
 
     def select(self, node: Node[BaseData]) -> list[Node[BaseData]]:
-        if node.is_leaf:
-            logger.info(f"Selecting root node {self.beam_width} times (beam search)")
-            return [node] * self.beam_width
-
-        def is_expandable(node: Node[BaseData]) -> bool:
-            return node.is_leaf and node.depth <= self.max_depth
-
-        candidates = [n for n in node.get_all_children() if is_expandable(n)]
-        logger.debug(f"Selected {len(candidates)} leaf nodes for evaluation")
+        candidates = []
+        for n in node.get_all_children():
+            if n.is_leaf and n.depth <= self.max_depth:
+                if n.data.should_branch:
+                    candidates.extend([n] * self.beam_width)
+                else:
+                    candidates.append(n)
+        logger.info(f"Selected {len(candidates)} leaf nodes for evaluation")
         return candidates
 
     @property
@@ -280,6 +279,7 @@ class EditActor(BaseActor, LLMActor):
                             raise ValueError("Can not complete without writing any changes.")
                         check_err = await self.run_checks(node, user_prompt)
                         result.append(ToolUseResult.from_tool_use(block, check_err or "success"))
+                        node.data.should_branch = True
                         is_completed = check_err is None
                     case unknown:
                         raise ValueError(f"Unknown tool: {unknown}")
@@ -322,7 +322,7 @@ class EditActor(BaseActor, LLMActor):
 
         # client tsc compile - should be refactored for the consistency
         await notify_if_callback(self.event_callback, "🔧 Compiling frontend TypeScript...", "frontend compile start")
-        
+
         tsc_result = await node.data.workspace.exec(["bun", "run", "tsc", "-p", "tsconfig.app.json", "--noEmit"], cwd="client")
         if tsc_result.exit_code != 0:
             await notify_if_callback(self.event_callback, "❌ Frontend TypeScript compilation failed", "frontend compile failure")
@@ -342,9 +342,9 @@ class EditActor(BaseActor, LLMActor):
         if playwright_result:
             await notify_if_callback(self.event_callback, "❌ UI validation failed - adjusting...", "playwright failure")
             return "\n".join(playwright_result)
-        
+
         await notify_if_callback(self.event_callback, "✅ All validations passed!", "validation success")
-        
+
         return None
 
     @property
