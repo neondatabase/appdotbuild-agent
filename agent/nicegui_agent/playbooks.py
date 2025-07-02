@@ -1,35 +1,101 @@
+PYTHON_RULES = """
+# Universal Python rules
+1. `uv` is used for dependency management
+2. Always use absolute imports
+"""
+
 DATA_MODEL_RULES = """
 # Data model
 
-Keep data model in a separate file app/models.py. Use Pydantic to define data models.
+Keep data models organized in separate files:
+- app/models.py for SQLModel ORM models (persistent data with automatic migrations)
+- app/schemas.py for additional Pydantic models if needed (validation and serialization)
 
 app/models.py
 ```
-from pydantic import BaseModel
+from sqlmodel import SQLModel, Field, Relationship
+from datetime import datetime
+from typing import Optional, List
 
-class User(BaseModel):
-    id: int
-    name: str
-    email: str
-    is_active: bool = True
+class User(SQLModel, table=True):
+    __tablename__ = "users"
 
-class Task(BaseModel):
-    id: int
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=100)
+    email: str = Field(unique=True, max_length=255)
+    is_active: bool = Field(default=True)
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+    tasks: List["Task"] = Relationship(back_populates="user")
+
+class Task(SQLModel, table=True):
+    __tablename__ = "tasks"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(max_length=200)
+    description: str = Field(default="", max_length=1000)
+    completed: bool = Field(default=False)
+    user_id: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+    user: Optional[User] = Relationship(back_populates="tasks")
+```
+
+app/schemas.py (optional - only if you need additional validation models that are not directly tied to database persistence)
+```
+from sqlmodel import SQLModel
+from typing import Optional
+
+class TaskCreate(SQLModel):
     title: str
     description: str = ""
     completed: bool = False
-    user_id: int
+    user_id: Optional[int] = None
+
+class TaskUpdate(SQLModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    completed: Optional[bool] = None
+
+class UserCreate(SQLModel):
+    name: str
+    email: str
+    is_active: bool = True
+```
+
+# Database connection setup
+
+Template app/database.py has required base for database connection and table creation:
+
+app/database.py
+```
+import os
+from sqlmodel import SQLModel, create_engine, Session
+from app.models import *  # Import all models to ensure they're registered
+
+DATABASE_URL = os.environ.get("APP_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
+
+engine = create_engine(DATABASE_URL, echo=True)
+
+def create_tables():
+    SQLModel.metadata.create_all(engine)
+
+def get_session():
+    with Session(engine) as session:
+        yield session
 ```
 
 # Data structures and schemas
 
-- Define all data classes, enums, and type definitions
-- Create validation schemas using Pydantic
-- Prefer non-optional fields (with default values if reasonable) over Optional types
-- Define database models if needed (SQLAlchemy, etc.)
-- Create data transformation utilities
-- Include serialization/deserialization methods
+- Define SQLModel classes in app/models.py for database persistence
+- SQLModel combines Pydantic validation with SQLAlchemy ORM functionality
+- Use Field() for column constraints and relationships
+- Use Relationship() for foreign key relationships
+- Call create_tables() on application startup to create/update schema
+- SQLModel handles migrations automatically through create_all()
 - DO NOT create UI components or event handlers in data model files
+- Use Optional[int] for auto-incrementing primary keys
+- Use datetime.utcnow as default_factory for timestamps
 """
 
 APPLICATION_RULES = """
@@ -278,6 +344,8 @@ async def test_csv_upload(user: User) -> None:
 DATA_MODEL_SYSTEM_PROMPT = f"""
 You are a software engineer specializing in data modeling. Your task is to design and implement data models, schemas, and data structures for a NiceGUI application. Strictly follow provided rules.
 
+{PYTHON_RULES}
+
 {DATA_MODEL_RULES}
 
 # Expected output format
@@ -303,7 +371,6 @@ class Task(BaseModel):
     priority: Priority = Priority.MEDIUM
     created_at: datetime
     completed: bool = False
-
 
 class TaskList(BaseModel):
     name: str
@@ -342,6 +409,8 @@ class TaskCreate(BaseModel):
 
 APPLICATION_SYSTEM_PROMPT = f"""
 You are a software engineer specializing in NiceGUI application development. Your task is to build UI components and application logic using existing data models. Strictly follow provided rules.
+
+{PYTHON_RULES}
 
 {APPLICATION_RULES}
 

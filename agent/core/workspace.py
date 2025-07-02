@@ -163,7 +163,7 @@ class Workspace:
             self.ctr
             .with_exec(["apk", "--update", "add", "postgresql-client"]) # TODO: might be not needed
             .with_service_binding("postgres", postgresdb)
-            .with_env_variable("APP_DATABASE_URL", "postgres://postgres:postgres@postgres:5432/postgres")
+            .with_env_variable("APP_DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/postgres")
             .with_exec(["sh", "-c", "while ! pg_isready -h postgres -U postgres; do sleep 1; done"])
             .with_workdir(cwd)
             .with_exec(command, expect=ReturnType.ANY)

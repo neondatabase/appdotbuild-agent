@@ -7,7 +7,7 @@ services:
     environment:
       - NICEGUI_STORAGE_SECRET=${NICEGUI_STORAGE_SECRET:-STORAGE_SECRET}
       - NICEGUI_PORT=8000
-      - APP_DATABASE_URL=${APP_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/postgres}
+      - APP_DATABASE_URL=${APP_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/postgres}
     depends_on:
       postgres:
         condition: service_healthy

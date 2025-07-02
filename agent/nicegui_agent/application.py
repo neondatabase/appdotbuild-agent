@@ -108,10 +108,11 @@ class FSMApplication:
     def base_execution_plan(cls) -> str:
         return "\n".join(
             [
-                "1. Data model generation - Define data structures, schemas, and models",
-                "2. Application generation - Implement UI components and application logic",
+                "1. Data model generation - Define data structures, schemas, and models. ",
+                "2. Application generation - Implement UI components and application logic. ",
                 "",
-                "The result application will be based on Python and NiceGUI framework. The application can include various UI components, event handling, and state management.",
+                "The result application will be based on Python and NiceGUI framework. Persistent data will be stored in Postgres with SQLModel ORM. "
+                "The application can include various UI components, event handling, and state management.",
             ]
         )
 

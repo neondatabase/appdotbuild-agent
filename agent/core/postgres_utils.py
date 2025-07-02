@@ -1,7 +1,7 @@
 import uuid
 import dagger
 
-def create_postgres_service(client: dagger.Client):
+def create_postgres_service(client: dagger.Client) -> dagger.Service:
     """Create a PostgreSQL service with unique instance ID."""
     return (
         client.container()

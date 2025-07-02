@@ -376,9 +376,35 @@ class NiceguiActor(BaseActor, LLMActor):
         return None
 
     async def run_tests(self, node: Node[BaseData]) -> str | None:
-        pytest_result = await node.data.workspace.exec(["uv", "run", "pytest"])
+        pytest_result = await node.data.workspace.exec_with_pg(["uv", "run", "pytest"])
         if pytest_result.exit_code != 0:
             return f"{pytest_result.stdout}\n{pytest_result.stderr}"
+        return None
+
+    async def run_sqlmodel_checks(self, node: Node[BaseData]) -> str | None:
+        """Run SQLModel validation if models exist."""
+        # Check if models.py exists and contains SQLModel
+        try:
+            models_content = await node.data.workspace.read_file("app/models.py")
+            if "SQLModel" not in models_content:
+                return None  # No SQLModel models to validate
+        except FileNotFoundError:
+            return None  # No models file
+
+        # Check if database.py exists
+        try:
+            await node.data.workspace.read_file("app/database.py")
+        except FileNotFoundError:
+            return "Database configuration missing: app/database.py file not found"
+
+        # Run the smoke test
+        smoke_test = await node.data.workspace.exec_with_pg(
+            ["uv", "run", "pytest", "-m", "sqlmodel", "-v"]
+        )
+        if smoke_test.exit_code != 0:
+            return (
+                f"SQLModel validation failed:\n{smoke_test.stdout}\n{smoke_test.stderr}"
+            )
         return None
 
     async def run_checks(self, node: Node[BaseData], user_prompt: str) -> str | None:
@@ -399,6 +425,7 @@ class NiceguiActor(BaseActor, LLMActor):
             tg.start_soon(run_and_store, "lint", self.run_lint_checks(node))
             tg.start_soon(run_and_store, "type_check", self.run_type_checks(node))
             tg.start_soon(run_and_store, "tests", self.run_tests(node))
+            tg.start_soon(run_and_store, "sqlmodel", self.run_sqlmodel_checks(node))
 
         if lint_result := results.get("lint"):
             logger.info(f"Lint checks failed: {lint_result}")
@@ -409,6 +436,9 @@ class NiceguiActor(BaseActor, LLMActor):
         if test_result := results.get("tests"):
             logger.info(f"Tests failed: {test_result}")
             all_errors += f"Test errors:\n{test_result}\n"
+        if sqlmodel_result := results.get("sqlmodel"):
+            logger.info(f"SQLModel checks failed: {sqlmodel_result}")
+            all_errors += f"SQLModel errors:\n{sqlmodel_result}\n"
 
         if all_errors:
             return all_errors.strip()
@@ -424,6 +454,7 @@ class NiceguiActor(BaseActor, LLMActor):
             "pyproject.toml",
             "main.py",
             "tests/conftest.py",
+            "tests/test_sqlmodel_smoke.py",
         ]
 
     async def get_repo_files(
