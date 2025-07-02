@@ -204,6 +204,7 @@ class FSMApplication:
             max_depth=50,
             system_prompt=playbooks.DATA_MODEL_SYSTEM_PROMPT,
         )
+        # ToDo: propagate crucial template files to DATA_MODEL_SYSTEM_PROMPT so they're cached
         app_actor = NiceguiActor(
             llm=llm,
             workspace=workspace.clone(),

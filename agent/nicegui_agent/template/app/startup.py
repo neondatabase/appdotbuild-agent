@@ -1,5 +1,6 @@
-from nicegui import Client, ui
+from app.database import create_tables
 
 
 def startup() -> None:
-    return
+    # this function is called before the first request
+    create_tables()

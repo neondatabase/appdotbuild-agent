@@ -382,22 +382,10 @@ class NiceguiActor(BaseActor, LLMActor):
         return None
 
     async def run_sqlmodel_checks(self, node: Node[BaseData]) -> str | None:
-        """Run SQLModel validation if models exist."""
-        # Check if models.py exists and contains SQLModel
-        try:
-            models_content = await node.data.workspace.read_file("app/models.py")
-            if "SQLModel" not in models_content:
-                return None  # No SQLModel models to validate
-        except FileNotFoundError:
-            return None  # No models file
-
-        # Check if database.py exists
         try:
             await node.data.workspace.read_file("app/database.py")
         except FileNotFoundError:
             return "Database configuration missing: app/database.py file not found"
-
-        # Run the smoke test
         smoke_test = await node.data.workspace.exec_with_pg(
             ["uv", "run", "pytest", "-m", "sqlmodel", "-v"]
         )

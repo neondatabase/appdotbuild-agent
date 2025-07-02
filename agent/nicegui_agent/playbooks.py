@@ -41,26 +41,17 @@ class Task(SQLModel, table=True):
     user: Optional[User] = Relationship(back_populates="tasks")
 ```
 
-app/schemas.py (optional - only if you need additional validation models that are not directly tied to database persistence)
+app/schemas.py (optional - only if you need additional validation models that are not directly tied to database persistence, e.g. for API endpoints, forms, temporary UI elements)
 ```
-from sqlmodel import SQLModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
-class TaskCreate(SQLModel):
-    title: str
-    description: str = ""
-    completed: bool = False
-    user_id: Optional[int] = None
+class CreateNewTaskForm(BaseModel):
+    title: str = Field(..., max_length=200)
+    description: Optional[str] = Field(default="", max_length=1000)
+    completed: bool = Field(default=False)
+    user_id: Optional[int] = Field(default=None, description="ID of the user who owns the task")
 
-class TaskUpdate(SQLModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    completed: Optional[bool] = None
-
-class UserCreate(SQLModel):
-    name: str
-    email: str
-    is_active: bool = True
 ```
 
 # Database connection setup
@@ -73,15 +64,15 @@ import os
 from sqlmodel import SQLModel, create_engine, Session
 from app.models import *  # Import all models to ensure they're registered
 
-DATABASE_URL = os.environ.get("APP_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
+DATABASE_URL = os.environ.get("APP_DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/postgres")
 
-engine = create_engine(DATABASE_URL, echo=True)
+ENGINE = create_engine(DATABASE_URL, echo=True)
 
 def create_tables():
-    SQLModel.metadata.create_all(engine)
+    SQLModel.metadata.create_all(ENGINE)
 
 def get_session():
-    with Session(engine) as session:
+    with Session(ENGINE) as session:
         yield session
 ```
 
@@ -121,6 +112,7 @@ from nicegui import ui
 import word_counter
 
 def startup() -> None:
+    create_tables()
     word_counter.create()
 ```
 
@@ -143,7 +135,8 @@ Examples:
 
 # State management
 
-Use appropriate storage mechanisms provided by NiceGUI.
+For persistent data, use PostgreSQL database with SQLModel ORM.
+For temporary data, use NiceGUI's storage mechanisms:
 
 app.storage.tab: Stored server-side in memory, unique to each tab session. Data is lost when restarting the server. Only available within page builder functions after establishing connection.
 
