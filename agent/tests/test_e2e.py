@@ -54,13 +54,23 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=Non
         async with AgentApiClient() as client:
             events, request = await client.send_message(prompt, template_id=template_id)
             assert events, "No response received from agent"
-            while events[-1].message.kind == MessageKind.REFINEMENT_REQUEST:
+            max_refinements = 5
+            refinement_count = 0
+            
+            while (events[-1].message.kind == MessageKind.REFINEMENT_REQUEST and 
+                   refinement_count < max_refinements):
                 events, request = await client.continue_conversation(
                     previous_events=events,
                     previous_request=request,
                     message="just do it! no more questions, please",
                     template_id=template_id,
                 )
+                refinement_count += 1
+                logger.info(f"Refinement attempt {refinement_count}/{max_refinements}")
+            
+            if refinement_count >= max_refinements:
+                logger.error("Maximum refinement attempts exceeded")
+                raise RuntimeError("Agent stuck in refinement loop - exceeded maximum attempts")
 
             diff = latest_unified_diff(events)
             assert diff, "No diff was generated in the agent response"
