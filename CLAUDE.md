@@ -10,7 +10,28 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Known Issues and Workarounds
 
-*[Document any known issues or quirks in the codebase that Claude should be aware of]*
+### Function Calling Model Compatibility
+
+Not all Ollama models support function calling properly, which is required for the agent's FSM tools to work correctly. Models that don't support function calling will cause endless refinement loops.
+
+**Compatible Models (tested):**
+- `llama3.3:latest` ✅
+- `devstral:latest` ✅
+
+**Incompatible Models:**
+- `qwen2.5-coder:32b` ❌ (returns function calls as text)
+- `gemma3:27b` ❌ (explicitly doesn't support tools)
+
+**Symptoms of incompatible models:**
+- Agent gets stuck in endless refinement loops
+- Generate command hits the 5-attempt limit and fails
+- Models return function calls as plain text instead of using tool_calls format
+
+**Solution:** Use a function calling compatible model in `.env`:
+```bash
+LLM_BEST_CODING_MODEL=llama3.3:latest
+LLM_UNIVERSAL_MODEL=llama3.3:latest
+```
 
 ## Contributing Guidelines
 
