@@ -18,8 +18,14 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import uvicorn
 from fire import Fire
-import dagger
 import os
+# Disable dagger telemetry
+os.environ["DO_NOT_TRACK"] = "1"
+os.environ["OTEL_TRACES_EXPORTER"] = "none"
+os.environ["OTEL_METRICS_EXPORTER"] = "none"
+os.environ["OTEL_LOGS_EXPORTER"] = "none"
+
+import dagger
 import json
 from brotli_asgi import BrotliMiddleware
 from dotenv import load_dotenv
