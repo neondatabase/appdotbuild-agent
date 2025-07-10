@@ -10,7 +10,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Known Issues and Workarounds
 
-*[Add known issues and workarounds here]*
+*[Document any known issues or quirks in the codebase that Claude should be aware of]*
 
 ## Contributing Guidelines
 
