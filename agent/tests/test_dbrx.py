@@ -1,19 +1,26 @@
 import pytest
 import polars as pl
 
-from integrations.dbrx import DatabricksClient, TableMetadata, TableDetails, ColumnMetadata
+from integrations.dbrx import (
+    DatabricksClient,
+    TableMetadata,
+    TableDetails,
+    ColumnMetadata,
+)
 from tests.test_utils import requires_databricks, requires_databricks_reason
 
 pytestmark = pytest.mark.anyio
 
+
 @pytest.fixture
 def anyio_backend():
-    return 'asyncio'
+    return "asyncio"
+
 
 @pytest.fixture(scope="module")
 def databricks_client():
     """Create a real Databricks client for testing.
-    
+
     Uses module scope to reuse the same client instance across all tests,
     which allows the LRU cache to be effective.
     """
@@ -141,7 +148,7 @@ async def test_execute_query_validation_non_select(databricks_client):
         "CREATE TABLE test AS SELECT 1",
         "INSERT INTO test VALUES (1)",
         "UPDATE test SET col = 1",
-        "DELETE FROM test"
+        "DELETE FROM test",
     ]
 
     for query in invalid_queries:
@@ -152,7 +159,9 @@ async def test_execute_query_validation_non_select(databricks_client):
 @pytest.mark.skipif(requires_databricks(), reason=requires_databricks_reason)
 async def test_execute_query_invalid_table(databricks_client):
     """Test executing query on non-existent table."""
-    invalid_query = "SELECT * FROM non_existent_catalog.non_existent_schema.non_existent_table"
+    invalid_query = (
+        "SELECT * FROM non_existent_catalog.non_existent_schema.non_existent_table"
+    )
 
     with pytest.raises(RuntimeError, match="Query failed"):
         databricks_client.execute_query(invalid_query)
@@ -177,7 +186,9 @@ async def test_has_table_access_existing_table(databricks_client):
 async def test_has_table_access_nonexistent_table(databricks_client):
     """Test access check for non-existent table."""
     # use a clearly non-existent table name
-    nonexistent_table = "definitely_nonexistent_catalog.nonexistent_schema.nonexistent_table"
+    nonexistent_table = (
+        "definitely_nonexistent_catalog.nonexistent_schema.nonexistent_table"
+    )
 
     has_access = databricks_client._has_table_access(nonexistent_table)
     assert has_access is False
@@ -190,7 +201,7 @@ async def test_get_table_details_invalid_table_name_format(databricks_client):
         "just_table_name",
         "schema.table",
         "catalog.schema.table.extra",
-        ""
+        "",
     ]
 
     for invalid_name in invalid_names:

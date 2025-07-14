@@ -45,14 +45,15 @@ class TableDetails:
 
 
 class DatabricksClient:
-
     def __init__(self, workspace_client: Optional[WorkspaceClient] = None):
         self.client = workspace_client or WorkspaceClient()
         logger.info("Initialized Databricks client")
 
     def _get_warehouse_id(self) -> str:
         """Get an available warehouse ID, preferring running warehouses."""
-        running_warehouses = [x for x in self.client.warehouses.list() if x.state == State.RUNNING]
+        running_warehouses = [
+            x for x in self.client.warehouses.list() if x.state == State.RUNNING
+        ]
         if not running_warehouses:
             warehouses = list(self.client.warehouses.list())
             if not warehouses:
@@ -69,9 +70,11 @@ class DatabricksClient:
         self,
         catalog: str = "samples",
         schema: str = "*",
-        exclude_inaccessible: bool = True
+        exclude_inaccessible: bool = True,
     ) -> List[TableMetadata]:
-        logger.info(f"Listing tables: catalog={catalog}, schema={schema}, exclude_inaccessible={exclude_inaccessible}")
+        logger.info(
+            f"Listing tables: catalog={catalog}, schema={schema}, exclude_inaccessible={exclude_inaccessible}"
+        )
 
         tables = []
 
@@ -91,7 +94,9 @@ class DatabricksClient:
             if schema == "*":
                 schemas = list(self.client.schemas.list(catalog_name=catalog_name))
                 schema_names = [s.name for s in schemas if s.name]
-                logger.debug(f"Found {len(schema_names)} schemas in catalog {catalog_name}")
+                logger.debug(
+                    f"Found {len(schema_names)} schemas in catalog {catalog_name}"
+                )
             else:
                 schema_names = [schema]
 
@@ -100,48 +105,71 @@ class DatabricksClient:
                 if not schema_name:
                     continue
                 # List tables in schema
-                table_list = list(self.client.tables.list(
-                    catalog_name=catalog_name,
-                    schema_name=schema_name
-                ))
-                logger.debug(f"Found {len(table_list)} tables in {catalog_name}.{schema_name}")
+                table_list = list(
+                    self.client.tables.list(
+                        catalog_name=catalog_name, schema_name=schema_name
+                    )
+                )
+                logger.debug(
+                    f"Found {len(table_list)} tables in {catalog_name}.{schema_name}"
+                )
 
                 for table in table_list:
                     # Skip if exclude_inaccessible is True and we can't access
-                    if exclude_inaccessible and table.full_name and not self._has_table_access(table.full_name):
+                    if (
+                        exclude_inaccessible
+                        and table.full_name
+                        and not self._has_table_access(table.full_name)
+                    ):
                         logger.debug(f"Skipping inaccessible table: {table.full_name}")
                         continue
 
                     # Skip tables with missing required fields
-                    if not all([table.name, table.full_name, catalog_name, schema_name]):
-                        logger.debug(f"Skipping table with missing required fields")
+                    if not all(
+                        [table.name, table.full_name, catalog_name, schema_name]
+                    ):
+                        logger.debug("Skipping table with missing required fields")
                         continue
 
-                    tables.append(TableMetadata(
-                        catalog=catalog_name,
-                        schema=schema_name,
-                        name=table.name,  # type: ignore
-                        full_name=table.full_name,  # type: ignore
-                        table_type=table.table_type.value if table.table_type else "UNKNOWN",
-                        owner=table.owner,
-                        comment=None,  # don't include comment in list_tables
-                        storage_location=table.storage_location,
-                        data_source_format=table.data_source_format.value if table.data_source_format else None,
-                        created_at=str(table.created_at) if table.created_at else None,
-                        updated_at=str(table.updated_at) if table.updated_at else None
-                    ))
+                    tables.append(
+                        TableMetadata(
+                            catalog=catalog_name,
+                            schema=schema_name,
+                            name=table.name,  # type: ignore
+                            full_name=table.full_name,  # type: ignore
+                            table_type=table.table_type.value
+                            if table.table_type
+                            else "UNKNOWN",
+                            owner=table.owner,
+                            comment=None,  # don't include comment in list_tables
+                            storage_location=table.storage_location,
+                            data_source_format=table.data_source_format.value
+                            if table.data_source_format
+                            else None,
+                            created_at=str(table.created_at)
+                            if table.created_at
+                            else None,
+                            updated_at=str(table.updated_at)
+                            if table.updated_at
+                            else None,
+                        )
+                    )
 
         logger.info(f"Found {len(tables)} accessible tables")
         return tables
 
     @lru_cache(maxsize=128)
-    def get_table_details(self, table_full_name: str, sample_size: int = 10) -> TableDetails:
+    def get_table_details(
+        self, table_full_name: str, sample_size: int = 10
+    ) -> TableDetails:
         logger.info(f"Getting details for table: {table_full_name}")
 
         # Parse table metadata
         parts = table_full_name.split(".")
         if len(parts) != 3:
-            raise ValueError(f"Invalid table name format: {table_full_name}. Expected catalog.schema.table")
+            raise ValueError(
+                f"Invalid table name format: {table_full_name}. Expected catalog.schema.table"
+            )
 
         # Get table metadata
         table = self.client.tables.get(table_full_name)
@@ -155,9 +183,11 @@ class DatabricksClient:
             owner=table.owner,
             comment=table.comment,
             storage_location=table.storage_location,
-            data_source_format=table.data_source_format.value if table.data_source_format else None,
+            data_source_format=table.data_source_format.value
+            if table.data_source_format
+            else None,
             created_at=str(table.created_at) if table.created_at else None,
-            updated_at=str(table.updated_at) if table.updated_at else None
+            updated_at=str(table.updated_at) if table.updated_at else None,
         )
 
         # Parse columns
@@ -165,13 +195,15 @@ class DatabricksClient:
         if table.columns:
             for i, col in enumerate(table.columns):
                 if col.name and col.type_name:
-                    columns.append(ColumnMetadata(
-                        name=col.name,
-                        data_type=str(col.type_name),
-                        comment=col.comment,
-                        nullable=col.nullable,
-                        position=i
-                    ))
+                    columns.append(
+                        ColumnMetadata(
+                            name=col.name,
+                            data_type=str(col.type_name),
+                            comment=col.comment,
+                            nullable=col.nullable,
+                            position=i,
+                        )
+                    )
 
         # Get sample data
         sample_data = None
@@ -184,30 +216,40 @@ class DatabricksClient:
         warehouse_id = self._get_warehouse_id()
 
         execution = self.client.statement_execution.execute_statement(
-            warehouse_id=warehouse_id,
-            statement=sample_query,
-            wait_timeout="30s"
+            warehouse_id=warehouse_id, statement=sample_query, wait_timeout="30s"
         )
 
         if execution.status and execution.status.state != StatementState.SUCCEEDED:
-            raise RuntimeError(f"Sample query failed with state: {execution.status.state}")
+            raise RuntimeError(
+                f"Sample query failed with state: {execution.status.state}"
+            )
 
         # Convert result to polars DataFrame
-        if execution.result and execution.result.data_array and execution.manifest and execution.manifest.schema and execution.manifest.schema.columns:
-            col_names = [col.name for col in execution.manifest.schema.columns if col.name]
-            sample_data = pl.DataFrame(execution.result.data_array, schema=col_names, orient="row")
+        if (
+            execution.result
+            and execution.result.data_array
+            and execution.manifest
+            and execution.manifest.schema
+            and execution.manifest.schema.columns
+        ):
+            col_names = [
+                col.name for col in execution.manifest.schema.columns if col.name
+            ]
+            sample_data = pl.DataFrame(
+                execution.result.data_array, schema=col_names, orient="row"
+            )
             logger.debug(f"Retrieved {len(sample_data)} sample rows")
 
         # Get row count
         count_query = f"SELECT COUNT(*) as count FROM {table_full_name}"
         execution = self.client.statement_execution.execute_statement(
-            warehouse_id=warehouse_id,
-            statement=count_query,
-            wait_timeout="30s"
+            warehouse_id=warehouse_id, statement=count_query, wait_timeout="30s"
         )
 
         if execution.status and execution.status.state != StatementState.SUCCEEDED:
-            raise RuntimeError(f"Count query failed with state: {execution.status.state}")
+            raise RuntimeError(
+                f"Count query failed with state: {execution.status.state}"
+            )
 
         if execution.result and execution.result.data_array:
             if execution.result.data_array:
@@ -222,7 +264,7 @@ class DatabricksClient:
             metadata=metadata,
             columns=columns,
             sample_data=sample_data,
-            row_count=row_count
+            row_count=row_count,
         )
 
     def _has_table_access(self, table_full_name: str) -> bool:
@@ -236,15 +278,29 @@ class DatabricksClient:
     def _is_read_only_query(self, query: str) -> bool:
         """Check if query is read-only by parsing for write operations."""
         # normalize query - remove comments and extra whitespace
-        query_clean = re.sub(r'/\*.*?\*/', '', query, flags=re.DOTALL)  # remove /* */ comments
-        query_clean = re.sub(r'--.*', '', query_clean)  # remove -- comments
-        query_clean = re.sub(r'\s+', ' ', query_clean.strip()).upper()
+        query_clean = re.sub(
+            r"/\*.*?\*/", "", query, flags=re.DOTALL
+        )  # remove /* */ comments
+        query_clean = re.sub(r"--.*", "", query_clean)  # remove -- comments
+        query_clean = re.sub(r"\s+", " ", query_clean.strip()).upper()
 
         # check for write operations (more comprehensive than prefix matching)
         write_keywords = {
-            'INSERT', 'UPDATE', 'DELETE', 'DROP', 'CREATE', 'ALTER',
-            'TRUNCATE', 'REPLACE', 'MERGE', 'COPY', 'GRANT', 'REVOKE',
-            'SET', 'USE', 'CALL'  # procedures/functions that might modify state
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "DROP",
+            "CREATE",
+            "ALTER",
+            "TRUNCATE",
+            "REPLACE",
+            "MERGE",
+            "COPY",
+            "GRANT",
+            "REVOKE",
+            "SET",
+            "USE",
+            "CALL",  # procedures/functions that might modify state
         }
 
         # split into tokens and check if any write keyword appears in statement context
@@ -281,7 +337,9 @@ class DatabricksClient:
         # validate it's a read-only query for safety
         if not self._is_read_only_query(query):
             raise ValueError("Only SELECT queries are allowed")
-        logger.info(f"Executing query: {query.replace('\n', ' ')}..., timeout {timeout}")
+        logger.info(
+            f"Executing query: {query.replace('\n', ' ')}..., timeout {timeout}"
+        )
 
         # get available warehouse
         warehouse_id = self._get_warehouse_id()
@@ -289,9 +347,7 @@ class DatabricksClient:
 
         # execute the query
         execution = self.client.statement_execution.execute_statement(
-            warehouse_id=warehouse_id,
-            statement=query,
-            wait_timeout=timeout_str
+            warehouse_id=warehouse_id, statement=query, wait_timeout=timeout_str
         )
 
         if execution.status and execution.status.state != StatementState.SUCCEEDED:
@@ -301,18 +357,32 @@ class DatabricksClient:
             raise RuntimeError(error_msg)
 
         # convert result to polars DataFrame
-        if execution.manifest and execution.manifest.schema and execution.manifest.schema.columns:
-            col_names = [col.name for col in execution.manifest.schema.columns if col.name]
+        if (
+            execution.manifest
+            and execution.manifest.schema
+            and execution.manifest.schema.columns
+        ):
+            col_names = [
+                col.name for col in execution.manifest.schema.columns if col.name
+            ]
 
             if execution.result and execution.result.data_array:
-                df = pl.DataFrame(execution.result.data_array, schema=col_names, orient="row")
-                logger.info(f"Query returned {len(df)} rows with {len(df.columns)} columns")
+                df = pl.DataFrame(
+                    execution.result.data_array, schema=col_names, orient="row"
+                )
+                logger.info(
+                    f"Query returned {len(df)} rows with {len(df.columns)} columns"
+                )
                 return df
             else:
                 # return empty DataFrame with schema preserved
                 logger.info("Query returned no results, preserving schema")
                 # create empty dataframe with correct schema
-                schema = {col.name: pl.Utf8 for col in execution.manifest.schema.columns if col.name}
+                schema = {
+                    col.name: pl.Utf8
+                    for col in execution.manifest.schema.columns
+                    if col.name
+                }
                 return pl.DataFrame(schema=schema)
         else:
             # return empty DataFrame if no schema available
