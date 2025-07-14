@@ -1,5 +1,5 @@
 from app.database import create_tables
-from nicegui import ui
+from nicegui import app, ui
 
 
 def startup() -> None:
