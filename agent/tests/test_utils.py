@@ -34,9 +34,27 @@ def is_llm_provider_available() -> bool:
     return False
 
 
+def is_databricks_available() -> bool:
+    """Check if Databricks credentials are configured and available."""
+    # Check for Databricks environment variables
+    databricks_host = os.getenv("DATABRICKS_HOST")
+    databricks_token = os.getenv("DATABRICKS_TOKEN")
+    
+    # Both host and token are required for Databricks connection
+    return bool(databricks_host and databricks_token)
+
+
 # Reusable skipif condition for tests that require any LLM provider
 def requires_llm_provider() -> bool:
     """Return True if LLM provider is not available, for use with pytest.mark.skipif."""
     return not is_llm_provider_available()
 
 requires_llm_provider_reason = "No LLM provider configured (set GEMINI_API_KEY, ANTHROPIC_API_KEY, PREFER_OLLAMA, or configure specific models)"
+
+
+# Reusable skipif condition for tests that require Databricks
+def requires_databricks() -> bool:
+    """Return True if Databricks credentials are not available, for use with pytest.mark.skipif."""
+    return not is_databricks_available()
+
+requires_databricks_reason = "No Databricks credentials configured (set DATABRICKS_HOST and DATABRICKS_TOKEN)"
