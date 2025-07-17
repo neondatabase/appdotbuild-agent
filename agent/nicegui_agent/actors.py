@@ -1,6 +1,7 @@
 import jinja2
 import logging
 import anyio
+import uuid
 from typing import Callable, Awaitable
 from core.base_node import Node
 from core.workspace import Workspace
@@ -11,6 +12,9 @@ from core.notification_utils import notify_if_callback, notify_stage
 
 logger = logging.getLogger(__name__)
 
+def count_tokens(text: str) -> int:
+    # Fallback: count words as a rough estimate
+    return len(text.split())
 
 class NiceguiActor(FileOperationsActor):
     root: Node[BaseData] | None = None
@@ -69,6 +73,14 @@ class NiceguiActor(FileOperationsActor):
             project_context=project_context,
             user_prompt=user_prompt,
         )
+
+        total_tokens = 0  # Track total tokens consumed
+
+        # Count and log tokens for user prompt
+        user_prompt_tokens = count_tokens(user_prompt_rendered)
+        total_tokens += user_prompt_tokens
+        logger.info(f"User prompt token count: {user_prompt_tokens}")
+
         message = Message(role="user", content=[TextRaw(user_prompt_rendered)])
         self.root = Node(BaseData(workspace, [message], {}))
 
@@ -95,6 +107,12 @@ class NiceguiActor(FileOperationsActor):
             logger.info(f"Received {len(nodes)} nodes from LLM")
 
             for i, new_node in enumerate(nodes):
+                # Count and log tokens for each LLM response
+                if new_node.data.messages:
+                    response_text = str(new_node.data.messages[-1].content[0])
+                    response_tokens = count_tokens(response_text)
+                    total_tokens += response_tokens
+                    logger.info(f"LLM response token count (node {i + 1}): {response_tokens}")
                 logger.info(f"Evaluating node {i + 1}/{len(nodes)}")
                 if await self.eval_node(new_node, user_prompt):
                     logger.info(f"Found solution at depth {new_node.depth}")
@@ -105,6 +123,7 @@ class NiceguiActor(FileOperationsActor):
             logger.error(f"{self.__class__.__name__} failed to find a solution")
             await notify_stage(self.event_callback, "❌ NiceGUI application generation failed", "failed")
             raise ValueError("No solutions found")
+        logger.info(f"Total tokens consumed: {total_tokens}")  # Log final token count
         return solution
 
     def select(self, node: Node[BaseData]) -> list[Node[BaseData]]:
@@ -143,19 +162,18 @@ class NiceguiActor(FileOperationsActor):
         ]
 
     async def handle_custom_tool(
-        self, tool_use: ToolUse, node: Node[BaseData]
+        self, tool_name: str, tool_input: dict, node: Node[BaseData]
     ) -> ToolUseResult:
         """Handle NiceGUI-specific custom tools."""
-        assert isinstance(tool_use.input, dict), f"Tool input must be dict, got {type(tool_use.input)}"
-        match tool_use.name:
+        match tool_name:
             case "uv_add":
-                packages = tool_use.input["packages"]  # pyright: ignore[reportIndexIssue]
+                packages = tool_input["packages"]  # pyright: ignore[reportIndexIssue]
                 exec_res = await node.data.workspace.exec_mut(
                     ["uv", "add", " ".join(packages)]
                 )
                 if exec_res.exit_code != 0:
                     return ToolUseResult.from_tool_use(
-                        tool_use,
+                        ToolUse(id=uuid.uuid4().hex, name=tool_name, input=tool_input),
                         f"Failed to add packages: {exec_res.stderr}",
                         is_error=True,
                     )
@@ -168,10 +186,10 @@ class NiceguiActor(FileOperationsActor):
                         }
                     )
                     return ToolUseResult.from_tool_use(
-                        tool_use, "success"
+                        ToolUse(id=uuid.uuid4().hex, name=tool_name, input=tool_input), "success"
                     )
             case _:
-                return await super().handle_custom_tool(tool_use, node)
+                return await super().handle_custom_tool(tool_name, tool_input, node)
 
     async def run_type_checks(self, node: Node[BaseData]) -> str | None:
         type_check_result = await node.data.workspace.exec(
@@ -246,8 +264,7 @@ class NiceguiActor(FileOperationsActor):
 
         if all_errors:
             await notify_stage(self.event_callback, "❌ Validation checks failed - fixing issues", "failed")
-            errors = await self.compact_error_message(all_errors)
-            return errors.strip()
+            return all_errors.strip()
 
         await notify_stage(self.event_callback, "✅ All validation checks passed", "completed")
         return None
