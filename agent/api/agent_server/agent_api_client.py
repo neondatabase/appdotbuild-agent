@@ -455,6 +455,7 @@ async def run_chatbot_client(
     settings: Optional[str] = None,
     autosave=False,
     template_id: Optional[str] = None,
+    use_databricks: bool = False,
 ) -> None:
     """
     Async interactive Agent CLI chat.
@@ -488,6 +489,15 @@ async def run_chatbot_client(
             settings_dict = json.loads(settings)
         except json.JSONDecodeError:
             print(f"Warning: could not parse settings JSON: {settings}")
+
+    if use_databricks:
+        settings_dict["databricks_host"] = os.getenv("DATABRICKS_HOST")
+        settings_dict["databricks_token"] = os.getenv("DATABRICKS_TOKEN")
+
+        if not settings_dict["databricks_host"] or not settings_dict["databricks_token"]:
+            raise ValueError(
+                "Databricks host and token must be set in environment variables to use Databricks"
+            )
 
     # Load saved state if available
     if os.path.exists(state_file):
@@ -1166,6 +1176,7 @@ def cli(
     port: int = 8001,
     state_file: str = "/tmp/agent_chat_state.json",
     template_id: Optional[str] = None,
+    use_databricks: bool = False,
 ):
     if not host:
         with spawn_local_server() as (local_host, local_port):
@@ -1177,6 +1188,7 @@ def cli(
                 None,
                 False,
                 template_id,
+                use_databricks,
                 backend="asyncio",
             )
     else:
@@ -1188,6 +1200,7 @@ def cli(
             None,
             False,
             template_id,
+            use_databricks,
             backend="asyncio",
         )
 
