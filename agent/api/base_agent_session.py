@@ -50,7 +50,8 @@ class BaseAgentSession(AgentInterface, ABC):
         self.trace_id = trace_id or uuid4().hex
         self.settings = settings or {}
         self.fsm_application_class = fsm_application_class
-        self.processor_instance = FSMToolProcessor(client, fsm_application_class)
+        self.processor_instance = None  # type: Optional[FSMToolProcessor]
+        # ^ always initialized in process method
         self.model_params = {
             "max_tokens": 8192,
         }

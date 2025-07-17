@@ -64,13 +64,13 @@ def run_e2e_tests():
 def _run_e2e_tests(template=None):
     coloredlogs.install(level="INFO")
     os.chdir(_current_dir())
-    
+
     args = ["-v", "-n", "0", "tests/test_e2e.py"]
-    
+
     if template:
         # Run only tests marked with the specific template
         args.extend(["-m", template])
-    
+
     code = pytest.main(args)
     sys.exit(code)
 
@@ -80,12 +80,12 @@ def generate():
     return Fire(_generate)
 
 
-def _generate(prompt=None, template_id=None, with_edit=True):
+def _generate(prompt=None, template_id=None, with_edit=True, use_databricks=False):
     from tests.test_e2e import run_e2e, DEFAULT_APP_REQUEST
     coloredlogs.install(level="INFO")
     if prompt is None:
         prompt = DEFAULT_APP_REQUEST
-    anyio.run(run_e2e, prompt, True, with_edit, template_id)
+    anyio.run(run_e2e, prompt, True, with_edit, template_id, use_databricks)
 
 
 def interactive():

@@ -48,26 +48,36 @@ def latest_app_name_and_commit_message(events):
 
     return app_name, commit_message
 
-async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=None):
+async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=None, use_databricks=False):
     context = empty_context() if standalone else spawn_local_server()
+    settings = {}
+    if use_databricks:
+        settings = {
+            "databricks_host": os.getenv("DATABRICKS_HOST"),
+            "databricks_token": os.getenv("DATABRICKS_TOKEN"),
+        }
+        if not settings["databricks_host"] or not settings["databricks_token"]:
+            raise ValueError("Databricks host and token must be set in environment variables to use Databricks")
+
     with context:
         async with AgentApiClient() as client:
-            events, request = await client.send_message(prompt, template_id=template_id)
+            events, request = await client.send_message(prompt, template_id=template_id, settings=settings)
             assert events, "No response received from agent"
             max_refinements = 5
             refinement_count = 0
-            
-            while (events[-1].message.kind == MessageKind.REFINEMENT_REQUEST and 
+
+            while (events[-1].message.kind == MessageKind.REFINEMENT_REQUEST and
                    refinement_count < max_refinements):
                 events, request = await client.continue_conversation(
                     previous_events=events,
                     previous_request=request,
                     message="just do it! no more questions, please",
                     template_id=template_id,
+                    settings=settings,
                 )
                 refinement_count += 1
                 logger.info(f"Refinement attempt {refinement_count}/{max_refinements}")
-            
+
             if refinement_count >= max_refinements:
                 logger.error("Maximum refinement attempts exceeded")
                 raise RuntimeError("Agent stuck in refinement loop - exceeded maximum attempts")

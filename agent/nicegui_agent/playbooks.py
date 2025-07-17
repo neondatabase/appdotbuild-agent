@@ -131,8 +131,10 @@ class WeatherExtremes(DatabricksModel):
 11. CRITICAL: Before creating a new DatabricksModel, make sure the query returns expected results.
 """
 
+
 def get_databricks_rules(use_databricks: bool = False) -> str:
     return DATABRICKS_RULES if use_databricks else ""
+
 
 PYTHON_RULES = f"""
 {CORE_PYTHON_RULES}
@@ -143,6 +145,7 @@ PYTHON_RULES = f"""
 
 {SQLMODEL_TYPE_RULES}
 """
+
 
 def get_tool_usage_rules(use_databricks: bool = False) -> str:
     """Return tool usage rules with optional databricks section"""
@@ -197,7 +200,9 @@ When working with Databricks:
 
     return base_rules + (databricks_section if use_databricks else "")
 
+
 TOOL_USAGE_RULES = get_tool_usage_rules()
+
 
 def get_data_model_rules(use_databricks: bool = False) -> str:
     """Return data model rules with optional databricks integration"""
@@ -363,6 +368,7 @@ def reset_db():
   return users[0].name
   ```
 """
+
 
 APPLICATION_RULES = f"""
 {NONE_HANDLING_RULES}
@@ -810,7 +816,9 @@ Don't be chatty, keep on solving the problem, not describing what you are doing.
 
 def get_application_system_prompt(use_databricks: bool = False) -> str:
     """Return application system prompt with optional databricks support"""
-    databricks_section = f"\n{get_databricks_rules(use_databricks)}" if use_databricks else ""
+    databricks_section = (
+        f"\n{get_databricks_rules(use_databricks)}" if use_databricks else ""
+    )
 
     return f"""
 You are a software engineer specializing in NiceGUI application development. Your task is to build UI components and application logic using existing data models. Strictly follow provided rules.
@@ -1015,6 +1023,7 @@ def show_loading():
 - NEVER use quiet failures such as (try: ... except: return None) - always handle errors explicitly
 - Aim for best possible aesthetics in UI design unless user asks for the opposite - use NiceGUI's features to create visually appealing interfaces, ensure adequate page structure, spacing, alignment, and use of colors.
 """.strip()
+
 
 USER_PROMPT = """
 {{ project_context }}

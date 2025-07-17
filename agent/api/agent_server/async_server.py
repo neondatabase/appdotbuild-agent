@@ -120,10 +120,6 @@ class SessionManager:
     ) -> T:
         session_id = f"{request.application_id}:{request.trace_id}"
 
-        #if session_id in self.sessions:
-        #    logger.info(f"Reusing existing session for {session_id}")
-        #    return self.sessions[session_id]
-
         logger.info(f"Creating new agent session for {session_id}")
         agent = agent_class(
             client=client,
@@ -133,7 +129,6 @@ class SessionManager:
             *args,
             **kwargs
         )
-        #self.sessions[session_id] = agent
         return agent
 
     def cleanup_session(self, application_id: str, trace_id: str) -> None:

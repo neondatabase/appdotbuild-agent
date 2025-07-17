@@ -44,16 +44,19 @@ class NiceguiActor(FileOperationsActor):
             "main.py",
             "tests/conftest.py",
             "tests/test_sqlmodel_smoke.py",
-
         ]
-        self.files_allowed = files_allowed  or ["app/", "tests/"]
+        self.files_allowed = files_allowed or ["app/", "tests/"]
 
     async def execute(
         self,
         files: dict[str, str],
         user_prompt: str,
     ) -> Node[BaseData]:
-        await notify_stage(self.event_callback, "🚀 Starting NiceGUI application generation", "in_progress")
+        await notify_stage(
+            self.event_callback,
+            "🚀 Starting NiceGUI application generation",
+            "in_progress",
+        )
 
         workspace = self.workspace.clone()
         logger.info(
@@ -92,7 +95,11 @@ class NiceguiActor(FileOperationsActor):
                 logger.info("No candidates to evaluate, search terminated")
                 break
 
-            await notify_if_callback(self.event_callback, f"🔄 Working on implementation (step {iteration})...", "iteration progress")
+            await notify_if_callback(
+                self.event_callback,
+                f"🔄 Working on implementation (step {iteration})...",
+                "iteration progress",
+            )
 
             logger.info(
                 f"Iteration {iteration}: Running LLM on {len(candidates)} candidates"
@@ -109,12 +116,20 @@ class NiceguiActor(FileOperationsActor):
                 logger.info(f"Evaluating node {i + 1}/{len(nodes)}")
                 if await self.eval_node(new_node, user_prompt):
                     logger.info(f"Found solution at depth {new_node.depth}")
-                    await notify_stage(self.event_callback, "✅ NiceGUI application generated successfully", "completed")
+                    await notify_stage(
+                        self.event_callback,
+                        "✅ NiceGUI application generated successfully",
+                        "completed",
+                    )
                     solution = new_node
                     break
         if solution is None:
             logger.error(f"{self.__class__.__name__} failed to find a solution")
-            await notify_stage(self.event_callback, "❌ NiceGUI application generation failed", "failed")
+            await notify_stage(
+                self.event_callback,
+                "❌ NiceGUI application generation failed",
+                "failed",
+            )
             raise ValueError("No solutions found")
         return solution
 
@@ -154,46 +169,74 @@ class NiceguiActor(FileOperationsActor):
         ]
 
         if self.databricks_client:
-            tools.extend([
-                {
-                    "name": "databricks_list_tables",
-                    "description": "List tables in Unity Catalog with optional filtering. Use '*' as wildcard for catalog/schema.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "catalog": {"type": "string", "description": "Catalog name", "default": "samples"},
-                            # it has support for '*' as wildcard, but we should not use - too slow!
-                            "schema": {"type": "string", "description": "Schema name or '*' for all schemas", "default": "*"},
-                            "exclude_inaccessible": {"type": "boolean", "description": "Skip tables user cannot access", "default": True},
+            tools.extend(
+                [
+                    {
+                        "name": "databricks_list_tables",
+                        "description": "List tables in Unity Catalog with optional filtering. Use '*' as wildcard for catalog/schema.",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "catalog": {
+                                    "type": "string",
+                                    "description": "Catalog name",
+                                    "default": "samples",
+                                },
+                                # it has support for '*' as wildcard, but we should not use - too slow!
+                                "schema": {
+                                    "type": "string",
+                                    "description": "Schema name or '*' for all schemas",
+                                    "default": "*",
+                                },
+                                "exclude_inaccessible": {
+                                    "type": "boolean",
+                                    "description": "Skip tables user cannot access",
+                                    "default": True,
+                                },
+                            },
+                            "required": [],
                         },
-                        "required": [],
                     },
-                },
-                {
-                    "name": "databricks_describe_table",
-                    "description": "Get comprehensive table details including metadata, columns, sample data, and row count",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "table_full_name": {"type": "string", "description": "Full table name in format 'catalog.schema.table'"},
-                            "sample_size": {"type": "integer", "description": "Number of sample rows to retrieve", "default": 10},
+                    {
+                        "name": "databricks_describe_table",
+                        "description": "Get comprehensive table details including metadata, columns, sample data, and row count",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "table_full_name": {
+                                    "type": "string",
+                                    "description": "Full table name in format 'catalog.schema.table'",
+                                },
+                                "sample_size": {
+                                    "type": "integer",
+                                    "description": "Number of sample rows to retrieve",
+                                    "default": 10,
+                                },
+                            },
+                            "required": ["table_full_name"],
                         },
-                        "required": ["table_full_name"],
                     },
-                },
-                {
-                    "name": "databricks_execute_query",
-                    "description": "Execute a SELECT query on Databricks and get results. Only SELECT queries are allowed for safety.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string", "description": "SQL SELECT query to execute"},
-                            "timeout": {"type": "integer", "description": "Query timeout (must be between 5 and 50 or 0 for no timeout)", "default": 45},
+                    {
+                        "name": "databricks_execute_query",
+                        "description": "Execute a SELECT query on Databricks and get results. Only SELECT queries are allowed for safety.",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "SQL SELECT query to execute",
+                                },
+                                "timeout": {
+                                    "type": "integer",
+                                    "description": "Query timeout (must be between 5 and 50 or 0 for no timeout)",
+                                    "default": 45,
+                                },
+                            },
+                            "required": ["query"],
                         },
-                        "required": ["query"],
                     },
-                },
-            ])
+                ]
+            )
 
         return tools
 
@@ -201,7 +244,9 @@ class NiceguiActor(FileOperationsActor):
         self, tool_use: ToolUse, node: Node[BaseData]
     ) -> ToolUseResult:
         """Handle NiceGUI-specific custom tools."""
-        assert isinstance(tool_use.input, dict), f"Tool input must be dict, got {type(tool_use.input)}"
+        assert isinstance(tool_use.input, dict), (
+            f"Tool input must be dict, got {type(tool_use.input)}"
+        )
         match tool_use.name:
             case "uv_add":
                 packages = tool_use.input["packages"]  # pyright: ignore[reportIndexIssue]
@@ -222,9 +267,7 @@ class NiceguiActor(FileOperationsActor):
                             )
                         }
                     )
-                    return ToolUseResult.from_tool_use(
-                        tool_use, "success"
-                    )
+                    return ToolUseResult.from_tool_use(tool_use, "success")
 
             case "databricks_list_tables":
                 if not self.databricks_client:
@@ -237,12 +280,14 @@ class NiceguiActor(FileOperationsActor):
                 try:
                     catalog = tool_use.input.get("catalog", "*")  # pyright: ignore[reportIndexIssue]
                     schema = tool_use.input.get("schema", "*")  # pyright: ignore[reportIndexIssue]
-                    exclude_inaccessible = tool_use.input.get("exclude_inaccessible", True)  # pyright: ignore[reportIndexIssue]
+                    exclude_inaccessible = tool_use.input.get(
+                        "exclude_inaccessible", True
+                    )  # pyright: ignore[reportIndexIssue]
 
                     tables = self.databricks_client.list_tables(
                         catalog=catalog,
                         schema=schema,
-                        exclude_inaccessible=exclude_inaccessible
+                        exclude_inaccessible=exclude_inaccessible,
                     )
 
                     if not tables:
@@ -256,10 +301,7 @@ class NiceguiActor(FileOperationsActor):
                             result_lines.append(table_line)
                         result = "\n".join(result_lines)
 
-                    return ToolUseResult.from_tool_use(
-                        tool_use,
-                        result
-                    )
+                    return ToolUseResult.from_tool_use(tool_use, result)
 
                 except Exception as e:
                     return ToolUseResult.from_tool_use(
@@ -281,8 +323,7 @@ class NiceguiActor(FileOperationsActor):
                     sample_size = tool_use.input.get("sample_size", 10)  # pyright: ignore[reportIndexIssue]
 
                     table_details = self.databricks_client.get_table_details(
-                        table_full_name=table_full_name,
-                        sample_size=sample_size
+                        table_full_name=table_full_name, sample_size=sample_size
                     )
 
                     # Format comprehensive table information
@@ -296,7 +337,9 @@ class NiceguiActor(FileOperationsActor):
                     ]
 
                     if table_details.metadata.comment:
-                        result_lines.append(f"Comment: {table_details.metadata.comment}")
+                        result_lines.append(
+                            f"Comment: {table_details.metadata.comment}"
+                        )
 
                     if table_details.metadata.owner:
                         result_lines.append(f"Owner: {table_details.metadata.owner}")
@@ -305,11 +348,15 @@ class NiceguiActor(FileOperationsActor):
                         result_lines.append(f"Row Count: {table_details.row_count:,}")
 
                     if table_details.metadata.storage_location:
-                        result_lines.append(f"Storage Location: {table_details.metadata.storage_location}")
+                        result_lines.append(
+                            f"Storage Location: {table_details.metadata.storage_location}"
+                        )
 
                     # Add column information
                     if table_details.columns:
-                        result_lines.append(f"\nColumns ({len(table_details.columns)}):")
+                        result_lines.append(
+                            f"\nColumns ({len(table_details.columns)}):"
+                        )
                         for col in table_details.columns:
                             col_info = f"  - {col.name}: {col.data_type}"
                             if col.comment:
@@ -317,18 +364,20 @@ class NiceguiActor(FileOperationsActor):
                             result_lines.append(col_info)
 
                     # Add sample data if available
-                    if table_details.sample_data is not None and len(table_details.sample_data) > 0:
-                        result_lines.append(f"\nSample Data ({len(table_details.sample_data)} rows):")
+                    if (
+                        table_details.sample_data is not None
+                        and len(table_details.sample_data) > 0
+                    ):
+                        result_lines.append(
+                            f"\nSample Data ({len(table_details.sample_data)} rows):"
+                        )
                         # Convert sample data to string representation
                         sample_str = str(table_details.sample_data)
                         result_lines.append(sample_str)
 
                     result = "\n".join(result_lines)
 
-                    return ToolUseResult.from_tool_use(
-                        tool_use,
-                        result
-                    )
+                    return ToolUseResult.from_tool_use(tool_use, result)
 
                 except Exception as e:
                     return ToolUseResult.from_tool_use(
@@ -350,8 +399,7 @@ class NiceguiActor(FileOperationsActor):
                     timeout = tool_use.input.get("timeout", 45)  # pyright: ignore[reportIndexIssue]
 
                     df = self.databricks_client.execute_query(
-                        query=query,
-                        timeout=timeout
+                        query=query, timeout=timeout
                     )
                     # format the results
                     if len(df) == 0:
@@ -362,7 +410,7 @@ class NiceguiActor(FileOperationsActor):
                             "",
                             "Columns: " + ", ".join(df.columns),
                             "",
-                            "Results:"
+                            "Results:",
                         ]
 
                         # convert DataFrame to a readable string format
@@ -371,14 +419,13 @@ class NiceguiActor(FileOperationsActor):
                         result_lines.append(str(display_df))
 
                         if len(df) > 100:
-                            result_lines.append(f"\n... showing first 100 of {len(df)} total rows")
+                            result_lines.append(
+                                f"\n... showing first 100 of {len(df)} total rows"
+                            )
 
                         result = "\n".join(result_lines)
 
-                    return ToolUseResult.from_tool_use(
-                        tool_use,
-                        result
-                    )
+                    return ToolUseResult.from_tool_use(tool_use, result)
 
                 except ValueError as e:
                     logger.warning(f"Invalid query: {str(e)}")
@@ -435,7 +482,9 @@ class NiceguiActor(FileOperationsActor):
         return None
 
     async def run_checks(self, node: Node[BaseData], user_prompt: str) -> str | None:
-        await notify_stage(self.event_callback, "🔍 Running validation checks", "in_progress")
+        await notify_stage(
+            self.event_callback, "🔍 Running validation checks", "in_progress"
+        )
 
         all_errors = ""
         results = {}
@@ -455,7 +504,9 @@ class NiceguiActor(FileOperationsActor):
             tg.start_soon(run_and_store, "type_check", self.run_type_checks(node))
             tg.start_soon(run_and_store, "tests", self.run_tests(node))
             tg.start_soon(run_and_store, "sqlmodel", self.run_sqlmodel_checks(node))
-            tg.start_soon(run_and_store, "mocked_files", self.check_for_mocked_files(node))
+            tg.start_soon(
+                run_and_store, "mocked_files", self.check_for_mocked_files(node)
+            )
 
         if lint_result := results.get("lint"):
             logger.info(f"Lint checks failed: {lint_result}")
@@ -471,26 +522,35 @@ class NiceguiActor(FileOperationsActor):
             all_errors += f"SQLModel errors:\n{sqlmodel_result}\n"
         if mocked_files_result := results.get("mocked_files"):
             logger.info(f"Mocked files found: {mocked_files_result}")
-            all_errors += f"Error! Disallowed mocked files found:\n{mocked_files_result}\n"
+            all_errors += (
+                f"Error! Disallowed mocked files found:\n{mocked_files_result}\n"
+            )
 
         if all_errors:
-            await notify_stage(self.event_callback, "❌ Validation checks failed - fixing issues", "failed")
+            await notify_stage(
+                self.event_callback,
+                "❌ Validation checks failed - fixing issues",
+                "failed",
+            )
             errors = await self.compact_error_message(all_errors)
             return errors.strip()
 
-        await notify_stage(self.event_callback, "✅ All validation checks passed", "completed")
+        await notify_stage(
+            self.event_callback, "✅ All validation checks passed", "completed"
+        )
         return None
 
-    async def check_for_mocked_files(
-        self, node: Node[BaseData]
-    ) -> str | None:
+    async def check_for_mocked_files(self, node: Node[BaseData]) -> str | None:
         res = await node.data.workspace.exec(
-            ["sh", "-c", "grep -r -l -E '(mock|simulated|stub)' app/ tests/ 2>/dev/null | sed 's/^/file /' | sed 's/$/ contains mock/' || true"]
+            [
+                "sh",
+                "-c",
+                "grep -r -l -E '(mock|simulated|stub)' app/ tests/ 2>/dev/null | sed 's/^/file /' | sed 's/$/ contains mock/' || true",
+            ]
         )
         if res.stdout:
             return res.stdout.strip()
         return None
-
 
     async def get_repo_files(
         self, workspace: Workspace, files: dict[str, str]

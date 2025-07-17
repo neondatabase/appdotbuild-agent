@@ -105,7 +105,22 @@ class FSMApplication:
         return cls(client, fsm)
 
     @classmethod
-    def base_execution_plan(cls) -> str:
+    def is_databricks_available(cls, settings: Dict[str, Any]) -> bool:
+        settings = settings or {}
+        databricks_host = settings.get("databricks_host")
+        databricks_token = settings.get("databricks_token")
+        return bool(databricks_host and databricks_token)
+
+    @classmethod
+    def base_execution_plan(cls, settings: Dict[str, Any] | None = None) -> str:
+        settings = settings or {}
+
+        databricks_part = (
+            "This application can have access to Databricks Unity Catalog for data access"
+            if cls.is_databricks_available(settings)
+            else ""
+        )
+
         return "\n".join(
             [
                 "1. Data model generation - Define data structures, schemas, and models. ",
@@ -114,8 +129,8 @@ class FSMApplication:
                 "The result application will be based on Python and NiceGUI framework. Persistent data will be stored in Postgres with SQLModel ORM. "
                 "The application can include various UI components, event handling, and state management. ",
                 "This application can use external APIs and install new libraries if needed. ",
-                "If user asks for it specifically, it can be integrated with Databricks tables",
-            ]  # FixMe: databricks integration should be conditional based on settings
+                databricks_part,
+            ]
         )
 
     @classmethod
@@ -140,6 +155,8 @@ class FSMApplication:
     async def make_states(
         cls, client: dagger.Client, settings: Dict[str, Any] | None = None
     ) -> State[ApplicationContext, FSMEvent]:
+        settings = settings or {}
+
         # Define actions to update context
         async def update_node_files(
             ctx: ApplicationContext, result: Node[BaseData]
@@ -231,25 +248,25 @@ class FSMApplication:
         )
 
         # Extract event_callback from settings if provided
-        event_callback = settings.pop("event_callback", None) if settings else None
+        event_callback = settings.pop("event_callback", None)
 
-        databricks_host = os.environ.get("DATABRICKS_HOST")
-        databricks_token = os.environ.get("DATABRICKS_TOKEN")
+        use_databricks = cls.is_databricks_available(settings)
+        databricks_host = settings.get("databricks_host", "")
+        databricks_token = settings.get("databricks_token", "")
 
-        use_databricks = bool(databricks_host and databricks_token)
         if use_databricks:
             workspace = workspace.add_env_variable(
-                "DATABRICKS_HOST", databricks_host or ""
-            ).add_env_variable(
-                "DATABRICKS_TOKEN", databricks_token or ""
-            )
+                "DATABRICKS_HOST", databricks_host
+            ).add_env_variable("DATABRICKS_TOKEN", databricks_token)
 
         data_actor = NiceguiActor(
             llm=llm,
             workspace=workspace.clone(),
             beam_width=3,
             max_depth=50,
-            system_prompt=playbooks.get_data_model_system_prompt(use_databricks=use_databricks),
+            system_prompt=playbooks.get_data_model_system_prompt(
+                use_databricks=use_databricks
+            ),
             files_allowed=["app/models.py"],
             event_callback=event_callback,
             databricks_host=databricks_host,

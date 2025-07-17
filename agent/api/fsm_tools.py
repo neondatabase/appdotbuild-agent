@@ -21,7 +21,7 @@ class FSMInterface(ApplicationBase, Protocol):
     async def apply_changes(self, feedback: str): ...
     async def complete_fsm(self): ...
     @classmethod
-    def base_execution_plan(cls) -> str: ...
+    def base_execution_plan(cls, settings: dict[str, Any] | None = None) -> str: ...
     @property
     def available_actions(self) -> dict[str, str]: ...  # FSMTools Specific
     @classmethod
@@ -370,7 +370,7 @@ class FSMToolProcessor:
         return f"""You are a software engineering expert who can generate application code using a code generation framework. This framework uses a Finite State Machine (FSM) to guide the generation process.
 
 Your task is to control the FSM through the following stages of code generation:
-{self.fsm_class.base_execution_plan()}
+{self.fsm_class.base_execution_plan(self.settings)}
 
 To successfully complete this task, follow these steps:
 
