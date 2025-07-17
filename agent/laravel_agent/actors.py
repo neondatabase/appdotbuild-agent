@@ -8,6 +8,8 @@ from core.actors import BaseData, FileOperationsActor
 from llm.common import AsyncLLM, Message, TextRaw
 from laravel_agent import playbooks
 from laravel_agent.utils import run_migrations, run_tests
+from laravel_agent.playbooks import validate_migration_syntax, MIGRATION_SYNTAX_EXAMPLE
+from laravel_agent.diversity_prompts import get_diversity_prompt_for_beam
 from core.notification_utils import notify_if_callback, notify_stage
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,106 @@ class LaravelActor(FileOperationsActor):
         self.event_callback = event_callback
         self.files_protected = files_protected or [] # TODO: Add proper exclusion rules
         self.files_allowed = files_allowed  or ["resources/js/pages/", "app/Http/Controllers/Auth/"]
+
+    async def run_llm(
+        self, nodes: list[Node[BaseData]], system_prompt: str | None = None, **kwargs
+    ) -> list[Node[BaseData]]:
+        """Override run_llm to inject diversity prompts for better beam search exploration."""
+        from anyio.streams.memory import MemoryObjectSendStream
+        from llm.utils import loop_completion
+        
+        async def node_fn(
+            node: Node[BaseData], 
+            tx: MemoryObjectSendStream[Node[BaseData]], 
+            beam_index: int,
+            total_beams: int
+        ):
+            history = [m for n in node.get_trajectory() for m in n.data.messages]
+            
+            # Generate diversity prompt for this beam using simple round-robin
+            diversity_prompt = get_diversity_prompt_for_beam(beam_index)
+            
+            # If we have a diversity prompt, inject it into the system prompt
+            enhanced_system_prompt = system_prompt or self.system_prompt
+            if diversity_prompt:
+                enhanced_system_prompt = f"{enhanced_system_prompt}\n\n{diversity_prompt}"
+                logger.debug(f"Beam {beam_index} diversity prompt: {diversity_prompt[:100]}...")
+            
+            new_node = Node[BaseData](
+                data=BaseData(
+                    workspace=node.data.workspace.clone(),
+                    messages=[
+                        await loop_completion(
+                            self.llm, history, system_prompt=enhanced_system_prompt, **kwargs
+                        )
+                    ],
+                ),
+                parent=node,
+            )
+            async with tx:
+                await tx.send(new_node)
+
+        result = []
+        tx, rx = anyio.create_memory_object_stream[Node[BaseData]]()
+        async with anyio.create_task_group() as tg:
+            for i, node in enumerate(nodes):
+                tg.start_soon(node_fn, node, tx.clone(), i, len(nodes))
+            tx.close()
+            async with rx:
+                async for new_node in rx:
+                    new_node.parent.children.append(new_node)  # pyright: ignore[reportOptionalMemberAccess]
+                    result.append(new_node)
+        return result
+
+    async def run_llm(
+        self, nodes: list[Node[BaseData]], system_prompt: str | None = None, **kwargs
+    ) -> list[Node[BaseData]]:
+        """Override run_llm to inject diversity prompts for better beam search exploration."""
+        from anyio.streams.memory import MemoryObjectSendStream
+        from llm.utils import loop_completion
+        
+        async def node_fn(
+            node: Node[BaseData], 
+            tx: MemoryObjectSendStream[Node[BaseData]], 
+            beam_index: int,
+            total_beams: int
+        ):
+            history = [m for n in node.get_trajectory() for m in n.data.messages]
+            
+            # Generate diversity prompt for this beam using simple round-robin
+            diversity_prompt = get_diversity_prompt_for_beam(beam_index)
+            
+            # If we have a diversity prompt, inject it into the system prompt
+            enhanced_system_prompt = system_prompt or self.system_prompt
+            if diversity_prompt:
+                enhanced_system_prompt = f"{enhanced_system_prompt}\n\n{diversity_prompt}"
+                logger.debug(f"Beam {beam_index} diversity prompt: {diversity_prompt[:100]}...")
+            
+            new_node = Node[BaseData](
+                data=BaseData(
+                    workspace=node.data.workspace.clone(),
+                    messages=[
+                        await loop_completion(
+                            self.llm, history, system_prompt=enhanced_system_prompt, **kwargs
+                        )
+                    ],
+                ),
+                parent=node,
+            )
+            async with tx:
+                await tx.send(new_node)
+
+        result = []
+        tx, rx = anyio.create_memory_object_stream[Node[BaseData]]()
+        async with anyio.create_task_group() as tg:
+            for i, node in enumerate(nodes):
+                tg.start_soon(node_fn, node, tx.clone(), i, len(nodes))
+            tx.close()
+            async with rx:
+                async for new_node in rx:
+                    new_node.parent.children.append(new_node)  # pyright: ignore[reportOptionalMemberAccess]
+                    result.append(new_node)
+        return result
 
     async def execute(
         self,
