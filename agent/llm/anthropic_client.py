@@ -91,6 +91,11 @@ class AnthropicLLM(common.AsyncLLM):
     @retry_rate_limits
     async def _create_message_with_retry(self, call_args: AnthropicParams) -> common.Completion:
         completion = await self.client.messages.create(**call_args)
+        
+        # Token usage tracking/logging
+        if hasattr(completion, "usage"):
+            logger.info(f"Tokens used — Input: {completion.usage.input_tokens}, Output: {completion.usage.output_tokens}")
+            
         return self._completion_from(completion)
 
     @staticmethod
