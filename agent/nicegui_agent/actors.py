@@ -59,6 +59,11 @@ class NiceguiActor(FileOperationsActor):
         )
 
         workspace = self.workspace.clone()
+        if self.databricks_client:
+            await workspace.exec_mut(
+                ["uv", "add", "databricks-sdk>=0.57.0"]
+            )
+
         logger.info(
             f"Start {self.__class__.__name__} execution with files: {files.keys()}"
         )
@@ -488,6 +493,11 @@ class NiceguiActor(FileOperationsActor):
 
         all_errors = ""
         results = {}
+
+        res = await node.data.workspace.exec(
+            ["sh", "-c", "echo $DATABRICKS_HOST $DATABRICKS_TOKEN"]
+        )
+        logger.warning(f"DATABRICKS_HOST: {res.stdout.strip()}")
 
         async with anyio.create_task_group() as tg:
 

@@ -128,7 +128,7 @@ class FSMApplication:
                 "",
                 "The result application will be based on Python and NiceGUI framework. Persistent data will be stored in Postgres with SQLModel ORM. "
                 "The application can include various UI components, event handling, and state management. ",
-                "This application can use external APIs and install new libraries if needed. ",
+                "This application can use install new libraries if needed. ",
                 databricks_part,
             ]
         )

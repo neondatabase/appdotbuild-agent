@@ -102,7 +102,7 @@ class FSMApplication:
         return cls(client, fsm)
 
     @classmethod
-    def base_execution_plan(cls) -> str:
+    def base_execution_plan(cls, settings: dict[str, Any] | None = None) -> str:
         return "\n".join(
             [
                 "1. Application generation - Implement UI components and application logic. ",

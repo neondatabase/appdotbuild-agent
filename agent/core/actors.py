@@ -237,6 +237,7 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
     ) -> ToolUseResult:
         """Handle custom tools specific to subclasses. Override in subclasses."""
         raise ValueError(f"Unknown tool: {tool_use.name}")
+
     async def compact_error_message(self, error_msg: str, max_length: int = 4096) -> str:
         if len(error_msg) <= max_length:
             return error_msg
@@ -408,7 +409,7 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                             )
                         except PermissionError as e:
                             error_msg = (
-                                f"Permission denied writing file '{path}': {str(e)}"
+                                f"Permission denied writing file '{path}': {str(e)}. Probably this file is out of scope for this particular task."
                             )
                             logger.info(
                                 f"Permission error writing file {path}: {str(e)}"
@@ -463,7 +464,7 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                             )
                         except PermissionError as e:
                             error_msg = (
-                                f"Permission denied editing file '{path}': {str(e)}"
+                                f"Permission denied editing file '{path}': {str(e)}. Probably this file is out of scope for this particular task."
                             )
                             logger.info(
                                 f"Permission error editing file {path}: {str(e)}"
@@ -534,7 +535,7 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
         if tool_calls:
             node.data.messages.append(Message(role="user", content=tool_calls))
         else:
-            content = [TextRaw(text="Continue or mark completed via tool.")]
+            content = [TextRaw(text="Continue or mark completed via tool call")]
             node.data.messages.append(Message(role="user", content=content))
         return is_completed
 

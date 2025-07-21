@@ -8,6 +8,7 @@ from llm import common
 from log import get_logger
 import logging
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter, retry_if_exception_type, before_sleep_log
+import uuid
 
 
 logger = get_logger(__name__)
@@ -130,11 +131,10 @@ class GeminiLLM(common.AsyncLLM):
                     ours_content.append(common.TextRaw(text=block.text))
             if block.function_call and block.function_call.name:
                 ours_content.append(common.ToolUse(
-                    id=block.function_call.id,
+                    id=block.function_call.id or uuid.uuid4().hex,
                     name=block.function_call.name,
                     input=block.function_call.args
                 ))
-
         match completion.usage_metadata:
             case genai_types.GenerateContentResponseUsageMetadata(prompt_token_count=input_tokens, candidates_token_count=output_tokens, thoughts_token_count=thinking_tokens):
                 usage = (input_tokens, output_tokens, thinking_tokens)

@@ -809,7 +809,7 @@ Don't be chatty, keep on solving the problem, not describing what you are doing.
 
 # Additional Notes for Data Modeling
 
-- Focus ONLY on data models and structures - DO NOT create UI components, services or application logic.
+- Focus ONLY on data models and structures - DO NOT create UI components, services or application logic. They will be created later.
 - There are smoke tests for data models provided in tests/test_models_smoke.py, your models should pass them. No need to write additional tests.
 """.strip()
 

@@ -98,6 +98,7 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=Non
                     previous_request=request,
                     message=DEFAULT_EDIT_REQUEST,
                     template_id=template_id,
+                    settings=settings,
                 )
                 updated_diff = latest_unified_diff(new_events)
                 assert updated_diff, "No diff was generated in the agent response after edit"

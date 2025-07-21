@@ -4,6 +4,9 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState, State
 
 from pydantic import BaseModel
+from logging import getLogger
+
+logger = getLogger(__name__)
 
 T = TypeVar('T', bound='DatabricksModel')
 
@@ -22,6 +25,7 @@ def execute_databricks_query(query: str) -> List[Dict[str, Any]]:
     if warehouse.id is None:
         raise RuntimeError("Warehouse ID is None")
 
+    logger.info(f"Executing query {query.replace('\n', '\t')} on warehouse: {warehouse.id}")
     execution = client.statement_execution.execute_statement(
         warehouse_id=warehouse.id,
         statement=query,
