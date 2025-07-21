@@ -6,14 +6,14 @@ services:
       context: .
       dockerfile: Dockerfile
       target: production
-    container_name: laravel-app
+    container_name: ${BACKEND_CONTAINER_NAME:-laravel-app}
     restart: unless-stopped
     ports:
       - "80:80"
     environment:
       APP_ENV: production
       APP_DEBUG: false
-      APP_KEY: ${APP_KEY}
+      APP_KEY: ${APP_KEY:-base64:YmFzZTY0OmRlZmF1bHQta2V5LWZvci10ZXN0aW5nLW9ubHktMzJjaA==}
       DB_CONNECTION: pgsql
       DB_HOST: postgres
       DB_PORT: 5432
@@ -33,7 +33,7 @@ services:
 
   postgres:
     image: postgres:17-alpine
-    container_name: laravel-postgres
+    container_name: ${POSTGRES_CONTAINER_NAME:-laravel-postgres}
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_DATABASE:-laravel}
@@ -58,4 +58,5 @@ volumes:
 
 networks:
   app-network:
+    name: ${NETWORK_NAME:-laravel-network}
     driver: bridge 

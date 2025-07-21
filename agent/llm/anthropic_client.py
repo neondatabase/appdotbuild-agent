@@ -13,6 +13,7 @@ from anthropic.types import (
     ToolChoiceParam,
 )
 from llm import common
+from llm.telemetry import LLMTelemetry
 from log import get_logger
 import logging
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter, before_sleep_log
@@ -90,7 +91,22 @@ class AnthropicLLM(common.AsyncLLM):
 
     @retry_rate_limits
     async def _create_message_with_retry(self, call_args: AnthropicParams) -> common.Completion:
+        telemetry = LLMTelemetry()
+        telemetry.start_timing()
+        
         completion = await self.client.messages.create(**call_args)
+        
+        # Log telemetry if usage data is available
+        if hasattr(completion, "usage"):
+            telemetry.log_completion(
+                model=call_args.get("model", "unknown"),
+                input_tokens=completion.usage.input_tokens,
+                output_tokens=completion.usage.output_tokens,
+                temperature=call_args.get("temperature"),
+                has_tools="tools" in call_args,
+                provider="Anthropic"
+            )
+
         return self._completion_from(completion)
 
     @staticmethod

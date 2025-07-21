@@ -2,9 +2,9 @@
 
 ## Basic Usage
 
-1) Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and [dagger](https://dagger.io) 
+1) Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and [dagger](https://dagger.io)
 2) Make sure you have `ANTHROPIC_API_KEY` and `GEMINI_API_KEY` env vars available.
-3) Run the commands 
+3) Run the commands
 
 ### Commands
 
@@ -19,9 +19,28 @@ uv run generate "my app description" # generate an app from scratch using full p
 uv run interactive  # a naive debug client working with local server
 ```
 
+### App templates
+
+We support three app templates:
+- **trpc**: Full-stack web app with Bun, React, Vite, Fastify, tRPC and Drizzle
+- **python**: Data-oriented app with Python, NiceGUI, and SQLModel
+- **laravel**: Full-stack web app with Laravel, React, TypeScript, Tailwind CSS, and Inertia.js (early version)
+
+You can specify the template when generating an app, e.g.:
+
+```bash
+uv run generate "make a dashboard showing my current stock portfolio value using up to date prices from yfinance" --template_id "nicegui_agent"
+```
+or
+
+```bash
+uv run generate "make a presentation-like website with multiple pages with content and next buttons on each. last page mush show a counter that increments each time this presentation has been shown" --template_id "laravel_agent"
+```
+
+
 ### Testing with debug client on prod servers
 
-1. Make sure you have the `uv` installed 
+1. Make sure you have the `uv` installed
 2. `uv run interactive --host yourhostname --port 80` (or change the host if needed);
 3. In the client, prompt for your app.
 4. Waste some time, get some tea.
@@ -37,7 +56,7 @@ We use VCR for testing LLM calls. VCR records LLM completions and saves them to 
 
 - **Record mode**: Makes real API calls, saves responses to cache
 - **Replay mode**: Uses only cached responses
-- **LRU mode**: Tries using cached responses, but can call APIs too. 
+- **LRU mode**: Tries using cached responses, but can call APIs too.
 - **Off mode**: No caching, direct API calls
 
 Default usage (to run tests with cached responses):
@@ -51,4 +70,3 @@ If you want to record new responses, use:
 LLM_VCR_CACHE_MODE=record uv run pytest .
 ```
 New responses should be recorded in case of prompt changes or other significant changes in the pipeline (e.g. template modification, adding new steps etc.). VCR cache is stored in ./agent/llm/llm_cache.json by default, and new version should be committed to the repository.
-

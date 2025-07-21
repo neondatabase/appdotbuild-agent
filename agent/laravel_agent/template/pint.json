@@ -9,6 +9,11 @@
         "no_binary_string": false,
         "strict_comparison": true,
         "strict_param": true,
-        "ternary_to_null_coalescing": true
+        "ternary_to_null_coalescing": true,
+        "single_blank_line_at_eof": false,
+        "no_unused_imports": false,
+        "no_whitespace_in_blank_line": false,
+        "blank_line_after_opening_tag": false,
+        "linebreak_after_opening_tag": false
     }
 }

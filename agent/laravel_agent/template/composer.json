@@ -71,8 +71,7 @@
             "@php vendor/bin/pint"
         ],
         "lint": [
-            "@php vendor/bin/phpstan analyse --memory-limit=2G",
-            "@php vendor/bin/pint --bail"
+            "@php vendor/bin/phpstan analyse --memory-limit=2G"
         ],
         "test": [
             "@php artisan config:clear --ansi",

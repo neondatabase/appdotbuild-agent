@@ -7,6 +7,7 @@ except ImportError:
         "Install it with: uv sync --group ollama"
     )
 from llm import common
+from llm.telemetry import LLMTelemetry
 from log import get_logger
 import logging
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter, before_sleep_log
@@ -148,7 +149,25 @@ class OllamaLLM:
         
         try:
             logger.info(f"Ollama request params: {request_params}")
+            telemetry = LLMTelemetry()
+            telemetry.start_timing()
+            
             response = await self.client.chat(**request_params)
+            
+            # Log telemetry if token counts are available
+            if hasattr(response, 'prompt_eval_count') and hasattr(response, 'eval_count'):
+                input_tokens = getattr(response, 'prompt_eval_count', 0)
+                output_tokens = getattr(response, 'eval_count', 0)
+                
+                telemetry.log_completion(
+                    model=chosen_model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    temperature=temperature,
+                    has_tools=ollama_tools is not None,
+                    provider="Ollama"
+                )
+            
             logger.info(f"Ollama raw response: {response}")
             completion = self._completion_into(response, input_tokens=0)
             logger.info(f"Parsed completion: content_length={len(completion.content)}, stop_reason={completion.stop_reason}")

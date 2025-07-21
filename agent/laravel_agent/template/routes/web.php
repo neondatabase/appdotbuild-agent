@@ -3,6 +3,13 @@
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
+Route::get('/health-check', function () {
+    return response()->json([
+        'status' => 'ok',
+        'timestamp' => now()->toISOString(),
+    ]);
+})->name('health-check');
+
 Route::get('/', function () {
     return Inertia::render('welcome');
 })->name('home');

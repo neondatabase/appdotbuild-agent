@@ -114,7 +114,12 @@ class FSMApplication:
 
     @classmethod
     def template_path(cls) -> str:
-        return "./laravel_agent/template"
+        import os
+        # Get the absolute path to avoid relative path issues
+        current_file = os.path.abspath(__file__)
+        parent_dir = os.path.dirname(current_file)
+        template_path = os.path.join(parent_dir, "template")
+        return template_path
 
     @classmethod
     async def start_fsm(
@@ -154,7 +159,8 @@ class FSMApplication:
             ctx: ApplicationContext, result: Node[BaseData]
         ) -> None:
             logger.info("Running final steps after application generation")
-            # TODO: Run composer lint and fix
+            
+            # TODO: implement lint -- --fix for PHP filesß
 
         llm = get_best_coding_llm_client()
         workspace = await create_workspace(
@@ -168,10 +174,10 @@ class FSMApplication:
         app_actor = LaravelActor(
             llm=llm,
             workspace=workspace.clone(),
-            beam_width=3,
-            max_depth=50,
+            beam_width=5,
+            max_depth=40,  # Increased from 30 to allow more iterations for complex apps
             system_prompt=playbooks.APPLICATION_SYSTEM_PROMPT,
-            files_allowed=["resources/js/pages/", "app/Http/Controllers/Auth/"],
+            # files_allowed will use the default from actors.py
             event_callback=event_callback,
         )
 
@@ -312,14 +318,21 @@ class FSMApplication:
         start = start.with_exec(["git", "init"]).with_exec(
             ["git", "config", "--global", "user.email", "agent@appbuild.com"]
         )
+        
         if snapshot:
             # Sort keys for consistent sample logging, especially in tests
             sorted_snapshot_keys = sorted(snapshot.keys())
             logger.info(
                 f"SERVER get_diff_with: Snapshot sample paths (up to 5): {sorted_snapshot_keys[:5]}"
             )
+            
+            # Create a directory with all snapshot files first
+            snapshot_dir = self.client.directory()
             for file_path, content in snapshot.items():
-                start = start.with_new_file(file_path, content)
+                snapshot_dir = snapshot_dir.with_new_file(file_path, content)
+            
+            # Now add the entire directory at once
+            start = start.with_directory(".", snapshot_dir)
             start = start.with_exec(["git", "add", "."]).with_exec(
                 ["git", "commit", "-m", "'snapshot'"]
             )
@@ -340,8 +353,14 @@ class FSMApplication:
         logger.info("SERVER get_diff_with: Added template directory to workspace")
 
         # Add FSM context files on top
-        for file_path, content in self.fsm.context.files.items():
-            start = start.with_new_file(file_path, content)
+        if self.fsm.context.files:
+            # Create a directory with all FSM files
+            fsm_dir = self.client.directory()
+            for file_path, content in self.fsm.context.files.items():
+                fsm_dir = fsm_dir.with_new_file(file_path, content)
+            
+            # Add the entire FSM directory at once
+            start = start.with_directory(".", fsm_dir)
 
         logger.info(
             "SERVER get_diff_with: Calling workspace.diff() to generate final diff."

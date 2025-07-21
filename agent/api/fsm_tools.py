@@ -83,7 +83,7 @@ class FSMToolProcessor:
                     "properties": {
                         "app_description": {
                             "type": "string",
-                            "description": "Description for the application to generate",
+                            "description": "Description for the application to generate. Avoid using technical terms and focus on the user's request.",
                         }
                     },
                     "required": ["app_description"],
@@ -102,7 +102,7 @@ class FSMToolProcessor:
                     "properties": {
                         "feedback": {
                             "type": "string",
-                            "description": "Complete and improved instructions to produce the desired output",
+                            "description": "Complete and improved instructions to produce the desired output. Avoid using description of desired technical stack or implementation details, these are internal details that should be handled by the FSM and the code generation framework.",
                         },
                     },
                     "required": ["feedback"],

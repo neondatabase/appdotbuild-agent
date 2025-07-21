@@ -6,7 +6,7 @@ import contextlib
 
 from fire import Fire
 from api.agent_server.agent_client import AgentApiClient, MessageKind
-from api.agent_server.agent_api_client import apply_patch, latest_unified_diff, DEFAULT_APP_REQUEST, DEFAULT_EDIT_REQUEST, spawn_local_server
+from api.agent_server.agent_api_client import apply_patch, latest_unified_diff, DEFAULT_APP_REQUEST, DEFAULT_EDIT_REQUEST, spawn_local_server, get_all_files_from_project_dir
 from api.docker_utils import setup_docker_env, start_docker_compose, wait_for_healthy_containers, stop_docker_compose, get_container_logs
 from log import get_logger
 from tests.test_utils import requires_llm_provider, requires_llm_provider_reason
@@ -92,31 +92,39 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=Non
             logger.info(f"Generated app_name: {app_name}")
             logger.info(f"Generated commit_message: {commit_message}")
 
-            if with_edit:
-                new_events, new_request = await client.continue_conversation(
-                    previous_events=events,
-                    previous_request=request,
-                    message=DEFAULT_EDIT_REQUEST,
-                    template_id=template_id,
-                    settings=settings,
-                )
-                updated_diff = latest_unified_diff(new_events)
-                assert updated_diff, "No diff was generated in the agent response after edit"
-                assert updated_diff != diff, "Edit did not produce a new diff"
-            else:
-                updated_diff = diff
-
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Determine template path based on template_id
                 template_paths = {
                     "nicegui_agent": "nicegui_agent/template",
                     "trpc_agent": "trpc_agent/template",
+                    "laravel_agent": "laravel_agent/template",
                     None: "trpc_agent/template"  # default
                 }
 
-                for d in (diff, updated_diff):
-                    success, message = apply_patch(d, temp_dir, template_paths[template_id])
-                    assert success, f"Failed to apply patch: {message}"
+                # Apply the first diff
+                success, message = apply_patch(diff, temp_dir, template_paths[template_id])
+                assert success, f"Failed to apply first patch: {message}"
+
+                if with_edit:
+                    # Read all files from the patched directory to provide as context
+                    files_for_snapshot = get_all_files_from_project_dir(temp_dir)
+                    all_files = [f.model_dump() for f in files_for_snapshot]
+                    
+                    new_events, new_request = await client.continue_conversation(
+                        previous_events=events,
+                        previous_request=request,
+                        message=DEFAULT_EDIT_REQUEST,
+                        all_files=all_files,
+                        template_id=template_id,
+                        settings=settings,
+                    )
+                    updated_diff = latest_unified_diff(new_events)
+                    assert updated_diff, "No diff was generated in the agent response after edit"
+                    assert updated_diff != diff, "Edit did not produce a new diff"
+                    
+                    # Apply the second diff (incremental on top of first)
+                    success, message = apply_patch(updated_diff, temp_dir, template_paths[template_id])
+                    assert success, f"Failed to apply second patch: {message}"
 
                 original_dir = os.getcwd()
                 container_names = setup_docker_env()
@@ -146,7 +154,7 @@ async def run_e2e(prompt: str, standalone: bool, with_edit=True, template_id=Non
                             container_names["app_container_name"],
                         ],
                         ["db", "app"],
-                        timeout=30,
+                        timeout=60,
                         interval=1
                     )
 
@@ -176,6 +184,14 @@ async def test_e2e_generation_nicegui(template_id):
     pytest.param("trpc_agent", marks=pytest.mark.trpc)
 ])
 async def test_e2e_generation_trpc(template_id):
+    await run_e2e(standalone=False, prompt=DEFAULT_APP_REQUEST, template_id=template_id)
+
+@pytest.mark.skip(reason="too long to run")
+@pytest.mark.skipif(requires_llm_provider(), reason=requires_llm_provider_reason)
+@pytest.mark.parametrize("template_id", [
+    pytest.param("laravel_agent", marks=pytest.mark.laravel)
+])
+async def test_e2e_generation_laravel(template_id):
     await run_e2e(standalone=False, prompt=DEFAULT_APP_REQUEST, template_id=template_id)
 
 

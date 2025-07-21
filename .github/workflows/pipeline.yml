@@ -172,7 +172,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        template: [nicegui, trpc]
+        template: [nicegui, trpc, laravel]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
