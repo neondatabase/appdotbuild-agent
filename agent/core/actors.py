@@ -189,6 +189,7 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                         "path": {"type": "string"},
                         "search": {"type": "string"},
                         "replace": {"type": "string"},
+                        "replace_all": {"type": "boolean", "default": False},
                     },
                     "required": ["path", "search", "replace"],
                 },
@@ -432,10 +433,12 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                         path = block.input["path"]  # pyright: ignore[reportIndexIssue]
                         search = block.input["search"]  # pyright: ignore[reportIndexIssue]
                         replace = block.input["replace"]  # pyright: ignore[reportIndexIssue]
+                        replace_all = block.input.get("replace_all", False)  # pyright: ignore[reportAttributeAccessIssue]
 
                         try:
                             original = await node.data.workspace.read_file(path)
-                            match original.count(search):
+                            search_count = original.count(search)
+                            match search_count:
                                 case 0:
                                     raise ValueError(
                                         f"Search text not found in file '{path}'. Search:\n{search}"
@@ -449,9 +452,18 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                                     )
                                     logger.debug(f"Applied edit to file: {path}")
                                 case num_hits:
-                                    raise ValueError(
-                                        f"Search text found {num_hits} times in file '{path}' (expected exactly 1). Search:\n{search}"
-                                    )
+                                    if replace_all:
+                                        new_content = original.replace(search, replace)
+                                        node.data.workspace.write_file(path, new_content)
+                                        node.data.files.update({path: new_content})
+                                        result.append(
+                                            ToolUseResult.from_tool_use(block, f"success - replaced {num_hits} occurrences")
+                                        )
+                                        logger.debug(f"Applied bulk edit to file: {path} ({num_hits} occurrences)")
+                                    else:
+                                        raise ValueError(
+                                            f"Search text found {num_hits} times in file '{path}' (expected exactly 1). Use replace_all=true to replace all occurrences. Search:\n{search}"
+                                        )
                         except FileNotFoundError as e:
                             error_msg = f"File '{path}' not found for editing: {str(e)}"
                             logger.info(

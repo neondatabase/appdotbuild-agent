@@ -1,10 +1,12 @@
 """Smoke test for SQLModel database setup."""
+
 import pytest
 from sqlmodel import SQLModel, text
 import os
 
 from app.database import create_tables, ENGINE
 from app import models
+
 
 @pytest.mark.sqlmodel
 def test_sqlmodel_smoke():
@@ -15,9 +17,7 @@ def test_sqlmodel_smoke():
     # Check tables actually exist in the database
     with ENGINE.connect() as conn:
         # PostgreSQL-specific query to list tables
-        result = conn.execute(text(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-        ))
+        result = conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'"))
         db_tables = {row[0] for row in result}
 
     # Verify we have tables and they match our models
@@ -30,6 +30,7 @@ def test_sqlmodel_smoke():
 
 DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST")
 DATABRICKS_TOKEN = os.environ.get("DATABRICKS_TOKEN")
+
 
 @pytest.mark.sqlmodel
 @pytest.mark.skipif(not DATABRICKS_HOST or not DATABRICKS_TOKEN, reason="Databricks credentials not set")

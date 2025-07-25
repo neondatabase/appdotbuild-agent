@@ -3,7 +3,7 @@ import pytest
 from app.startup import startup
 from nicegui.testing import User
 
-pytest_plugins = ['nicegui.testing.plugin']
+pytest_plugins = ["nicegui.testing.plugin"]
 
 
 @pytest.fixture

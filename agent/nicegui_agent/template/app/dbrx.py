@@ -1,4 +1,3 @@
-
 from typing import List, Dict, Any, ClassVar, Sequence, TypeVar
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState, State
@@ -8,7 +7,7 @@ from logging import getLogger
 
 logger = getLogger(__name__)
 
-T = TypeVar('T', bound='DatabricksModel')
+T = TypeVar("T", bound="DatabricksModel")
 
 
 def execute_databricks_query(query: str) -> List[Dict[str, Any]]:
@@ -27,9 +26,7 @@ def execute_databricks_query(query: str) -> List[Dict[str, Any]]:
 
     logger.info(f"Executing query {query.replace('\n', '\t')} on warehouse: {warehouse.id}")
     execution = client.statement_execution.execute_statement(
-        warehouse_id=warehouse.id,
-        statement=query,
-        wait_timeout="30s"
+        warehouse_id=warehouse.id, statement=query, wait_timeout="30s"
     )
 
     if execution.status is None:
@@ -42,16 +39,19 @@ def execute_databricks_query(query: str) -> List[Dict[str, Any]]:
         raise RuntimeError(error_msg)
 
     # convert result to dictionaries
-    if (execution.result is not None and
-        execution.result.data_array is not None and
-        execution.manifest is not None and
-        execution.manifest.schema is not None and
-        execution.manifest.schema.columns is not None):
+    if (
+        execution.result is not None
+        and execution.result.data_array is not None
+        and execution.manifest is not None
+        and execution.manifest.schema is not None
+        and execution.manifest.schema.columns is not None
+    ):
         col_names = [col.name or "" for col in execution.manifest.schema.columns]
         rows = execution.result.data_array
         return [dict(zip(col_names, row)) for row in rows]
 
     return []
+
 
 class DatabricksModel(BaseModel):
     __catalog__: ClassVar[str]

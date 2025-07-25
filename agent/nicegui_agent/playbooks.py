@@ -37,6 +37,105 @@ LAMBDA_FUNCTION_RULES = """
 3. Alternative pattern: on_click=lambda: delete_item(item.id) if item.id is not None else None
 """
 
+NICEGUI_SLOT_RULES = """
+# NiceGUI Slot Stack Management
+## Core Concept: Slots come from Vue.js - NiceGUI wraps Quasar/Vue components. The slot stack tracks which Vue slot is active for placing new elements.
+## Error "slot stack empty" = creating UI outside proper context (no active Vue slot).
+
+## Solutions:
+1. **Container Pattern**: Pass containers to async functions
+   ```python
+   # WRONG: async def update(): ui.label('data')
+   # RIGHT:
+   async def update(container):
+       with container:
+           container.clear()
+           ui.label('data')
+   ```
+
+2. **Refreshable Pattern**: For async updates, use @ui.refreshable
+   ```python
+   @ui.refreshable
+   def show_data(): ui.label(data)
+
+   async def fetch():
+       # fetch data...
+       show_data.refresh()  # Don't create UI here
+   ```
+
+3. **Named Slots**: Use add_slot() for Vue component slots (e.g., QTable's 'body-cell-*' slots)
+   ```python
+   with table.add_slot('body-cell-status'):
+       ui.icon('check')
+   ```
+
+## Key Rules:
+- Always use `with container:` when updating UI from async/timers
+- Never create UI elements in background tasks - use .refresh() instead
+- Pass container references, don't rely on global context
+- Clear containers before adding new content
+"""
+
+NICEGUI_TESTING_RULES = """
+# NiceGUI Testing Best Practices
+
+## Element Access Patterns
+1. **Single element access**: Use `.elements.pop()` for single elements
+   ```python
+   # CORRECT: For single element
+   upload = user.find(ui.upload).elements.pop()
+   date_input = user.find(ui.date).elements.pop()
+
+   # WRONG: Don't use indexing on sets
+   button = user.find(ui.button).elements[0]  # TypeError: 'set' object is not subscriptable
+   ```
+
+2. **Multiple elements**: Convert to list first
+   ```python
+   # CORRECT: For multiple elements
+   buttons = list(user.find(ui.button).elements)
+   if buttons:
+       buttons[0].click()
+   ```
+
+## Async UI Interactions
+1. **Always wait after UI-changing actions**
+   ```python
+   # CORRECT: Wait for UI to update after actions
+   user.find('Add Item').click()
+   await user.should_see('New item added')  # Wait for UI change
+
+   # WRONG: Immediate assertion without waiting
+   user.find('Delete').click()
+   assert len(items) == 0  # May fail due to async update
+   ```
+
+2. **Proper element interaction patterns**
+   ```python
+   # Text input
+   user.find('Item Name').type('Apple')
+
+   # Button clicks with event args handling
+   user.find('Save').click()  # Framework handles event args
+
+   # Date inputs - use .set_value() with .isoformat()
+   date_element = user.find(ui.date).elements.pop()
+   date_element.set_value(date.today().isoformat())
+   ```
+
+## Slot Context in Tests
+- UI tests run in isolated context - slot errors are common
+- Use `ui.run_sync()` wrapper if creating UI outside page context
+- Prefer service layer testing over complex UI interaction testing
+- When UI tests repeatedly fail with slot errors, test the underlying service logic instead
+
+## Common Testing Anti-patterns
+- DON'T: `list(user.find(ui.button).elements)[0]` for single elements
+- DON'T: Immediate assertions after UI actions without `await user.should_see()`
+- DON'T: Creating UI elements in test setup without proper context
+- DO: Use `.elements.pop()` for single elements, wait for async updates, test services directly
+"""
+
 DATABRICKS_RULES = """
 # Databricks Integration Patterns
 
@@ -237,7 +336,7 @@ class User(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(max_length=100)
-    email: str = Field(unique=True, max_length=255)
+    email: str = Field(unique=True, max_length=255, regex=r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -319,6 +418,15 @@ def reset_db():
 - Use datetime.utcnow as default_factory for timestamps
 - IMPORTANT: For sorting by date fields, use desc(Model.field) not Model.field.desc()
 - Import desc, asc from sqlmodel when needed for ordering
+  ```python
+  # WRONG
+  tasks = session.exec(select(Task).order_by(Task.created_at.desc())).all()
+
+  # CORRECT
+  from sqlmodel import desc, asc
+  tasks = session.exec(select(Task).order_by(desc(Task.created_at))).all()
+  recent_tasks = session.exec(select(Task).order_by(asc(Task.priority), desc(Task.created_at))).all()
+  ```
 - For Decimal fields, always use Decimal('0') not 0 for default values
 - For JSON/List/Dict fields in database models, use sa_column=Column(JSON)
 - ALWAYS add # type: ignore to __tablename__ declarations to avoid type checker errors:
@@ -374,6 +482,10 @@ APPLICATION_RULES = f"""
 {NONE_HANDLING_RULES}
 
 {BOOLEAN_COMPARISON_RULES}
+
+{NICEGUI_SLOT_RULES}
+
+{NICEGUI_TESTING_RULES}
 
 # Modularity
 
@@ -526,6 +638,7 @@ def create():
                 # Processing logic here
                 ui.notify('File processed successfully!', type='positive')
             except Exception as e:
+                logger.info(f'Error processing file: {{filename}}')  # always log the error
                 ui.notify(f'Error: {{str(e)}}', type='negative')
 
         ui.button('Process', on_click=process_file)
@@ -811,26 +924,12 @@ Don't be chatty, keep on solving the problem, not describing what you are doing.
 
 - Focus ONLY on data models and structures - DO NOT create UI components, services or application logic. They will be created later.
 - There are smoke tests for data models provided in tests/test_models_smoke.py, your models should pass them. No need to write additional tests.
+
+Before solving a task, begin by articulating a comprehensive plan that explicitly lists all components required by the user request (e.g., "I will analyze the requirements, implement a data model, ensure the correctness and complete."). This plan should be broken down into discrete, verifiable sub-goals.
 """.strip()
 
 
-def get_application_system_prompt(use_databricks: bool = False) -> str:
-    """Return application system prompt with optional databricks support"""
-    databricks_section = (
-        f"\n{get_databricks_rules(use_databricks)}" if use_databricks else ""
-    )
-
-    return f"""
-You are a software engineer specializing in NiceGUI application development. Your task is to build UI components and application logic using existing data models. Strictly follow provided rules.
-Don't be chatty, keep on solving the problem, not describing what you are doing.
-
-{PYTHON_RULES}
-
-{APPLICATION_RULES}
-{databricks_section}
-
-{get_tool_usage_rules(use_databricks)}
-
+NICEGUI_UI_GUIDELINES = """
 ## UI Design Guidelines
 
 ### Color Palette Implementation
@@ -1014,6 +1113,27 @@ def show_loading():
         ui.spinner(size='lg')
         ui.label('Loading data...').classes('mt-4 text-gray-600')
 ```
+"""
+
+
+def get_application_system_prompt(use_databricks: bool = False) -> str:
+    """Return application system prompt with optional databricks support"""
+    databricks_section = (
+        f"\n{get_databricks_rules(use_databricks)}" if use_databricks else ""
+    )
+
+    return f"""
+You are a software engineer specializing in NiceGUI application development. Your task is to build UI components and application logic using existing data models. Strictly follow provided rules.
+Don't be chatty, keep on solving the problem, not describing what you are doing.
+
+{PYTHON_RULES}
+
+{APPLICATION_RULES}
+{databricks_section}
+
+{get_tool_usage_rules(use_databricks)}
+
+{NICEGUI_UI_GUIDELINES}
 
 # Additional Notes for Application Development
 
@@ -1022,6 +1142,8 @@ def show_loading():
 - NEVER use dummy data unless explicitly requested by the user
 - NEVER use quiet failures such as (try: ... except: return None) - always handle errors explicitly
 - Aim for best possible aesthetics in UI design unless user asks for the opposite - use NiceGUI's features to create visually appealing interfaces, ensure adequate page structure, spacing, alignment, and use of colors.
+
+Before solving a task, begin by articulating a comprehensive plan that explicitly lists all components required by the user request (e.g., "I will analyze the data model, implement a service level parts, write tests for them, implement UI layer, ensure the correctness and complete."). This plan should be broken down into discrete, verifiable sub-goals.
 """.strip()
 
 

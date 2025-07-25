@@ -225,7 +225,9 @@ class FSMApplication:
                         ctx.files[file] = content
 
         if os.getenv("USE_ALLOY_LLM"):
-            llm = AlloyLLM.from_models([get_best_coding_llm_client(), get_universal_llm_client()])
+            llm = AlloyLLM.from_models(
+                [get_best_coding_llm_client(), get_universal_llm_client()]
+            )
         else:
             llm = get_best_coding_llm_client()
 
