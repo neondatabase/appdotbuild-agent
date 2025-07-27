@@ -124,6 +124,7 @@ class LaravelActor(FileOperationsActor):
             "lang/",
             
             # Testing
+            "tests/",  # Allow all test files including ArchTest.php
             "tests/Feature/",
             "tests/Unit/",
             

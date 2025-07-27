@@ -42,12 +42,14 @@ export default function Welcome() {
                     <main className="flex w-full max-w-[335px] flex-col-reverse lg:max-w-4xl lg:flex-row">
                         <div className="flex-1 rounded-br-lg rounded-bl-lg bg-white p-6 pb-12 text-center shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] lg:rounded-tl-lg lg:rounded-br-none lg:p-20 dark:bg-[#161615] dark:text-[#EDEDEC] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]">
                             <h1 className="mb-4 text-2xl font-bold">Your app is under construction.</h1>
-                            <p className="mb-8 text-lg text-[#706f6c] dark:text-[#A1A09A]">It's being built right now!</p>
+                            <p className="mb-8 text-lg text-[#706f6c] dark:text-[#A1A09A]">
+                                It's being built right now!
+                            </p>
                             <footer className="mt-12 text-sm text-[#706f6c] dark:text-[#A1A09A]">
-                                Built with ❤️ by{' '}
-                                <a
-                                    href="https://app.build"
-                                    target="_blank"
+                                Built with ❤️ by{" "}
+                                <a 
+                                    href="https://app.build" 
+                                    target="_blank" 
                                     className="font-medium text-[#f53003] hover:underline dark:text-[#FF4433]"
                                 >
                                     app.build

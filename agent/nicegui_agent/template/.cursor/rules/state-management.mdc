@@ -1,0 +1,208 @@
+---
+description: NiceGUI State Management Patterns
+globs: ["**/*.py"]
+---
+
+# State Management with NiceGUI Storage
+
+## Storage Layers Overview
+
+### 1. app.storage.tab
+- Stored server-side in memory
+- Unique to each browser tab
+- Lost when server restarts
+- MUST await connection before use:
+  ```python
+  @ui.page('/mypage')
+  async def page():
+      await ui.context.client.connected()
+      app.storage.tab['count'] = app.storage.tab.get('count', 0) + 1
+  ```
+
+### 2. app.storage.client  
+- Stored server-side in memory
+- Unique to each client connection
+- Lost on page reload
+- Good for temporary UI state
+
+### 3. app.storage.user
+- Stored server-side
+- Persists across tabs and reloads
+- Associated with browser cookie
+- Best for user preferences:
+  ```python
+  # User preferences
+  app.storage.user['theme'] = 'dark'
+  app.storage.user['language'] = 'en'
+  ```
+
+### 4. app.storage.general
+- Shared among all users
+- Server-side storage
+- For application-wide data:
+  ```python
+  app.storage.general['maintenance_mode'] = False
+  app.storage.general['announcement'] = 'System update at 3 PM'
+  ```
+
+### 5. app.storage.browser
+- Stored as browser cookie
+- Limited size (4KB)
+- Shared across tabs
+- Prefer app.storage.user instead
+
+## Common Patterns
+
+### Page-specific State with Tab Storage
+```python
+@ui.page('/search')
+async def search_page():
+    await ui.context.client.connected()
+    
+    # Restore previous search
+    last_query = app.storage.tab.get('last_query', '')
+    results = app.storage.tab.get('results', [])
+    
+    search_input = ui.input('Search', value=last_query)
+    
+    def perform_search():
+        query = search_input.value
+        app.storage.tab['last_query'] = query
+        results = search_database(query)
+        app.storage.tab['results'] = results
+        update_results()
+```
+
+### User Preferences
+```python
+@ui.page('/settings')
+def settings_page():
+    # Load user preferences
+    theme = app.storage.user.get('theme', 'light')
+    notifications = app.storage.user.get('notifications', True)
+    
+    # Theme selector
+    theme_select = ui.select(
+        label='Theme',
+        options=['light', 'dark', 'auto'],
+        value=theme
+    ).bind_value(app.storage.user, 'theme')
+    
+    # Notification toggle
+    ui.switch('Enable notifications', value=notifications).bind_value(
+        app.storage.user, 'notifications'
+    )
+```
+
+### Form State Preservation
+```python
+@ui.page('/form')
+def form_page():
+    # Auto-save form data to client storage
+    form_data = app.storage.client.get('draft_form', {})
+    
+    name_input = ui.input('Name', value=form_data.get('name', ''))
+    email_input = ui.input('Email', value=form_data.get('email', ''))
+    
+    def save_draft():
+        app.storage.client['draft_form'] = {
+            'name': name_input.value,
+            'email': email_input.value
+        }
+    
+    # Auto-save on change
+    name_input.on('change', lambda: save_draft())
+    email_input.on('change', lambda: save_draft())
+    
+    def submit():
+        # Clear draft on successful submission
+        app.storage.client.pop('draft_form', None)
+        ui.notify('Form submitted!')
+```
+
+### Shared Application State
+```python
+# Admin page
+@ui.page('/admin')
+def admin_page():
+    maintenance = app.storage.general.get('maintenance_mode', False)
+    
+    ui.switch('Maintenance Mode', value=maintenance).bind_value(
+        app.storage.general, 'maintenance_mode'
+    )
+
+# User-facing page
+@ui.page('/')
+def index_page():
+    if app.storage.general.get('maintenance_mode', False):
+        ui.label('Site is under maintenance').classes('text-h4')
+        return
+    
+    # Normal page content
+```
+
+### Complex State with Binding
+```python
+@ui.page('/dashboard')
+async def dashboard_page():
+    await ui.context.client.connected()
+    
+    # Initialize state
+    if 'filters' not in app.storage.tab:
+        app.storage.tab['filters'] = {
+            'status': 'all',
+            'date_range': 'week',
+            'category': None
+        }
+    
+    # Bind UI elements to storage
+    ui.select(
+        label='Status',
+        options=['all', 'active', 'completed'],
+        value=app.storage.tab['filters']['status']
+    ).bind_value(app.storage.tab['filters'], 'status')
+    
+    # React to changes
+    def apply_filters():
+        filters = app.storage.tab['filters']
+        refresh_dashboard(filters)
+```
+
+## Best Practices
+
+1. **Choose the Right Storage**:
+   - Tab: Page-specific temporary state
+   - Client: Session-specific UI state
+   - User: User preferences and settings
+   - General: App-wide shared state
+
+2. **Initialize with Defaults**:
+   ```python
+   value = app.storage.user.get('key', default_value)
+   ```
+
+3. **Clean Up When Done**:
+   ```python
+   app.storage.client.pop('temp_data', None)
+   ```
+
+4. **Bind for Reactivity**:
+   ```python
+   ui.input().bind_value(app.storage.user, 'preference')
+   ```
+
+5. **Handle Connection for Tab Storage**:
+   ```python
+   async def page():
+       await ui.context.client.connected()
+       # Now safe to use app.storage.tab
+   ```
+
+## Common Pitfalls
+1. Using tab storage without awaiting connection
+2. Storing large data in browser storage (4KB limit)
+3. Not handling missing keys with defaults
+4. Using client storage for data that should persist
+5. Forgetting storage is cleared on server restart
+
+@base-module.py

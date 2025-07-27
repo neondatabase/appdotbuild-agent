@@ -1,0 +1,138 @@
+---
+description: SQLModel Database Query Patterns
+globs: ["**/*.py"]
+---
+
+# Database Query Best Practices
+
+## Session Management
+- Always use context managers for sessions:
+  ```python
+  with Session(ENGINE) as session:
+      # queries here
+  ```
+- For functions, accept session as parameter or create new one
+- Never store sessions in global variables
+
+## Basic Query Patterns
+```python
+# Get by ID with None check
+user = session.get(User, user_id)
+if user is None:
+    return None
+
+# Select with filters
+users = list(session.exec(
+    select(User).where(User.is_active == True)
+).all())
+
+# First result with None handling
+result = session.exec(select(User).where(User.email == email)).first()
+if result is None:
+    raise ValueError("User not found")
+```
+
+## Sorting Patterns
+- CRITICAL: Import desc/asc from sqlmodel, not use .desc() method
+  ```python
+  from sqlmodel import desc, asc
+  
+  # CORRECT
+  query = select(Task).order_by(desc(Task.created_at))
+  
+  # WRONG - will cause AttributeError
+  query = select(Task).order_by(Task.created_at.desc())
+  ```
+
+## Filtering Patterns
+```python
+# Multiple conditions with and_
+from sqlmodel import and_, or_
+
+tasks = session.exec(
+    select(Task).where(
+        and_(
+            Task.completed == False,
+            Task.due_date < datetime.utcnow()
+        )
+    )
+).all()
+
+# Optional filters
+query = select(Task)
+if project_id:
+    query = query.where(Task.project_id == project_id)
+if assignee_id:
+    query = query.where(Task.assignee_id == assignee_id)
+```
+
+## Joins and Relationships
+```python
+# Join with relationships
+query = select(Task).join(Project).join(User, Task.assignee_id == User.id, isouter=True)
+
+# Access related data
+task = session.get(Task, task_id)
+if task and task.assignee:  # Check for None
+    print(task.assignee.full_name)
+```
+
+## Aggregation Queries
+```python
+# Count with None handling
+result = session.exec(select(func.count(Task.id))).first()
+count = result if result is not None else 0
+
+# Group by
+priority_counts = session.exec(
+    select(Task.priority, func.count(Task.id))
+    .group_by(Task.priority)
+).all()
+```
+
+## Update Patterns
+```python
+# Update with validation
+task = session.get(Task, task_id)
+if task:
+    task.completed = True
+    task.completed_at = datetime.utcnow()
+    session.commit()
+    session.refresh(task)
+```
+
+## Delete Patterns
+```python
+# Delete with existence check
+item = session.get(Model, item_id)
+if item:
+    session.delete(item)
+    session.commit()
+```
+
+## Transaction Patterns
+```python
+# Rollback on error
+try:
+    # Multiple operations
+    user = User(...)
+    session.add(user)
+    
+    project = Project(owner_id=user.id, ...)
+    session.add(project)
+    
+    session.commit()
+except Exception as e:
+    session.rollback()
+    raise
+```
+
+## Common Pitfalls to Avoid
+1. Always check query results for None
+2. Use list() to convert results to list: `list(session.exec(query).all())`
+3. Import desc/asc from sqlmodel, not use .desc() method
+4. Handle foreign key constraints before operations
+5. Use proper type conversions for JSON fields
+
+@base-module.py
+@base-test.py

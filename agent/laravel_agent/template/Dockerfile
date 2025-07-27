@@ -34,20 +34,20 @@ RUN apk add --no-cache \
     libxml2-dev \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install \
-        pdo \
-        pdo_pgsql \
-        pdo_mysql \
-        mysqli \
-        mbstring \
-        zip \
-        exif \
-        pcntl \
-        gd \
-        bcmath \
-        opcache \
-        curl \
-        xml \
-        soap
+    pdo \
+    pdo_pgsql \
+    pdo_mysql \
+    mysqli \
+    mbstring \
+    zip \
+    exif \
+    pcntl \
+    gd \
+    bcmath \
+    opcache \
+    curl \
+    xml \
+    soap
 
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
@@ -75,6 +75,14 @@ RUN chown -R www-data:www-data /var/www/html \
 FROM php-base AS production
 
 WORKDIR /var/www/html
+
+# Set production environment variables (can be overridden at runtime)
+ENV APP_ENV=${APP_ENV:-production}
+ENV APP_DEBUG=${APP_DEBUG:-false}
+ENV APP_DATABASE_URL=${APP_DATABASE_URL}
+ENV DB_MIGRATION_URL=${DB_MIGRATION_URL}
+ENV APP_KEY=${APP_KEY}
+
 
 # Copy application from builder
 COPY --from=app-builder --chown=www-data:www-data /var/www/html .
@@ -104,8 +112,6 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost/ || exit 1
 
-# This tells Docker that this environment variable should be available at runtime
-ENV APP_DATABASE_URL=${APP_DATABASE_URL}
 
 # Use entrypoint script to run migrations and start services
 CMD ["/usr/local/bin/entrypoint.sh"] 

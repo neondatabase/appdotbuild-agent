@@ -1,0 +1,178 @@
+---
+description: NiceGUI Module Organization Patterns
+globs: ["**/app/*.py", "**/app/**/*.py"]
+---
+
+# Module Organization Best Practices
+
+## Module Structure
+Each module should follow this pattern:
+```python
+from nicegui import ui, app
+from typing import Optional
+from app.database import get_session
+from app.models import Model
+
+def create():
+    """Module creation function called from startup.py"""
+    
+    @ui.page('/route')
+    def page():
+        # Page logic here
+        pass
+    
+    @ui.page('/route/{id}')
+    async def detail_page(id: int):
+        # Detail page logic
+        pass
+```
+
+## File Organization
+```
+app/
+├── __init__.py
+├── database.py         # Database setup
+├── models.py          # All SQLModel definitions
+├── startup.py         # Application startup
+├── dashboard.py       # Dashboard module
+├── users.py          # User management module
+├── tasks.py          # Task management module
+└── reports/          # Complex modules can be directories
+    ├── __init__.py
+    ├── create.py
+    └── view.py
+```
+
+## Startup Registration
+Always register modules in startup.py:
+```python
+from app.database import create_tables
+import app.dashboard
+import app.users
+import app.tasks
+import app.reports
+
+def startup() -> None:
+    create_tables()
+    
+    # Register all modules
+    app.dashboard.create()
+    app.users.create()
+    app.tasks.create()
+    app.reports.create()
+```
+
+## Separation of Concerns
+
+### 1. Data Layer (models.py)
+- SQLModel table definitions
+- Validation schemas
+- NO UI code or event handlers
+
+### 2. Service Layer (optional)
+```python
+# app/task_service.py
+from app.models import Task
+from app.database import get_session
+
+def get_overdue_tasks() -> List[Task]:
+    # Business logic here
+    pass
+
+def calculate_stats(project_id: int) -> Dict:
+    # Complex calculations
+    pass
+```
+
+### 3. UI Layer (modules)
+- Import models and services
+- Define routes and pages
+- Handle user interactions
+- NO direct database queries in UI handlers
+
+## Module Patterns
+
+### Simple Module
+```python
+# app/about.py
+from nicegui import ui
+
+def create():
+    @ui.page('/about')
+    def about_page():
+        ui.label('About Us').classes('text-h4')
+        ui.markdown('Company information...')
+```
+
+### CRUD Module
+```python
+# app/items.py
+from nicegui import ui, app
+from app.models import Item
+from app.database import get_session
+
+def create():
+    @ui.page('/items')
+    async def list_page():
+        # List view with CRUD operations
+        pass
+    
+    @ui.page('/items/{item_id}')
+    async def detail_page(item_id: int):
+        # Detail view
+        pass
+    
+    @ui.page('/items/new')
+    async def create_page():
+        # Creation form
+        pass
+```
+
+### Complex Module with Submodules
+```python
+# app/reports/__init__.py
+from . import daily, weekly, monthly
+
+def create():
+    daily.create()
+    weekly.create()
+    monthly.create()
+```
+
+## Shared Components
+For reusable UI components:
+```python
+# app/components.py
+from nicegui import ui
+
+def create_card(title: str, content: str):
+    with ui.card():
+        ui.label(title).classes('text-h6')
+        ui.label(content)
+
+def create_data_table(columns, rows):
+    # Reusable table component
+    pass
+```
+
+## Navigation Patterns
+```python
+# app/navigation.py
+from nicegui import ui
+
+def create_nav():
+    with ui.header():
+        ui.link('Dashboard', '/')
+        ui.link('Tasks', '/tasks')
+        ui.link('Reports', '/reports')
+```
+
+## Best Practices
+1. One create() function per module
+2. Use async pages when needed (storage, dialogs)
+3. Group related pages in same module
+4. Extract complex logic to service functions
+5. Keep UI handlers thin
+6. Use clear, descriptive route names
+
+@base-module.py

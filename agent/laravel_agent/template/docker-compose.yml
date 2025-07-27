@@ -11,9 +11,9 @@ services:
     ports:
       - "80:80"
     environment:
-      APP_ENV: production
+      APP_ENV: ${APP_ENV:-local}
       APP_DEBUG: false
-      APP_KEY: ${APP_KEY:-base64:YmFzZTY0OmRlZmF1bHQta2V5LWZvci10ZXN0aW5nLW9ubHktMzJjaA==}
+      APP_KEY: ${APP_KEY:-base64:Zcw/bWvxV/CoIWR0+sTPOYQa7v5S340pVCdSgCbvPPQ=}
       DB_CONNECTION: pgsql
       DB_HOST: postgres
       DB_PORT: 5432

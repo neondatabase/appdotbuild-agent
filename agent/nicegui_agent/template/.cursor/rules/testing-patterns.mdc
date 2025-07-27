@@ -1,0 +1,243 @@
+---
+description: Testing Patterns for NiceGUI Applications
+globs: ["**/tests/*.py", "**/test_*.py"]
+---
+
+# Testing Strategy: Logic-First Approach
+
+## Two-Tier Testing Strategy
+1. **Logic-focused tests (80%)** - Unit tests for business logic without UI
+2. **UI smoke tests (20%)** - Critical user flow verification
+
+## Database Test Fixtures
+```python
+@pytest.fixture()
+def clean_db():
+    """Reset database for each test"""
+    reset_db()
+    yield
+    reset_db()
+
+@pytest.fixture()
+def sample_data(clean_db):
+    """Create test data"""
+    with Session(get_session()) as session:
+        user = User(username="test", email="test@example.com")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return {'user': user}
+```
+
+## Logic-Focused Test Examples
+
+### Service/Business Logic Tests
+```python
+def test_calculate_total_with_tax():
+    items = [
+        {'price': 100.0, 'quantity': 2},
+        {'price': 50.0, 'quantity': 1}
+    ]
+    # 200 + 50 = 250 subtotal, 10% tax = 25
+    total = calculate_total_with_tax(items, tax_rate=0.1)
+    assert total == Decimal('275.0')
+
+def test_get_overdue_tasks(sample_data):
+    # Create overdue task
+    with Session(get_session()) as session:
+        task = Task(
+            title="Overdue",
+            due_date=datetime.utcnow() - timedelta(days=1),
+            completed=False
+        )
+        session.add(task)
+        session.commit()
+    
+    overdue = get_overdue_tasks()
+    assert len(overdue) == 1
+    assert not overdue[0].completed
+```
+
+### Database Operation Tests
+```python
+def test_create_user_success(clean_db):
+    user_data = UserCreate(
+        username="alice",
+        email="alice@example.com",
+        full_name="Alice Smith"
+    )
+    
+    user = create_user(user_data)
+    
+    assert user.id is not None
+    assert user.username == "alice"
+    
+    # Verify in database
+    with Session(get_session()) as session:
+        db_user = session.get(User, user.id)
+        assert db_user is not None
+        assert db_user.email == "alice@example.com"
+
+def test_create_user_duplicate_email(sample_data):
+    existing_user = sample_data['user']
+    
+    user_data = UserCreate(
+        username="newuser",
+        email=existing_user.email,  # Duplicate
+        full_name="New User"
+    )
+    
+    with pytest.raises(Exception) as exc_info:
+        create_user(user_data)
+    
+    assert "duplicate" in str(exc_info.value).lower()
+```
+
+### None Handling Tests
+```python
+def test_handle_missing_user():
+    result = get_user_name(user_id=9999)
+    assert result is None
+
+def test_optional_field_handling(clean_db):
+    # Test with None description
+    task1 = Task(title="No Description", description=None)
+    # Test with empty description
+    task2 = Task(title="Empty Description", description="")
+    
+    # Verify both stored correctly
+    assert task1.description is None
+    assert task2.description == ""
+```
+
+## UI Testing Patterns
+
+### Basic UI Test
+```python
+async def test_page_loads(user: User):
+    await user.open('/dashboard')
+    
+    # Verify page elements
+    await user.should_see('Dashboard')
+    await user.should_see('Welcome')
+```
+
+### Form Interaction Test
+```python
+async def test_create_item_form(user: User, clean_db):
+    await user.open('/items/new')
+    
+    # Fill form
+    user.find('Name').type('Test Item')
+    user.find('Description').type('A test description')
+    
+    # Submit
+    user.find('Create').click()
+    
+    # Verify success
+    await user.should_see('Item created successfully')
+```
+
+### Element Finding Patterns
+```python
+# Find by text/label
+user.find('Submit').click()
+
+# Find by component type
+upload = user.find(ui.upload).elements.pop()
+
+# Find by marker
+ui.label('Important').mark('important-label')
+await user.should_see(marker='important-label')
+
+# Find specific element type
+date_inputs = list(user.find(ui.date).elements)
+if date_inputs:
+    date_inputs[0].set_value(date.today().isoformat())
+```
+
+### File Upload Testing
+```python
+async def test_csv_upload(user: User):
+    await user.open('/upload')
+    
+    upload = user.find(ui.upload).elements.pop()
+    
+    # Create test file
+    csv_content = b'name,value\nItem1,100\nItem2,200'
+    
+    upload.handle_uploads([UploadFile(
+        BytesIO(csv_content),
+        filename='test.csv',
+        headers=Headers(raw=[(b'content-type', b'text/csv')])
+    )])
+    
+    # Verify processing
+    table = user.find(ui.table).elements.pop()
+    assert len(table.rows) == 2
+```
+
+## Common Test Patterns
+
+### Testing Async Operations
+```python
+async def test_async_data_load(user: User):
+    await user.open('/data')
+    
+    # Wait for async load
+    await user.should_see('Loading...')
+    await user.should_see('Data loaded')
+```
+
+### Testing Dialogs
+```python
+async def test_confirmation_dialog(user: User):
+    await user.open('/items')
+    
+    user.find('Delete').click()
+    
+    # Dialog should appear
+    await user.should_see('Are you sure?')
+    
+    # Confirm
+    user.find('Yes').click()
+    
+    await user.should_see('Item deleted')
+```
+
+### Testing Error States
+```python
+def test_invalid_input_handling():
+    with pytest.raises(ValueError):
+        process_age(-5)  # Negative age
+    
+    with pytest.raises(ValueError):
+        process_email('invalid-email')
+
+async def test_error_notification(user: User):
+    await user.open('/form')
+    
+    # Submit invalid data
+    user.find('Submit').click()
+    
+    # Should show error
+    await user.should_see('Please fill all required fields')
+```
+
+## Best Practices
+
+1. **Test Data Isolation**: Always use clean_db fixture
+2. **Explicit Assertions**: Check exact values, not just existence
+3. **Error Testing**: Test both success and failure paths
+4. **None Safety**: Always test None/missing data cases
+5. **Type Checking**: Verify correct types returned
+6. **No Mocks**: Test against real database/services
+
+## Common Pitfalls to Avoid
+1. Testing UI extensively instead of logic
+2. Not cleaning database between tests
+3. Assuming element order in lists
+4. Not testing error cases
+5. Using mock data instead of real services
+
+@base-test.py

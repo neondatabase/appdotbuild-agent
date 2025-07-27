@@ -14,7 +14,13 @@ done
 
 # Run database migrations
 echo "Running database migrations..."
-php /var/www/html/artisan migrate --force
+# Use migration URL if provided, otherwise use regular DB_URL
+# This is important for connection for serverless databases that use Pooled Connections, which migrations don't support
+if [ -n "$DB_MIGRATION_URL" ]; then
+    APP_DATABASE_URL="$DB_MIGRATION_URL" php /var/www/html/artisan migrate --force
+else
+    php /var/www/html/artisan migrate --force
+fi
 
 # Clear and cache configuration for production
 echo "Optimizing Laravel for production..."

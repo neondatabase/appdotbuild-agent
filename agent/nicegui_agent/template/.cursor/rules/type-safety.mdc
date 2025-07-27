@@ -1,0 +1,204 @@
+---
+description: Type Safety and Type Hints Best Practices
+globs: ["**/*.py"]
+---
+
+# Type Safety Patterns
+
+## Always Use Type Hints
+```python
+# WRONG
+def process_user(user):
+    return user.name.upper()
+
+# CORRECT
+def process_user(user: User) -> str:
+    return user.name.upper()
+```
+
+## Function Signatures
+```python
+from typing import Optional, List, Dict, Any, Union, Tuple
+from decimal import Decimal
+
+# Return types
+def get_user(user_id: int) -> Optional[User]:
+    pass
+
+def get_all_users() -> List[User]:
+    pass
+
+def calculate_stats(project_id: int) -> Dict[str, Union[int, Decimal]]:
+    pass
+
+# Multiple return values
+def parse_name(full_name: str) -> Tuple[str, str]:
+    first, last = full_name.split(' ', 1)
+    return first, last
+```
+
+## Optional vs Required
+```python
+# Use Optional only when value can be None
+def create_task(
+    title: str,  # Required
+    description: Optional[str] = None,  # Can be None
+    priority: int = 1  # Has default, but not Optional
+) -> Task:
+    pass
+
+# Modern syntax (Python 3.10+)
+def update_user(
+    user_id: int,
+    name: str | None = None,
+    email: str | None = None
+) -> User | None:
+    pass
+```
+
+## Generic Types
+```python
+from typing import TypeVar, Generic, List
+
+T = TypeVar('T')
+
+class Repository(Generic[T]):
+    def get(self, id: int) -> Optional[T]:
+        pass
+    
+    def get_all(self) -> List[T]:
+        pass
+
+# Usage
+user_repo: Repository[User] = Repository()
+```
+
+## Type Aliases
+```python
+from typing import Dict, List, Union
+
+# Define complex types once
+FilterDict = Dict[str, Union[str, int, bool]]
+UserList = List[User]
+JsonData = Dict[str, Any]
+
+def apply_filters(filters: FilterDict) -> UserList:
+    pass
+```
+
+## SQLModel Type Patterns
+```python
+# Model with proper types
+class Product(SQLModel, table=True):
+    __tablename__ = "products"  # type: ignore[assignment]
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=200)
+    price: Decimal = Field(max_digits=10, decimal_places=2)
+    tags: List[str] = Field(default=[], sa_column=Column(JSON))
+    metadata: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+```
+
+## Event Handler Types
+```python
+from nicegui import events
+
+def handle_upload(e: events.UploadEventArguments) -> None:
+    content: bytes = e.content.read()
+    filename: str = e.name
+
+def handle_click(e: events.ClickEventArguments) -> None:
+    pass
+
+def handle_value_change(e: events.ValueChangeEventArguments) -> None:
+    new_value: Any = e.value
+```
+
+## Async Function Types
+```python
+from typing import Awaitable
+
+async def fetch_data(url: str) -> Dict[str, Any]:
+    pass
+
+def get_handler() -> Awaitable[None]:
+    async def handler():
+        await fetch_data("...")
+    return handler()
+```
+
+## Type Guards and Narrowing
+```python
+from typing import TypeGuard
+
+def is_admin(user: User) -> TypeGuard[AdminUser]:
+    return user.role == 'admin'
+
+def process_user(user: User) -> None:
+    if is_admin(user):
+        # Type checker knows user is AdminUser here
+        user.admin_function()
+```
+
+## Common Type Patterns
+
+### Query Results
+```python
+# Always type query results
+def get_user_by_email(email: str) -> Optional[User]:
+    with Session(ENGINE) as session:
+        result: Optional[User] = session.exec(
+            select(User).where(User.email == email)
+        ).first()
+        return result
+```
+
+### Collections
+```python
+# Be specific with collection types
+def process_items(items: List[Dict[str, str]]) -> None:
+    for item in items:
+        name: str = item.get('name', '')
+        value: str = item.get('value', '0')
+```
+
+### Decimal Handling
+```python
+from decimal import Decimal
+
+# Always use string for Decimal initialization
+price: Decimal = Decimal('10.99')  # CORRECT
+# price: Decimal = Decimal(10.99)  # WRONG - float imprecision
+
+def calculate_total(items: List[Item]) -> Decimal:
+    return sum(
+        Decimal(str(item.price)) * item.quantity
+        for item in items
+    )
+```
+
+## Type Checking Configuration
+
+### pyproject.toml
+```toml
+[tool.pyright]
+include = ["app", "tests"]
+exclude = ["**/node_modules", "**/__pycache__"]
+reportMissingImports = true
+reportMissingTypeStubs = false
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+```
+
+## Common Type Safety Rules
+1. Never use `Any` unless absolutely necessary
+2. Be explicit about Optional types
+3. Use type aliases for complex types
+4. Add type ignores sparingly with comments
+5. Return explicit None rather than implicit
+6. Use TypedDict for structured dictionaries
+7. Leverage type guards for narrowing
+
+@base-model.py
+@base-module.py
+@base-test.py

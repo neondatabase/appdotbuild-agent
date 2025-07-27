@@ -1,0 +1,147 @@
+---
+description: None/Optional Type Handling Patterns
+globs: ["**/*.py"]
+---
+
+# None Handling Best Practices
+
+## Always Check Optional Types
+If a type is `Optional[T]` or `T | None`, ALWAYS check for None before use:
+```python
+# WRONG
+def process_user(user: Optional[User]):
+    print(user.name)  # AttributeError if user is None
+
+# CORRECT
+def process_user(user: Optional[User]):
+    if user is None:
+        return None
+    print(user.name)
+```
+
+## Database Query Results
+```python
+# Single result - always can be None
+user = session.get(User, user_id)
+if user is None:
+    raise ValueError("User not found")
+# Now safe to use user
+
+# First() can return None
+result = session.exec(select(User).where(User.email == email)).first()
+if result is None:
+    return default_user
+```
+
+## Aggregate Function Results
+```python
+# WRONG
+total = session.exec(select(func.count(Task.id))).first() or 0
+
+# CORRECT - handle None explicitly
+result = session.exec(select(func.count(Task.id))).first()
+total = result if result is not None else 0
+```
+
+## Optional Relationships
+```python
+# Check relationship existence
+task = session.get(Task, task_id)
+if task and task.assignee:  # assignee might be None
+    assignee_name = task.assignee.full_name
+else:
+    assignee_name = "Unassigned"
+```
+
+## Foreign Key Validation
+```python
+# Before using foreign keys
+if language.id is not None:
+    session_record = StudySession(language_id=language.id, ...)
+else:
+    raise ValueError("Language ID cannot be None")
+```
+
+## Lambda Functions with Optional Values
+```python
+# WRONG - crashes if item.id is None
+ui.button('Delete', on_click=lambda: delete_item(item.id))
+
+# CORRECT - capture and check
+ui.button('Delete', on_click=lambda item_id=item.id: delete_item(item_id) if item_id else None)
+```
+
+## UI Component Values
+```python
+# Input with nullable value
+description_input = ui.textarea('Description', value=task.description or '')
+
+# Select with optional value
+ui.select(
+    options=options,
+    value=selected_id,  # Can be None
+    clearable=True  # Allow clearing
+)
+
+# Date with optional value
+due_date = ui.date(value=task.due_date.isoformat() if task.due_date else None)
+```
+
+## Early Returns for Cleaner Code
+```python
+def update_task(task_id: int, data: dict) -> Optional[Task]:
+    task = session.get(Task, task_id)
+    if task is None:
+        return None
+    
+    # No need for nested if - task is guaranteed non-None
+    task.title = data.get('title', task.title)
+    session.commit()
+    return task
+```
+
+## Chained Optional Access
+```python
+# For deep optional chains
+if user and user.profile and user.profile.settings:
+    theme = user.profile.settings.get('theme')
+
+# Or use getattr with default
+theme = getattr(getattr(user, 'profile', None), 'theme', 'default')
+```
+
+## List Comprehensions with None Filtering
+```python
+# Filter out None values
+user_ids = [u.id for u in users if u and u.id is not None]
+
+# With optional relationships
+assignee_names = [
+    task.assignee.name 
+    for task in tasks 
+    if task.assignee is not None
+]
+```
+
+## Type Guards
+```python
+from typing import TypeGuard
+
+def is_not_none(value: Optional[T]) -> TypeGuard[T]:
+    return value is not None
+
+# Usage
+if is_not_none(user):
+    # Type checker knows user is User, not Optional[User]
+    print(user.name)
+```
+
+## Common Patterns
+1. Database queries: Always check if result exists
+2. Foreign keys: Validate not None before use  
+3. UI events: Capture nullable values safely in lambdas
+4. Relationships: Check existence before accessing
+5. Aggregates: Handle None results explicitly
+
+@base-module.py
+@base-test.py

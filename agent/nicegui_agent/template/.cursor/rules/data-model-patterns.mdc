@@ -1,0 +1,84 @@
+---
+description: SQLModel Data Modeling Best Practices
+globs: ["**/models.py", "**/models/*.py", "**/schemas.py"]
+---
+
+# SQLModel Data Model Patterns
+
+## Model Organization
+- Keep all models in `app/models.py` or `app/models/` directory
+- Use `table=True` for persistent database models
+- Use `table=False` for validation schemas and API models
+- Always import all models in `app/database.py` to ensure registration
+
+## Field Definitions
+- Use `Optional[T]` ONLY for nullable fields or auto-incrementing primary keys
+- Prefer explicit types: `str` not `Optional[str]` unless truly optional
+- Always specify constraints: `Field(max_length=255)`, `Field(ge=0)`
+- Use `default_factory` for mutable defaults and callables
+  ```python
+  created_at: datetime = Field(default_factory=datetime.utcnow)
+  tags: List[str] = Field(default=[], sa_column=Column(JSON))
+  ```
+
+## Type Annotations
+- Always add `# type: ignore[assignment]` to `__tablename__`
+- Use proper type hints for all fields
+- For Decimal fields: `budget: Decimal = Field(default=Decimal('0'))`
+- For JSON fields: `metadata: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))`
+
+## Relationships
+- Define relationships in table models only
+- Use back_populates for bidirectional relationships
+- Handle optional relationships properly:
+  ```python
+  assignee: Optional[User] = Relationship(back_populates="tasks")
+  ```
+
+## Schema Patterns
+- Create separate schemas for Create, Update, and Response
+- CreateSchema: Required fields for creation
+- UpdateSchema: All fields optional for partial updates
+- ResponseSchema: Include computed fields and related data
+
+## Common Field Patterns
+```python
+# Timestamps
+created_at: datetime = Field(default_factory=datetime.utcnow)
+updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+# Status fields
+status: str = Field(default="active", max_length=20)
+
+# Money fields
+price: Decimal = Field(default=Decimal('0'), max_digits=10, decimal_places=2)
+
+# JSON fields
+config: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+tags: List[str] = Field(default=[], sa_column=Column(JSON))
+
+# Unique constraints
+email: str = Field(unique=True, max_length=255)
+
+# Indexes
+username: str = Field(index=True, max_length=50)
+
+# Foreign keys
+user_id: int = Field(foreign_key="users.id")
+```
+
+## Validation Patterns
+- Use Field validators for constraints:
+  ```python
+  priority: int = Field(default=0, ge=0, le=5)
+  email: str = Field(regex=r'^[\w\.-]+@[\w\.-]+\.\w+$')
+  ```
+
+## Import/Export Considerations
+- Always use forward references for circular dependencies:
+  ```python
+  tasks: List["Task"] = Relationship(back_populates="user")
+  ```
+- Import order matters - models before relationships
+
+@base-model.py

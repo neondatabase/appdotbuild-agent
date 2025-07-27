@@ -1,0 +1,304 @@
+---
+description: NiceGUI UI Component Usage Patterns
+globs: ["**/*.py"]
+---
+
+# NiceGUI Component Best Practices
+
+## Layout Components
+
+### Container Hierarchy
+```python
+with ui.card().classes('w-full'):
+    with ui.column().classes('gap-4'):
+        ui.label('Title').classes('text-h5')
+        with ui.row().classes('items-center gap-2'):
+            ui.icon('info')
+            ui.label('Information')
+```
+
+### Grid Layouts
+```python
+# Responsive grid
+with ui.grid(columns='1fr 1fr 1fr').classes('w-full gap-4'):
+    for item in items:
+        with ui.card():
+            # Card content
+
+# Fixed columns
+with ui.grid(columns=3).classes('gap-2'):
+    # Grid items
+```
+
+## Input Components
+
+### Text Inputs
+```python
+# Basic input with validation
+name_input = ui.input(
+    label='Name',
+    placeholder='Enter your name',
+    validation={'Required': lambda v: len(v) > 0}
+).classes('w-full')
+
+# Password input
+password = ui.input(
+    label='Password',
+    password=True,
+    password_toggle_button=True
+)
+
+# Textarea for long text
+description = ui.textarea(
+    label='Description',
+    placeholder='Enter description...'
+).classes('w-full').props('rows=4')
+```
+
+### Select Components
+```python
+# Basic select
+status_select = ui.select(
+    label='Status',
+    options=['active', 'inactive', 'pending'],
+    value='active'
+).classes('w-full')
+
+# With dict options
+users = {1: 'Alice', 2: 'Bob', 3: 'Charlie'}
+user_select = ui.select(
+    label='Assignee',
+    options=users,
+    value=1,
+    clearable=True  # Allow clearing selection
+)
+
+# With None handling
+options = {None: 'All', 1: 'Option 1', 2: 'Option 2'}
+filter_select = ui.select(options=options, value=None)
+```
+
+### Date and Time
+```python
+# Date picker - CRITICAL: No positional value argument!
+date_input = ui.date(value=date.today()).classes('w-full')
+
+# With None handling
+due_date = ui.date(
+    value=task.due_date.isoformat() if task.due_date else None
+)
+
+# Time picker
+time_input = ui.time(value='14:30')
+```
+
+### Number Inputs
+```python
+# Number with constraints
+quantity = ui.number(
+    label='Quantity',
+    value=1,
+    min=0,
+    max=100,
+    step=1,
+    format='%.0f'
+).classes('w-full')
+
+# Slider for ranges
+priority = ui.slider(min=0, max=5, value=2, step=1).props('label-always')
+```
+
+## Display Components
+
+### Labels and Text
+```python
+# Headers
+ui.label('Dashboard').classes('text-h4')
+ui.label('Subtitle').classes('text-subtitle1 text-grey-7')
+
+# Markdown support
+ui.markdown('**Bold** and *italic* text')
+
+# HTML content
+ui.html('<div class="custom">Custom HTML</div>')
+```
+
+### Tables
+```python
+# Basic table
+ui.table(
+    columns=[
+        {'name': 'id', 'label': 'ID', 'field': 'id', 'sortable': True},
+        {'name': 'name', 'label': 'Name', 'field': 'name'},
+        {'name': 'status', 'label': 'Status', 'field': 'status'}
+    ],
+    rows=[
+        {'id': 1, 'name': 'Item 1', 'status': 'active'},
+        {'id': 2, 'name': 'Item 2', 'status': 'inactive'}
+    ]
+).classes('w-full')
+```
+
+### Cards and Expansion
+```python
+# Card with sections
+with ui.card().classes('w-full'):
+    with ui.card_section():
+        ui.label('Card Title').classes('text-h6')
+    
+    ui.separator()
+    
+    with ui.card_section():
+        ui.label('Card content')
+
+# Expansion panels
+with ui.expansion('Advanced Options', icon='settings').classes('w-full'):
+    ui.label('Advanced settings here')
+```
+
+## Interactive Components
+
+### Buttons
+```python
+# Basic buttons - NO 'size' parameter!
+ui.button('Submit', on_click=submit_form).props('color=primary')
+ui.button('Cancel', on_click=cancel).props('flat')
+
+# Icon buttons
+ui.button(icon='delete', on_click=delete_item).props('round dense')
+
+# Button with loading
+submit_btn = ui.button('Save', on_click=save_data)
+# In handler: submit_btn.props('loading')
+```
+
+### Switches and Checkboxes
+```python
+# Switch with binding
+dark_mode = ui.switch('Dark mode').bind_value(app.storage.user, 'theme_dark')
+
+# Checkbox
+agree = ui.checkbox('I agree to terms', value=False)
+
+# Radio buttons
+with ui.radio(['Option 1', 'Option 2', 'Option 3'], value='Option 1') as radio:
+    pass
+```
+
+### Dialogs
+```python
+# Proper dialog pattern
+async def show_confirm():
+    with ui.dialog() as dialog, ui.card():
+        ui.label('Confirm Action').classes('text-h6')
+        ui.label('Are you sure you want to proceed?')
+        
+        with ui.row().classes('justify-end gap-2'):
+            ui.button('Cancel', on_click=lambda: dialog.submit(False))
+            ui.button('Confirm', on_click=lambda: dialog.submit(True)).props('color=primary')
+    
+    result = await dialog
+    if result:
+        perform_action()
+```
+
+### Notifications
+```python
+# Success/Error notifications
+ui.notify('Operation successful!', type='positive', position='top')
+ui.notify('Error occurred', type='negative', close_button=True)
+
+# With custom duration
+ui.notify('Processing...', type='ongoing', timeout=0)  # No auto-close
+```
+
+## File Handling
+
+### Upload Component
+```python
+def handle_upload(e: events.UploadEventArguments):
+    content = e.content.read()
+    filename = e.name
+    # Process file
+    ui.notify(f'Uploaded {filename}', type='positive')
+
+ui.upload(
+    on_upload=handle_upload,
+    label='Upload File',
+    multiple=True,
+    max_file_size=10_000_000  # 10MB
+).classes('w-full')
+```
+
+## Styling Patterns
+
+### Common Classes
+```python
+# Width
+.classes('w-full')  # Full width
+.classes('max-w-md')  # Max width medium
+
+# Spacing
+.classes('p-4')  # Padding
+.classes('gap-4')  # Gap in flex/grid
+.classes('mt-4')  # Margin top
+
+# Alignment
+.classes('items-center')  # Vertical center
+.classes('justify-between')  # Horizontal space between
+
+# Text
+.classes('text-h4')  # Header 4
+.classes('text-grey-7')  # Grey text
+.classes('font-bold')  # Bold text
+```
+
+### Props vs Classes
+```python
+# Use props for component-specific properties
+ui.button('Click').props('flat dense rounded')
+
+# Use classes for Tailwind/CSS
+ui.card().classes('shadow-lg hover:shadow-xl transition-shadow')
+```
+
+## Common Patterns
+
+### Loading States
+```python
+@ui.refreshable
+def data_container():
+    if is_loading:
+        ui.spinner(size='lg')
+    else:
+        # Show data
+        pass
+
+# Trigger refresh
+data_container.refresh()
+```
+
+### Conditional Rendering
+```python
+# Using bind_visibility
+checkbox = ui.checkbox('Show details')
+with ui.card().bind_visibility_from(checkbox, 'value'):
+    ui.label('Details here')
+
+# Manual conditions
+if user.is_admin:
+    ui.button('Admin Action', on_click=admin_func)
+```
+
+### Reactive Updates
+```python
+# Label that updates
+status_label = ui.label('Status: Unknown')
+
+def update_status():
+    status_label.set_text(f'Status: {get_current_status()}')
+
+ui.timer(2.0, update_status)
+```
+
+@base-module.py

@@ -1,0 +1,79 @@
+---
+description: Common NiceGUI Component Pitfalls and Solutions
+globs: ["**/*.py"]
+---
+
+# CRITICAL: Avoid These Common NiceGUI Mistakes
+
+## 1. ui.date() - Multiple values for 'value' argument
+- WRONG: `ui.date('Date', value=date.today())`  # Causes error
+- CORRECT: `ui.date(value=date.today())`
+- For date values in code: `date_input.set_value(date.today().isoformat())`
+
+## 2. ui.button() - No 'size' parameter
+- WRONG: `ui.button('Click', size='sm')`
+- CORRECT: `ui.button('Click').classes('text-sm')`
+
+## 3. Lambda functions with nullable values
+- WRONG: `on_click=lambda: delete_item(item.id)`  # item.id might be None
+- CORRECT: `on_click=lambda item_id=item.id: delete_item(item_id) if item_id else None`
+- For events: `on_click=lambda e, item_id=item.id: delete_item(item_id) if item_id else None`
+
+## 4. Dialog creation pattern
+- WRONG: `async with ui.dialog('Title') as dialog:`
+- CORRECT:
+  ```python
+  with ui.dialog() as dialog, ui.card():
+      ui.label('Message')
+      ui.button('OK', on_click=lambda: dialog.submit('OK'))
+  result = await dialog
+  ```
+
+## 5. SQLModel __tablename__ type errors
+- Always add type ignore comment:
+  ```python
+  class MyModel(SQLModel, table=True):
+      __tablename__ = "my_models"  # type: ignore[assignment]
+  ```
+
+## 6. Tab storage access
+- WRONG: Direct access without connection check
+- CORRECT:
+  ```python
+  @ui.page('/mypage')
+  async def page():
+      await ui.context.client.connected()
+      app.storage.tab['key'] = value
+  ```
+
+## 7. Boolean comparisons
+- WRONG: `if value == True:` or `assert func() == False`
+- CORRECT: `if value:` or `assert not func()`
+
+## 8. Date field serialization
+- WRONG: `return {'created_at': user.created_at}`
+- CORRECT: `return {'created_at': user.created_at.isoformat()}`
+
+## 9. Query result None checks
+- WRONG: `total = session.exec(select(func.count())).first() or 0`
+- CORRECT:
+  ```python
+  result = session.exec(select(func.count())).first()
+  total = result if result is not None else 0
+  ```
+
+## 10. Module registration in startup
+- WRONG: Forgetting to import and call module.create()
+- CORRECT in startup.py:
+  ```python
+  from app.database import create_tables
+  import app.my_module
+  
+  def startup() -> None:
+      create_tables()
+      app.my_module.create()
+  ```
+
+@base-module.py
+@base-model.py
+@base-test.py

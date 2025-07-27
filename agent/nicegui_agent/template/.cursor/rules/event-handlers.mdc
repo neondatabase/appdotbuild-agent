@@ -1,0 +1,162 @@
+---
+description: Event Handler Patterns and Lambda Safety
+globs: ["**/*.py"]
+---
+
+# Event Handler Best Practices
+
+## Lambda Function Safety with Nullable Values
+CRITICAL: Capture nullable values safely to avoid runtime errors
+```python
+# WRONG - item.id might be None when lambda executes
+ui.button('Delete', on_click=lambda: delete_item(item.id))
+
+# CORRECT - capture value at definition time
+ui.button('Delete', on_click=lambda item_id=item.id: delete_item(item_id) if item_id else None)
+
+# With event parameter
+ui.button('Delete', on_click=lambda e, item_id=item.id: delete_item(item_id) if item_id else None)
+```
+
+## Common Event Handler Patterns
+
+### Button Click Handlers
+```python
+# Simple handler
+ui.button('Save', on_click=save_data)
+
+# With parameters
+ui.button('Delete', on_click=lambda: delete_user(user_id))
+
+# Async handler
+async def handle_submit():
+    await process_form()
+    ui.notify('Submitted!')
+
+ui.button('Submit', on_click=handle_submit)
+```
+
+### Input Change Handlers
+```python
+# Direct binding
+ui.input('Name').on('blur', lambda e: validate_name(e.value))
+
+# With validation
+def validate_email(e):
+    if '@' not in e.value:
+        ui.notify('Invalid email', type='negative')
+
+ui.input('Email').on('change', validate_email)
+```
+
+### Select/Dropdown Handlers
+```python
+# Immediate action on change
+ui.select(
+    options=['all', 'active', 'completed'],
+    on_change=lambda e: refresh_list(e.value)
+)
+
+# With None handling
+def handle_selection(value):
+    if value is not None:
+        load_details(value)
+
+ui.select(options=user_options, on_change=lambda e: handle_selection(e.value))
+```
+
+## Dialog Handler Patterns
+```python
+# Async dialog with result handling
+async def confirm_action():
+    with ui.dialog() as dialog, ui.card():
+        ui.label('Are you sure?')
+        with ui.row():
+            ui.button('Yes', on_click=lambda: dialog.submit(True))
+            ui.button('No', on_click=lambda: dialog.submit(False))
+    
+    result = await dialog
+    if result:
+        perform_action()
+```
+
+## Timer and Periodic Updates
+```python
+# One-time delayed execution
+ui.timer(0.1, lambda: process_data(), once=True)
+
+# Periodic updates
+def update_status():
+    status_label.set_text(get_current_status())
+
+ui.timer(5.0, update_status)  # Every 5 seconds
+```
+
+## File Upload Handlers
+```python
+def handle_upload(e: events.UploadEventArguments):
+    try:
+        content = e.content.read()
+        process_file(content)
+        ui.notify('File uploaded successfully', type='positive')
+    except Exception as ex:
+        ui.notify(f'Upload failed: {str(ex)}', type='negative')
+
+ui.upload(on_upload=handle_upload)
+```
+
+## Form Submission Patterns
+```python
+# Prevent default and handle manually
+async def handle_form_submit(e):
+    e.preventDefault()
+    
+    # Validate form
+    if not validate_form():
+        return
+    
+    # Process submission
+    try:
+        await submit_data()
+        ui.notify('Success!', type='positive')
+    except Exception as ex:
+        ui.notify(f'Error: {str(ex)}', type='negative')
+```
+
+## Error Handling in Event Handlers
+```python
+def safe_handler(func):
+    """Decorator for safe event handling"""
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            ui.notify(f'Error: {str(e)}', type='negative')
+            logger.error(f'Handler error: {e}', exc_info=True)
+    return wrapper
+
+@safe_handler
+def risky_operation():
+    # Code that might fail
+    pass
+```
+
+## Binding Patterns
+```python
+# Two-way binding
+checkbox = ui.checkbox('Enable feature')
+ui.label().bind_text_from(checkbox, 'value', lambda v: 'Enabled' if v else 'Disabled')
+
+# Visibility binding
+details = ui.card()
+details.bind_visibility_from(checkbox, 'value')
+```
+
+## Common Pitfalls to Avoid
+1. Not capturing nullable values in lambdas
+2. Forgetting to handle None in event values
+3. Not using async handlers for async operations
+4. Missing error handling in event handlers
+5. Creating infinite loops with change handlers
+
+@base-module.py
