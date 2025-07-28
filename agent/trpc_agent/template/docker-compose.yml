@@ -8,6 +8,9 @@ services:
       - "2022:2022"
     environment:
       - APP_DATABASE_URL=${APP_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/postgres}
+      - VITE_STACK_PROJECT_ID=${VITE_STACK_PROJECT_ID:-}
+      - VITE_STACK_PUBLISHABLE_CLIENT_KEY=${VITE_STACK_PUBLISHABLE_CLIENT_KEY:-}
+      - STACK_SECRET_SERVER_KEY=${STACK_SECRET_SERVER_KEY:-}
     container_name: ${BACKEND_CONTAINER_NAME:-app}
     depends_on:
       db-push:

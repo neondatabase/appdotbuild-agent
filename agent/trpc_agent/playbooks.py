@@ -63,9 +63,10 @@ export const tables = { products: productsTable };
 
 BASE_HANDLER_DECLARATION = """
 <file path="server/src/handlers/create_product.ts">
+import { type Context } from '../helpers/auth';
 import { type CreateProductInput, type Product } from '../schema';
 
-export const async createProduct(input: CreateProductInput): Promise<Product> => {
+export const createProduct = async (_ctx: Context, input: CreateProductInput): Promise<Product> => {
     // This is a placeholder declaration! Real code should be implemented here.
     // The goal of this handler is creating a new product persisting it in the database.
     return Promise.resolve({
@@ -80,7 +81,7 @@ export const async createProduct(input: CreateProductInput): Promise<Product> =>
 }
 
 </file>
-""".strip()
+"""
 
 BASE_GET_HANDLER_DECLARATION = """
 <file path="server/src/handlers/get_products.ts">
@@ -100,8 +101,9 @@ BASE_HANDLER_IMPLEMENTATION = """
 import { db } from '../db';
 import { productsTable } from '../db/schema';
 import { type CreateProductInput, type Product } from '../schema';
+import { type Context } from '../helpers/auth';
 
-export const createProduct = async (input: CreateProductInput): Promise<Product> => {
+export const createProduct = async (_ctx: Context, input: CreateProductInput): Promise<Product> => {
   try {
     // Insert product record
     const result = await db.insert(productsTable)
@@ -213,16 +215,15 @@ describe('createProduct', () => {
 </file>
 """.strip()
 
-
 BASE_SERVER_INDEX = """
 <file path="server/src/index.ts">
 import { initTRPC } from '@trpc/server';
 import { createHTTPServer } from '@trpc/server/adapters/standalone';
 import 'dotenv/config';
-import cors from 'cors';
 import superjson from 'superjson';
+import { type Context, createContext, createMiddleware } from './helpers/auth';
 
-const t = initTRPC.create({
+const t = initTRPC.context<Context>().create({
   transformer: superjson,
 });
 
@@ -240,13 +241,9 @@ export type AppRouter = typeof appRouter;
 async function start() {
   const port = process.env['SERVER_PORT'] || 2022;
   const server = createHTTPServer({
-    middleware: (req, res, next) => {
-      cors()(req, res, next);
-    },
+    middleware: createMiddleware(),
     router: appRouter,
-    createContext() {
-      return {};
-    },
+    createContext,
   });
   server.listen(port);
   console.log(`TRPC server listening at port: ${port}`);
@@ -255,7 +252,6 @@ async function start() {
 start();
 </file>
 """.strip()
-
 
 BASE_APP_TSX = """
 <file path="client/src/App.tsx">
@@ -458,6 +454,24 @@ export function ProductForm({ onSubmit, isLoading = false }: ProductFormProps) {
 </file>
 """.strip()
 
+TRPC_NO_AUTH_SHIM = """
+...
+import { createMiddleware } from './helpers/auth';
+...
+const t = initTRPC.create({
+  transformer: superjson,
+});
+...
+const server = createHTTPServer({
+  middleware: createMiddleware(),
+  router: appRouter,
+  createContext() {
+    return {};
+  },
+});
+...
+""".strip()
+
 TRPC_INDEX_SHIM = """
 ...
 import { createProductInputSchema } from './schema';
@@ -467,7 +481,7 @@ import { getProducts } from './handlers/get_products';
 const appRouter = router({
   createProduct: publicProcedure
     .input(createProductInputSchema)
-    .mutation(({ input }) => createProduct(input)),
+    .mutation(({ ctx, input }) => createProduct(ctx, input)),
   getProducts: publicProcedure
     .query(() => getProducts()),
 });
@@ -531,6 +545,9 @@ Example:
 - Imports of handlers and schema types
 - Registering TRPC routes
 {TRPC_INDEX_SHIM}
+
+## If not using authentication
+{TRPC_NO_AUTH_SHIM}
 
 {TYPE_ALIGNMENT_RULES_SCHEMA}
 
@@ -733,6 +750,37 @@ Return the handler implementation within <file path="server/src/handlers/{{handl
 Return the test code within <file path="server/src/tests/{{handler_name}}.test.ts">...</file> tags.
 """.strip()
 
+FRONT_MAIN_NO_AUTH = """
+<file path="client/src/main.tsx">
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+</file>
+""".strip()
+
+STACK_AUTH_COMPONENTS = """
+<file path="client/src/components/sign_in.tsx">
+import { SignIn } from "@stackframe/stack";
+
+export function SignInPage() {
+  return (
+    <SignIn/>
+  );
+}
+</file>
+
+Available components:
+- <SignIn />
+- <SignUp />
+- <AccountSettings />
+"""
 
 FRONTEND_SYSTEM_PROMPT = f"""You are software engineer, follow those rules:
 - Generate react frontend application using radix-ui components.
@@ -744,6 +792,9 @@ Example App Component:
 
 Example Nested Component (showing import paths):
 {BASE_COMPONENT_EXAMPLE}
+
+Example of sign in page using StackFrame components:
+{STACK_AUTH_COMPONENTS}
 
 # Component Organization Guidelines:
 - Create separate components when:

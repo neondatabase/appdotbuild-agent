@@ -1,10 +1,10 @@
 import { initTRPC } from '@trpc/server';
 import { createHTTPServer } from '@trpc/server/adapters/standalone';
 import 'dotenv/config';
-import cors from 'cors';
 import superjson from 'superjson';
+import { type Context, createContext, createMiddleware } from './helpers/auth';
 
-const t = initTRPC.create({
+const t = initTRPC.context<Context>().create({
   transformer: superjson,
 });
 
@@ -22,13 +22,9 @@ export type AppRouter = typeof appRouter;
 async function start() {
   const port = process.env['SERVER_PORT'] || 2022;
   const server = createHTTPServer({
-    middleware: (req, res, next) => {
-      cors()(req, res, next);
-    },
+    middleware: createMiddleware(),
     router: appRouter,
-    createContext() {
-      return {};
-    },
+    createContext,
   });
   server.listen(port);
   console.log(`TRPC server listening at port: ${port}`);

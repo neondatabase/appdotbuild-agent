@@ -30,6 +30,9 @@ RUN cd server && bun run build
 FROM oven/bun:1.2.2-alpine
 
 # Env vars for the end image should be here
+ENV VITE_STACK_PROJECT_ID=${VITE_STACK_PROJECT_ID}
+ENV VITE_STACK_PUBLISHABLE_CLIENT_KEY=${VITE_STACK_PUBLISHABLE_CLIENT_KEY}
+ENV STACK_SECRET_SERVER_KEY=${STACK_SECRET_SERVER_KEY}
 ENV APP_DATABASE_URL=${APP_DATABASE_URL}
 ENV SERVER_PORT=${SERVER_PORT:-2022}
 # Install curl for healthcheck, Caddy, and supervisor
