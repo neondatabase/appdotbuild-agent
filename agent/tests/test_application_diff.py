@@ -1,10 +1,9 @@
 import os
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 import dagger
 from trpc_agent.application import FSMApplication
 from core.statemachine import StateMachine
-from core.workspace import Workspace
 from log import get_logger
 
 logger = get_logger(__name__)
