@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Literal, cast
 from openai import AsyncOpenAI
 import json
+import re
 from llm import common
 from llm.telemetry import LLMTelemetry
 from log import get_logger
@@ -8,6 +9,60 @@ import logging
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter, before_sleep_log
 
 logger = get_logger(__name__)
+
+
+def parse_tool_calls_from_content(content: str) -> tuple[List[common.ToolUse], str]:
+    """Parse tool calls from message content when they're formatted as XML-like tags.
+    
+    Returns:
+        tuple of (list of ToolUse objects, remaining content after removing tool calls)
+    """
+    tool_uses = []
+    remaining_content = content
+    
+    try:
+        # Look for tool calls in format: <tool_call><function=name><parameter=key>value</parameter>...</function></tool_call>
+        tool_call_pattern = r'<tool_call>(.*?)</tool_call>'
+        function_pattern = r'<function=(\w+)>(.*?)</function>'
+        param_pattern = r'<parameter=(\w+)>(.*?)</parameter>'
+        
+        tool_calls_found = re.findall(tool_call_pattern, content, re.DOTALL)
+        
+        for i, tool_call_match in enumerate(tool_calls_found):
+            function_match = re.search(function_pattern, tool_call_match, re.DOTALL)
+            if function_match:
+                function_name = function_match.group(1)
+                function_content = function_match.group(2)
+                
+                # Extract parameters
+                params = {}
+                for param_match in re.finditer(param_pattern, function_content, re.DOTALL):
+                    param_name = param_match.group(1)
+                    param_value = param_match.group(2).strip()
+                    
+                    # Try to parse JSON values
+                    try:
+                        params[param_name] = json.loads(param_value)
+                    except (json.JSONDecodeError, ValueError):
+                        # If not JSON, use as string
+                        params[param_name] = param_value
+                
+                tool_uses.append(common.ToolUse(
+                    name=function_name,
+                    input=params,
+                    id=f"tool_call_{i}"  # Generate an ID since it's not provided
+                ))
+                
+                logger.info(f"Successfully parsed tool call from content: {function_name} with params: {params}")
+        
+        # Remove all tool calls from content
+        if tool_calls_found:
+            remaining_content = re.sub(tool_call_pattern, '', content, flags=re.DOTALL).strip()
+    
+    except Exception as e:
+        logger.warning(f"Failed to parse tool call from content: {e}, keeping original content")
+    
+    return tool_uses, remaining_content
 
 
 class LMStudioLLM:
@@ -138,12 +193,9 @@ class LMStudioLLM:
 
         message = response.choices[0].message
 
-        # Handle text content
-        if message.content:
-            content_blocks.append(common.TextRaw(message.content))
-
         # Handle tool calls
         if message.tool_calls:
+            # Standard tool calls handling
             for tool_call in message.tool_calls:
                 # Parse arguments if they're a JSON string
                 try:
@@ -160,6 +212,25 @@ class LMStudioLLM:
                     input=arguments,
                     id=tool_call.id
                 ))
+            
+            # Add any remaining text content if present
+            if message.content:
+                content_blocks.append(common.TextRaw(message.content))
+        elif message.content:
+            # Check if content contains tool calls in XML format (workaround for some LMStudio models)
+            if "<tool_call>" in message.content:
+                logger.info("Detected potential tool call in message content, attempting to parse...")
+                parsed_tool_uses, remaining_content = parse_tool_calls_from_content(message.content)
+                
+                # Add remaining content first if any
+                if remaining_content:
+                    content_blocks.append(common.TextRaw(remaining_content))
+                
+                # Then add parsed tool uses
+                content_blocks.extend(parsed_tool_uses)
+            else:
+                # Just regular text content
+                content_blocks.append(common.TextRaw(message.content))
 
         # Determine stop reason
         finish_reason = response.choices[0].finish_reason
