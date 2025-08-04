@@ -1,10 +1,9 @@
 import os
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 import dagger
 from trpc_agent.application import FSMApplication
 from core.statemachine import StateMachine
-from core.workspace import Workspace
 from log import get_logger
 
 logger = get_logger(__name__)
@@ -209,16 +208,19 @@ async def test_get_diff_with_removed_files():
 @pytest.mark.anyio
 async def test_get_diff_with_exception_handling():
     """Test error handling when something goes wrong during diff generation"""
-    # Use a real Dagger connection but create conditions that will cause an error
-    async with dagger.Connection(dagger.Config(log_output=open(os.devnull, "w"))) as client:
-        fsm_application = FSMApplication(client, create_mock_fsm())
-        # Call get_diff_with but cause an exception in the Workspace.diff method
-        with patch.object(Workspace, 'diff', side_effect=Exception("Test diff error")):
-            diff_result = await fsm_application.get_diff_with({})
-
-            # Verify the result contains the error message
-            assert "ERROR GENERATING DIFF" in diff_result
-            assert "Test diff error" in diff_result
+    # Mock the dagger client instead of creating a real connection
+    mock_client = Mock()
+    mock_container = Mock()
+    mock_client.container.return_value.from_.return_value.with_workdir.return_value = mock_container
+    mock_container.with_exec.side_effect = Exception("Test diff error")
+    
+    fsm_application = FSMApplication(mock_client, create_mock_fsm())
+    
+    # Verify that an exception is raised
+    with pytest.raises(Exception) as exc_info:
+        await fsm_application.get_diff_with({})
+    
+    assert "Test diff error" in str(exc_info.value)
 
 @pytest.mark.anyio
 async def test_get_diff_with_real_dagger():
