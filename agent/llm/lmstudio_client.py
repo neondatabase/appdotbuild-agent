@@ -13,55 +13,55 @@ logger = get_logger(__name__)
 
 def parse_tool_calls_from_content(content: str) -> tuple[List[common.ToolUse], str]:
     """Parse tool calls from message content when they're formatted as XML-like tags.
-    
+
     Returns:
         tuple of (list of ToolUse objects, remaining content after removing tool calls)
     """
     tool_uses = []
     remaining_content = content
-    
+
     try:
         # Look for tool calls in format: <tool_call><function=name><parameter=key>value</parameter>...</function></tool_call>
         tool_call_pattern = r'<tool_call>(.*?)</tool_call>'
         function_pattern = r'<function=(\w+)>(.*?)</function>'
         param_pattern = r'<parameter=(\w+)>(.*?)</parameter>'
-        
+
         tool_calls_found = re.findall(tool_call_pattern, content, re.DOTALL)
-        
+
         for i, tool_call_match in enumerate(tool_calls_found):
             function_match = re.search(function_pattern, tool_call_match, re.DOTALL)
             if function_match:
                 function_name = function_match.group(1)
                 function_content = function_match.group(2)
-                
+
                 # Extract parameters
                 params = {}
                 for param_match in re.finditer(param_pattern, function_content, re.DOTALL):
                     param_name = param_match.group(1)
                     param_value = param_match.group(2).strip()
-                    
+
                     # Try to parse JSON values
                     try:
                         params[param_name] = json.loads(param_value)
                     except (json.JSONDecodeError, ValueError):
                         # If not JSON, use as string
                         params[param_name] = param_value
-                
+
                 tool_uses.append(common.ToolUse(
                     name=function_name,
                     input=params,
                     id=f"tool_call_{i}"  # Generate an ID since it's not provided
                 ))
-                
+
                 logger.info(f"Successfully parsed tool call from content: {function_name} with params: {params}")
-        
+
         # Remove all tool calls from content
         if tool_calls_found:
             remaining_content = re.sub(tool_call_pattern, '', content, flags=re.DOTALL).strip()
-    
+
     except Exception as e:
         logger.warning(f"Failed to parse tool call from content: {e}, keeping original content")
-    
+
     return tool_uses, remaining_content
 
 
@@ -76,7 +76,7 @@ class LMStudioLLM:
 
     def _messages_into(self, messages: List[common.Message]) -> List[Dict[str, Any]]:
         openai_messages = []
-        
+
         for message in messages:
             content_parts = []
             tool_calls = []
@@ -95,7 +95,7 @@ class LMStudioLLM:
                         except (TypeError, ValueError) as e:
                             logger.warning(f"Failed to serialize tool arguments: {e}, using str conversion")
                             arguments = str(arguments)
-                    
+
                     tool_calls.append({
                         "id": block.id,
                         "type": "function",
@@ -120,12 +120,12 @@ class LMStudioLLM:
                     elif message.role == "user":
                         # OpenAI requires content for user messages
                         openai_message["content"] = ""
-                    
+
                     if tool_calls:
                         openai_message["tool_calls"] = tool_calls  # type: ignore
-                    
+
                     openai_messages.append(openai_message)
-                
+
                 # Then add each tool result as separate messages
                 for tool_result in tool_results:
                     openai_messages.append({
@@ -164,15 +164,15 @@ class LMStudioLLM:
             if not name:
                 logger.warning(f"Skipping tool with missing name: {tool}")
                 continue
-                
+
             description = tool.get("description", "")
             parameters = tool.get("input_schema", {})
-            
+
             # Basic validation of parameter schema
             if parameters and not isinstance(parameters, dict):
                 logger.warning(f"Tool {name} has invalid parameter schema, using empty schema")
                 parameters = {}
-            
+
             openai_tools.append({
                 "type": "function",
                 "function": {
@@ -181,11 +181,11 @@ class LMStudioLLM:
                     "parameters": parameters
                 }
             })
-        
+
         if not openai_tools:
             logger.warning("No valid tools found after validation")
             return None
-            
+
         return openai_tools
 
     def _completion_into(self, response: Any) -> common.Completion:
@@ -206,13 +206,13 @@ class LMStudioLLM:
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.warning(f"Failed to parse tool call arguments: {e}, using raw arguments")
                     arguments = tool_call.function.arguments
-                
+
                 content_blocks.append(common.ToolUse(
                     name=tool_call.function.name,
                     input=arguments,
                     id=tool_call.id
                 ))
-            
+
             # Add any remaining text content if present
             if message.content:
                 content_blocks.append(common.TextRaw(message.content))
@@ -221,11 +221,11 @@ class LMStudioLLM:
             if "<tool_call>" in message.content:
                 logger.info("Detected potential tool call in message content, attempting to parse...")
                 parsed_tool_uses, remaining_content = parse_tool_calls_from_content(message.content)
-                
+
                 # Add remaining content first if any
                 if remaining_content:
                     content_blocks.append(common.TextRaw(remaining_content))
-                
+
                 # Then add parsed tool uses
                 content_blocks.extend(parsed_tool_uses)
             else:
@@ -323,12 +323,12 @@ class LMStudioLLM:
 
             # Convert response to common format
             completion = self._completion_into(response)
-            
+
             # Enhanced logging for tool calls debugging
             tool_use_blocks = [block for block in completion.content if isinstance(block, common.ToolUse)]
             if tool_use_blocks:
                 logger.info(f"LM Studio response includes {len(tool_use_blocks)} tool calls: {[block.name for block in tool_use_blocks]}")
-            
+
             logger.info(f"LM Studio response - content_blocks: {len(list(completion.content))}, stop_reason: {completion.stop_reason}")
 
             return completion

@@ -127,9 +127,11 @@ def get_llm_client(
         backend = _guess_llm_backend(model_name)
         logger.info(f"Auto-detected backend: {backend}")
         # # TEMP: Force LMStudio for all calls
-        backend = "lmstudio"
-        model_name = "loaded-model"  # Use LMStudio's default loaded model
-        logger.info(f"TEMP WORKAROUND: Forcing LMStudio backend with model: {model_name}")
+        #
+        if "sonnet" in model_name:
+            backend = "lmstudio"
+            model_name = "loaded-model"  # Use LMStudio's default loaded model
+            logger.info(f"TEMP WORKAROUND: Forcing LMStudio backend with model: {model_name}")
     cache_key = _cache_key_from_seq((model_name, params_key))
 
     # Return existing client if one exists with the same configuration
