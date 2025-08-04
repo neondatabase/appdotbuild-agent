@@ -337,70 +337,61 @@ class FSMApplication:
         return actions
 
     async def get_diff_with(self, snapshot: dict[str, str]) -> str:
-        logger.info(f"SERVER get_diff_with: Received snapshot with {len(snapshot)} files.")
+        logger.info(
+            f"SERVER get_diff_with: Received snapshot with {len(snapshot)} files."
+        )
+
+        # Start with empty directory and git init
+        start = self.client.container().from_("alpine/git").with_workdir("/app")
+        start = start.with_exec(["git", "init"]).with_exec(
+            ["git", "config", "--global", "user.email", "agent@appbuild.com"]
+        )
         if snapshot:
             # Sort keys for consistent sample logging, especially in tests
             sorted_snapshot_keys = sorted(snapshot.keys())
-            logger.info(f"SERVER get_diff_with: Snapshot sample paths (up to 5): {sorted_snapshot_keys[:5]}")
-            if len(snapshot) > 5:
-                logger.debug(f"SERVER get_diff_with: All snapshot paths: {sorted_snapshot_keys}")
-            # Log content of a very small, specific file if it exists, for deep debugging
-            # Example: if "client/src/App.tsx" in snapshot:
-            #    logger.debug(f"SERVER get_diff_with: Content of snapshot file 'client/src/App.tsx':\n{snapshot['client/src/App.tsx'][:200]}...")
+            logger.info(
+                f"SERVER get_diff_with: Snapshot sample paths (up to 5): {sorted_snapshot_keys[:5]}"
+            )
+            for file_path, content in snapshot.items():
+                start = start.with_new_file(file_path, content)
+            start = start.with_exec(["git", "add", "."]).with_exec(
+                ["git", "commit", "-m", "'snapshot'"]
+            )
         else:
-            logger.info("SERVER get_diff_with: Snapshot is empty. Diff will be against template + FSM context files.")
+            logger.info(
+                "SERVER get_diff_with: Snapshot is empty. Diff will be against template + FSM context files."
+            )
+            # If no snapshot, create an empty initial commit
+            start = start.with_exec(["git", "add", "."]).with_exec(
+                ["git", "commit", "-m", "'initial'", "--allow-empty"]
+            )
 
-        logger.debug("SERVER get_diff_with: Initializing Dagger context from empty directory")
-        context = self.client.directory()
+        # Add template files (they will appear in diff if not in snapshot)
+        template_dir = self.client.host().directory("./trpc_agent/template")
+        start = start.with_directory(".", template_dir)
+        logger.info("SERVER get_diff_with: Added template directory to workspace")
 
-        gitignore_path = "./trpc_agent/template/.gitignore"
-        try:
-            gitignore_file = self.client.host().file(gitignore_path)
-            context = context.with_file(".gitignore", gitignore_file)
-            logger.info(f"SERVER get_diff_with: Added .gitignore from {gitignore_path} to Dagger context.")
-        except Exception as e:
-            logger.warning(f"SERVER get_diff_with: Could not load/add .gitignore from {gitignore_path}: {e}. Proceeding without.")
+        # Add FSM context files on top
+        for file_path, content in self.fsm.context.files.items():
+            start = start.with_new_file(file_path, content)
 
-        logger.info(f"SERVER get_diff_with: Writing {len(snapshot)} files from received snapshot to Dagger context.")
-        for key, value in snapshot.items():
-            logger.debug(f"SERVER get_diff_with:  Adding snapshot file to Dagger context: {key}")
-            context = context.with_new_file(key, value)
+        logger.info(
+            "SERVER get_diff_with: Calling workspace.diff() to generate final diff."
+        )
+        diff = (
+            await start.with_exec(["git", "add", "."])
+            .with_exec(["git", "diff", "HEAD"])
+            .stdout()
+        )
+        logger.info(
+            f"SERVER get_diff_with: workspace.diff() Succeeded. Diff length: {len(diff)}"
+        )
+        if not diff:
+            logger.warning(
+                "SERVER get_diff_with: Diff output is EMPTY. This might be expected if states match or an issue."
+            )
 
-        logger.info("SERVER get_diff_with: Creating Dagger workspace for diff generation.")
-        workspace = await Workspace.create(self.client, base_image="alpine/git", context=context)
-        logger.debug("SERVER get_diff_with: Dagger workspace created with initial snapshot context.")
-
-        template_dir_path = "./trpc_agent/template"
-        try:
-            template_dir = self.client.host().directory(template_dir_path)
-            workspace.ctr = workspace.ctr.with_directory(".", template_dir)
-            logger.info(f"SERVER get_diff_with: Template directory {template_dir_path} merged into Dagger workspace root.")
-        except Exception as e:
-            logger.error(f"SERVER get_diff_with: FAILED to merge template directory {template_dir_path} into workspace: {e}")
-
-        fsm_files_count = len(self.fsm.context.files)
-        logger.info(f"SERVER get_diff_with: Writing {fsm_files_count} files from FSM context to Dagger workspace (overlaying snapshot & template).")
-        if fsm_files_count > 0:
-             logger.debug(f"SERVER get_diff_with: FSM files (sample): {list(self.fsm.context.files.keys())[:5]}")
-        for key, value in self.fsm.context.files.items():
-            logger.debug(f"SERVER get_diff_with:  Writing FSM file to Dagger workspace: {key} (Length: {len(value)})")
-            try:
-                workspace.write_file(key, value)
-            except Exception as e:
-                logger.error(f"SERVER get_diff_with: FAILED to write FSM file {key} to workspace: {e}")
-
-        logger.info("SERVER get_diff_with: Calling workspace.diff() to generate final diff.")
-        final_diff_output = ""
-        try:
-            final_diff_output = await workspace.diff()
-            logger.info(f"SERVER get_diff_with: workspace.diff() Succeeded. Diff length: {len(final_diff_output)}")
-            if not final_diff_output:
-                 logger.warning("SERVER get_diff_with: Diff output is EMPTY. This might be expected if states match or an issue.")
-        except Exception as e:
-            logger.exception("SERVER get_diff_with: Error during workspace.diff() execution.")
-            final_diff_output = f"# ERROR GENERATING DIFF: {e}"
-
-        return final_diff_output
+        return diff
 
 
 async def main(user_prompt="Minimal persistent counter application"):
