@@ -8,6 +8,7 @@ from llm.anthropic_client import AnthropicLLM
 from llm.cached import CachedLLM, CacheMode
 from llm.gemini import GeminiLLM
 from llm.models_config import MODELS_MAP, ALL_MODEL_NAMES, OLLAMA_MODEL_NAMES, ANTHROPIC_MODEL_NAMES, GEMINI_MODEL_NAMES, ModelCategory, get_model_for_category
+from llm.lmstudio_client import LMStudioLLM
 
 from log import get_logger
 from hashlib import md5
@@ -22,7 +23,7 @@ logger = get_logger(__name__)
 # Cache for LLM clients
 llm_clients_cache: Dict[str, AsyncLLM] = {}
 
-LLMBackend = Literal["bedrock", "anthropic", "gemini", "ollama"]
+LLMBackend = Literal["bedrock", "anthropic", "gemini", "ollama", "lmstudio"]
 
 
 def merge_text(content: list[ContentBlock]) -> list[ContentBlock]:
@@ -58,7 +59,7 @@ def _guess_llm_backend(model_name: str) -> LLMBackend:
     # If PREFER_OLLAMA is set and model is available in Ollama, use Ollama
     if os.getenv("PREFER_OLLAMA") and model_name in OLLAMA_MODEL_NAMES:
         return "ollama"
-    
+
     if model_name in ANTHROPIC_MODEL_NAMES:
         if os.getenv("AWS_SECRET_ACCESS_KEY") or os.getenv("PREFER_BEDROCK"):
             return "bedrock"
@@ -74,6 +75,10 @@ def _guess_llm_backend(model_name: str) -> LLMBackend:
         # Default to localhost if no host is specified
         return "ollama"
     else:
+        # Check if LMSTUDIO_HOST is configured or default LMStudio settings
+        if os.getenv("LMSTUDIO_HOST") or os.getenv("PREFER_LMSTUDIO"):
+            logger.info(f"Using LMStudio backend for custom model: {model_name}")
+            return "lmstudio"
         # Check if PREFER_OLLAMA is set or OLLAMA_HOST is configured
         # This allows using any Ollama model not in the predefined list
         if os.getenv("PREFER_OLLAMA") or os.getenv("OLLAMA_HOST") or os.getenv("OLLAMA_API_BASE"):
@@ -100,7 +105,7 @@ def get_llm_client(
     If a client with the same parameters already exists, it will be returned.
 
     Args:
-        backend: LLM backend provider, either "bedrock", "anthropic", "gemini", or "ollama"
+        backend: LLM backend provider, either "bedrock", "anthropic", "gemini", "ollama", or "lmstudio"
         model_name: Specific model name to use (overrides category)
         category: Model category ("best_coding", "universal", "ultra_fast", "vision") for automatic selection
         cache_mode: Cache mode, either "off", "record", or "replay"
@@ -113,7 +118,7 @@ def get_llm_client(
         if category is None:
             category = ModelCategory.UNIVERSAL
         model_name = get_model_for_category(category)
-    
+
     # Convert client_params dict to frozenset for caching
     client_params = client_params or {}
     params_key = frozenset(client_params.items())
@@ -131,9 +136,12 @@ def get_llm_client(
 
     # Otherwise create a new client
     if model_name not in MODELS_MAP:
-        # Allow any model for Ollama backend
+        # Allow any model for Ollama and LMStudio backends
         if backend == "ollama":
             logger.info(f"Using custom Ollama model: {model_name}")
+            chosen_model = model_name
+        elif backend == "lmstudio":
+            logger.info(f"Using custom LMStudio model: {model_name}")
             chosen_model = model_name
         else:
             raise ValueError(f"Unknown model name: {model_name}. Available models: {', '.join(ALL_MODEL_NAMES)}")
@@ -152,11 +160,18 @@ def get_llm_client(
                 raise ValueError("Ollama backend requires ollama package to be installed. Install with: uv sync --group ollama")
             # Use OLLAMA_HOST/OLLAMA_API_BASE env vars or default to localhost
             host = (
-                os.getenv("OLLAMA_HOST") or 
-                os.getenv("OLLAMA_API_BASE") or 
+                os.getenv("OLLAMA_HOST") or
+                os.getenv("OLLAMA_API_BASE") or
                 client_params.get("host", "http://localhost:11434")
             )
             client = OllamaLLM(host=host, model_name=chosen_model)
+        case "lmstudio":
+            # Use LMSTUDIO_HOST env var or default to localhost
+            base_url = (
+                os.getenv("LMSTUDIO_HOST") or
+                client_params.get("base_url", "http://localhost:1234/v1")
+            )
+            client = LMStudioLLM(base_url=base_url, model_name=chosen_model)
         case _:
             raise ValueError(f"Unknown backend: {backend}")
 
