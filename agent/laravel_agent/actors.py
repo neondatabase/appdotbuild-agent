@@ -27,8 +27,9 @@ class LaravelActor(FileOperationsActor):
         files_protected: list[str] = None,
         files_allowed: list[str] = None,
         event_callback: Callable[[str], Awaitable[None]] | None = None,
+        fast_llm: AsyncLLM | None = None,
     ):
-        super().__init__(llm, workspace, beam_width, max_depth)
+        super().__init__(llm, workspace, beam_width, max_depth, fast_llm)
         self.system_prompt = system_prompt
         self.event_callback = event_callback
         
@@ -138,6 +139,416 @@ class LaravelActor(FileOperationsActor):
             # Configuration files that CAN be modified
             "vite.config.ts",  # Agent needs to modify this to add new pages
         ]
+
+    @property
+    def additional_tools(self) -> list:
+        """Additional Laravel-specific tools including Artisan make commands."""
+        return [
+            {
+                "name": "artisan_make",
+                "description": "Run Laravel Artisan make commands to generate boilerplate code",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "controller", "model", "migration", "seeder", "factory",
+                                "request", "resource", "middleware", "provider", "command",
+                                "event", "listener", "job", "mail", "notification", "observer",
+                                "policy", "rule", "scope", "cast", "channel", "exception",
+                                "test", "component", "view", "trait", "interface", "enum", "class",
+                                "cache-table", "channel", "job-middleware", "livewire", "livewire-form",
+                                "livewire-table", "notifications-table", "queue-batches-table",
+                                "queue-failed-table", "queue-table", "session-table", "volt",
+                                "filament-cluster", "filament-exporter", "filament-importer",
+                                "filament-page", "filament-panel", "filament-relation-manager",
+                                "filament-resource", "filament-theme", "filament-user", "filament-widget",
+                                "folio", "form-field", "form-layout", "infolist-entry", "infolist-layout",
+                                "table-column"
+                            ],
+                            "description": "The type of file to create"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "The name of the file/class to create"
+                        },
+                        "options": {
+                            "type": "object",
+                            "description": "Additional options for the make command",
+                            "properties": {
+                                "migration": {"type": "boolean", "description": "Create a migration file (for models)"},
+                                "controller": {"type": "boolean", "description": "Create a controller (for models)"},
+                                "factory": {"type": "boolean", "description": "Create a factory (for models)"},
+                                "seed": {"type": "boolean", "description": "Create a seeder (for models)"},
+                                "requests": {"type": "boolean", "description": "Create form requests (for models)"},
+                                "resource": {"type": "boolean", "description": "Create a resource controller"},
+                                "api": {"type": "boolean", "description": "Create an API controller"},
+                                "invokable": {"type": "boolean", "description": "Create an invokable controller"},
+                                "parent": {"type": "string", "description": "Parent model (for controllers)"},
+                                "model": {"type": "string", "description": "Model name (for controllers, factories, etc.)"},
+                                "guard": {"type": "string", "description": "Guard name (for policies)"},
+                                "test": {"type": "boolean", "description": "Create a test file"},
+                                "pest": {"type": "boolean", "description": "Create a Pest test"},
+                                "unit": {"type": "boolean", "description": "Create a unit test (default is feature)"},
+                                "force": {"type": "boolean", "description": "Overwrite existing file"}
+                            }
+                        }
+                    },
+                    "required": ["type", "name"]
+                }
+            },
+            {
+                "name": "artisan_make_migration",
+                "description": "Create a new database migration file with specific table operations",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Migration name (e.g., 'create_users_table', 'add_email_to_users')"
+                        },
+                        "create": {
+                            "type": "string",
+                            "description": "The table to create"
+                        },
+                        "table": {
+                            "type": "string",
+                            "description": "The table to modify"
+                        }
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "artisan_migrate",
+                "description": "Run database migrations",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "fresh": {"type": "boolean", "description": "Drop all tables and re-run all migrations"},
+                        "seed": {"type": "boolean", "description": "Run seeders after migrations"},
+                        "force": {"type": "boolean", "description": "Force run in production"}
+                    }
+                }
+            },
+            {
+                "name": "run_pint",
+                "description": "Run Laravel Pint to automatically fix code style issues",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Specific file or directory to format (optional, defaults to entire project)"
+                        },
+                        "preset": {
+                            "type": "string",
+                            "enum": ["laravel", "psr12", "symfony"],
+                            "description": "The preset to use (optional, uses project config by default)"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "run_artisan_command",
+                "description": "Run any Laravel Artisan command not covered by specific tools",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "The artisan command to run (without 'php artisan' prefix)"
+                        },
+                        "arguments": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Additional arguments for the command"
+                        }
+                    },
+                    "required": ["command"]
+                }
+            }
+        ]
+
+    async def run_tools(
+        self, node: Node[BaseData], user_prompt: str
+    ) -> tuple[list[ToolUseResult], bool]:
+        """Execute tools for a given node with automatic Pint formatting and Laravel-specific validation."""
+        # First, run the parent's tool execution
+        results, should_branch = await super().run_tools(node, user_prompt)
+        
+        # Check for migration files and validate them
+        for i, block in enumerate(node.data.head().content):
+            if isinstance(block, ToolUse) and block.name in ["write_file", "edit_file"]:
+                path = block.input.get("path", "")  # pyright: ignore[reportAttributeAccessIssue]
+                
+                # Validate migration files
+                if "/migrations/" in path and path.endswith(".php"):
+                    # Find the corresponding result
+                    tool_result = None
+                    for j, res in enumerate(results):
+                        if res.tool_use.id == block.id:
+                            tool_result = res
+                            break
+                    
+                    # If the operation was successful, validate the migration syntax
+                    if tool_result and not tool_result.tool_result.is_error:
+                        try:
+                            # Read the current file content
+                            file_content = await node.data.workspace.read_file(path)
+                            if not validate_migration_syntax(file_content):
+                                error_msg = (
+                                    f"Invalid Laravel migration syntax in {path}. "
+                                    "The opening brace after 'extends Migration' must be on a new line.\n\n"
+                                    "Use this pattern:\n"
+                                    f"{MIGRATION_SYNTAX_EXAMPLE}"
+                                )
+                                logger.warning(f"Migration validation failed for {path}")
+                                # Replace the success result with an error
+                                results[j] = ToolUseResult.from_tool_use(block, error_msg, is_error=True)
+                                # Also remove the file from node.data.files if it was added
+                                if path in node.data.files:
+                                    del node.data.files[path]
+                        except Exception as e:
+                            logger.error(f"Error validating migration {path}: {e}")
+        
+        # Check if any PHP files were created or modified
+        php_files_modified = False
+        for msg in node.data.messages:
+            if hasattr(msg, 'content') and isinstance(msg.content, list):
+                for block in msg.content:
+                    # Check if it's a ToolUse block
+                    if isinstance(block, ToolUse):
+                        # Check for write_file or edit_file operations on PHP files
+                        if block.name in ["write_file", "edit_file"] and isinstance(block.input, dict) and "path" in block.input:
+                            path = block.input["path"]
+                            if isinstance(path, str) and path.endswith('.php'):
+                                php_files_modified = True
+                                break
+        
+        # Run Pint if any PHP files were modified
+        if php_files_modified:
+            try:
+                pint_result = await node.data.workspace.exec(["vendor/bin/pint", "--quiet"])
+                if pint_result.exit_code != 0:
+                    logger.warning(f"Pint formatting failed: {pint_result.stderr}")
+                else:
+                    logger.info("Pint formatting applied successfully")
+            except Exception as e:
+                logger.warning(f"Failed to run Pint: {e}")
+        
+        return results, should_branch
+    
+    async def handle_custom_tool(
+        self, tool_use: ToolUse, node: Node[BaseData]
+    ) -> ToolUseResult:
+        """Handle Laravel-specific custom tools."""
+        try:
+            if tool_use.name == "artisan_make":
+                # Build the artisan make command
+                make_type = tool_use.input.get("type")  # pyright: ignore[reportAttributeAccessIssue]
+                name = tool_use.input.get("name")  # pyright: ignore[reportAttributeAccessIssue]
+                options = tool_use.input.get("options", {})  # pyright: ignore[reportAttributeAccessIssue]
+                
+                # Map type to Laravel's make command format
+                command = ["php", "artisan", f"make:{make_type}", name]
+                
+                # Add options as flags
+                if make_type == "model":
+                    if options.get("migration"):
+                        command.append("-m")
+                    if options.get("controller"):
+                        command.append("-c")
+                    if options.get("factory"):
+                        command.append("-f")
+                    if options.get("seed"):
+                        command.append("-s")
+                    if options.get("requests"):
+                        command.append("-r")
+                elif make_type == "controller":
+                    if options.get("resource"):
+                        command.append("--resource")
+                    if options.get("api"):
+                        command.append("--api")
+                    if options.get("invokable"):
+                        command.append("--invokable")
+                    if parent := options.get("parent"):
+                        command.extend(["--parent", parent])
+                    if model := options.get("model"):
+                        command.extend(["--model", model])
+                elif make_type in ["factory", "seeder"]:
+                    if model := options.get("model"):
+                        command.extend(["--model", model])
+                elif make_type == "test":
+                    if options.get("unit"):
+                        command.append("--unit")
+                    if options.get("pest"):
+                        command.append("--pest")
+                elif make_type == "policy":
+                    if model := options.get("model"):
+                        command.extend(["--model", model])
+                    if guard := options.get("guard"):
+                        command.extend(["--guard", guard])
+                
+                # Add force flag if specified
+                if options.get("force"):
+                    command.append("--force")
+                
+                # Execute the command
+                result = await node.data.workspace.exec(command)
+                
+                if result.exit_code == 0:
+                    # Automatically run Pint after creating PHP files
+                    if make_type in ["controller", "model", "request", "resource", "middleware", 
+                                   "provider", "command", "event", "listener", "job", "mail", 
+                                   "notification", "observer", "policy", "rule", "scope", "cast", 
+                                   "channel", "exception", "trait", "interface", "enum", "class"]:
+                        # Run Pint to format the newly created file
+                        pint_result = await node.data.workspace.exec(["vendor/bin/pint", "--quiet"])
+                        if pint_result.exit_code != 0:
+                            logger.warning(f"Pint formatting failed: {pint_result.stderr}")
+                    
+                    # Read the generated file and add it to the workspace
+                    # Parse the output to find the created file path
+                    output = result.stdout
+                    if "created successfully" in output.lower():
+                        # Extract file path from output and read it
+                        # This varies by command, but typically Laravel outputs the path
+                        return ToolUseResult.from_tool_use(tool_use, output)
+                    return ToolUseResult.from_tool_use(tool_use, output)
+                else:
+                    error_msg = f"Artisan make command failed: {result.stderr or result.stdout}"
+                    return ToolUseResult.from_tool_use(tool_use, error_msg, is_error=True)
+                    
+            elif tool_use.name == "artisan_make_migration":
+                name = tool_use.input.get("name")  # pyright: ignore[reportAttributeAccessIssue]
+                command = ["php", "artisan", "make:migration", name]
+                
+                # Add table creation/modification flags
+                if create_table := tool_use.input.get("create"):  # pyright: ignore[reportAttributeAccessIssue]
+                    command.extend(["--create", create_table])
+                elif table := tool_use.input.get("table"):  # pyright: ignore[reportAttributeAccessIssue]
+                    command.extend(["--table", table])
+                
+                # Execute the command
+                result = await node.data.workspace.exec(command)
+                
+                if result.exit_code == 0:
+                    # Automatically run Pint after creating migration
+                    pint_result = await node.data.workspace.exec(["vendor/bin/pint", "--quiet"])
+                    if pint_result.exit_code != 0:
+                        logger.warning(f"Pint formatting failed: {pint_result.stderr}")
+                    
+                    # After creating migration, read it and validate syntax
+                    output = result.stdout
+                    
+                    # Find the migration file path from output
+                    if "Created Migration:" in output:
+                        # Extract the file path
+                        lines = output.split('\n')
+                        for line in lines:
+                            if "database/migrations/" in line:
+                                # Extract path and read the file
+                                import re
+                                match = re.search(r'(database/migrations/[\w_]+\.php)', line)
+                                if match:
+                                    migration_path = match.group(1)
+                                    try:
+                                        content = await node.data.workspace.read_file(migration_path)
+                                        if not validate_migration_syntax(content):
+                                            # Fix the syntax by ensuring proper formatting
+                                            fixed_content = self._fix_migration_syntax(content)
+                                            node.data.workspace.write_file(migration_path, fixed_content)
+                                            node.data.files[migration_path] = fixed_content
+                                            return ToolUseResult.from_tool_use(
+                                                tool_use, 
+                                                f"{output}\nNote: Fixed migration syntax to follow Laravel conventions."
+                                            )
+                                        else:
+                                            node.data.files[migration_path] = content
+                                    except Exception as e:
+                                        logger.warning(f"Could not read/fix migration file: {e}")
+                    
+                    return ToolUseResult.from_tool_use(tool_use, output)
+                else:
+                    error_msg = f"Migration creation failed: {result.stderr or result.stdout}"
+                    return ToolUseResult.from_tool_use(tool_use, error_msg, is_error=True)
+                    
+            elif tool_use.name == "artisan_migrate":
+                command = ["php", "artisan", "migrate"]
+                
+                # Add migration options
+                if tool_use.input.get("fresh"):  # pyright: ignore[reportAttributeAccessIssue]
+                    command[2] = "migrate:fresh"  # Replace 'migrate' with 'migrate:fresh'
+                if tool_use.input.get("seed"):  # pyright: ignore[reportAttributeAccessIssue]
+                    command.append("--seed")
+                if tool_use.input.get("force"):  # pyright: ignore[reportAttributeAccessIssue]
+                    command.append("--force")
+                
+                # Execute the migration with postgres service
+                result = await node.data.workspace.exec_with_pg(command)
+                
+                if result.exit_code == 0:
+                    return ToolUseResult.from_tool_use(tool_use, result.stdout)
+                else:
+                    error_msg = f"Migration failed: {result.stderr or result.stdout}"
+                    return ToolUseResult.from_tool_use(tool_use, error_msg, is_error=True)
+                    
+            elif tool_use.name == "run_pint":
+                # Run Laravel Pint for code formatting
+                command = ["vendor/bin/pint"]
+                
+                # Add path if specified
+                if path := tool_use.input.get("path"):  # pyright: ignore[reportAttributeAccessIssue]
+                    command.append(path)
+                
+                # Add preset if specified
+                if preset := tool_use.input.get("preset"):  # pyright: ignore[reportAttributeAccessIssue]
+                    command.extend(["--preset", preset])
+                
+                # Execute pint
+                result = await node.data.workspace.exec(command)
+                
+                if result.exit_code == 0:
+                    return ToolUseResult.from_tool_use(tool_use, f"Code formatting completed:\n{result.stdout}")
+                else:
+                    error_msg = f"Pint formatting failed: {result.stderr or result.stdout}"
+                    return ToolUseResult.from_tool_use(tool_use, error_msg, is_error=True)
+                    
+            elif tool_use.name == "run_artisan_command":
+                # Run any artisan command
+                artisan_cmd = tool_use.input.get("command")  # pyright: ignore[reportAttributeAccessIssue]
+                command = ["php", "artisan", artisan_cmd]
+                
+                # Add additional arguments if provided
+                if args := tool_use.input.get("arguments"):  # pyright: ignore[reportAttributeAccessIssue]
+                    command.extend(args)
+                
+                # Execute the command
+                result = await node.data.workspace.exec(command)
+                
+                if result.exit_code == 0:
+                    return ToolUseResult.from_tool_use(tool_use, result.stdout)
+                else:
+                    error_msg = f"Artisan command failed: {result.stderr or result.stdout}"
+                    return ToolUseResult.from_tool_use(tool_use, error_msg, is_error=True)
+            
+            # If not a custom tool, call parent implementation
+            return await super().handle_custom_tool(tool_use, node)
+            
+        except Exception as e:
+            error_msg = f"Error executing {tool_use.name}: {str(e)}"
+            logger.error(error_msg)
+            return ToolUseResult.from_tool_use(tool_use, error_msg, is_error=True)
+
+    def _fix_migration_syntax(self, content: str) -> str:
+        """Fix migration syntax to ensure proper Laravel conventions."""
+        import re
+        # Ensure opening brace after 'extends Migration' is on a new line
+        pattern = r'(extends\s+Migration)\s*{'
+        replacement = r'\1\n{'
+        return re.sub(pattern, replacement, content)
 
     async def execute(
         self,
@@ -375,47 +786,3 @@ class LaravelActor(FileOperationsActor):
                 continue
                 
         return sorted(list(repo_files))
-    
-    async def run_tools(
-        self, node: Node[BaseData], user_prompt: str
-    ) -> tuple[list[ToolUseResult], bool]:
-        """Execute tools for a given node with Laravel-specific validation."""
-        # First, call the parent implementation
-        result, is_completed = await super().run_tools(node, user_prompt)
-        
-        # Then, check if any migration files were written/edited and validate them
-        for i, block in enumerate(node.data.head().content):
-            if isinstance(block, ToolUse) and block.name in ["write_file", "edit_file"]:
-                path = block.input.get("path", "")  # pyright: ignore[reportAttributeAccessIssue]
-                
-                # Validate migration files
-                if "/migrations/" in path and path.endswith(".php"):
-                    # Find the corresponding result
-                    tool_result = None
-                    for j, res in enumerate(result):
-                        if res.tool_use.id == block.id:
-                            tool_result = res
-                            break
-                    
-                    # If the operation was successful, validate the migration syntax
-                    if tool_result and not tool_result.tool_result.is_error:
-                        try:
-                            # Read the current file content
-                            file_content = await node.data.workspace.read_file(path)
-                            if not validate_migration_syntax(file_content):
-                                error_msg = (
-                                    f"Invalid Laravel migration syntax in {path}. "
-                                    "The opening brace after 'extends Migration' must be on a new line.\n\n"
-                                    "Use this pattern:\n"
-                                    f"{MIGRATION_SYNTAX_EXAMPLE}"
-                                )
-                                logger.warning(f"Migration validation failed for {path}")
-                                # Replace the success result with an error
-                                result[j] = ToolUseResult.from_tool_use(block, error_msg, is_error=True)
-                                # Also remove the file from node.data.files if it was added
-                                if path in node.data.files:
-                                    del node.data.files[path]
-                        except Exception as e:
-                            logger.error(f"Error validating migration {path}: {e}")
-                
-        return result, is_completed
