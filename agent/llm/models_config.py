@@ -133,6 +133,8 @@ OLLAMA_MODELS = {
 
 OPENROUTER_MODELS = {
     "gpt-oss-120b": {"openrouter": "openai/gpt-oss-120b"},
+    "horizon": {"openrouter": "openrouter/horizon-beta"},
+    "qwen3-code": {"openrouter": "qwen/qwen3-coder"},
 }
 
 MODELS_MAP: Dict[str, Dict[str, str]] = {
@@ -143,7 +145,7 @@ MODELS_MAP: Dict[str, Dict[str, str]] = {
 }
 
 DEFAULT_MODELS = {
-    ModelCategory.BEST_CODING: "gpt-oss-120b",           # slow, high quality
+    ModelCategory.BEST_CODING: "qwen3-code",           # slow, high quality
     ModelCategory.UNIVERSAL: "gemini-flash",       # medium speed for FSM tools
     ModelCategory.ULTRA_FAST: "gemini-flash-lite", # ultra fast for commit names
     ModelCategory.VISION: "gemini-flash-lite",     # vision tasks
