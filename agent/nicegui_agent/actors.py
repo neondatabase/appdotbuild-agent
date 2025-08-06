@@ -613,6 +613,6 @@ class NiceguiActor(FileOperationsActor):
                         actions.append("Verifying solution")
 
         if not actions:
-            return "analyzing code"
+            return "Analyzing code"
 
         return ", ".join(actions[:3]) + ("..." if len(actions) > 3 else "")
