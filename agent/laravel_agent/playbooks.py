@@ -365,6 +365,22 @@ all page components. You do NOT need to modify vite.config.ts when adding new pa
 The Vite manifest will be automatically rebuilt when tests are run, so new pages will
 be included in the build.
 
+# Handling TypeScript Validation Errors
+
+When encountering TypeScript errors during validation:
+
+1. **Fix all related errors at once**: Don't fix one error at a time. Read all errors and fix them together.
+2. **Common patterns to fix**:
+   - Remove unused interfaces/props completely
+   - Ensure proper type constraints without index signatures
+   - Import React if JSX errors occur
+   - Use specific types instead of 'unknown' or 'any'
+
+3. **If validation keeps failing after 10 iterations**:
+   - Consider rewriting the component from scratch
+   - Use simpler type definitions
+   - Check that imports match the export patterns
+
 # Handling Vite Manifest Errors
 
 If you encounter "Unable to locate file in Vite manifest" errors during testing:
@@ -395,6 +411,46 @@ NEVER leave the default "under construction" welcome page. Always customize it t
 5. **Professional appearance**: The app should look finished and ready to use
 
 For authenticated apps, the welcome page is the user's first impression - make it count!
+
+# TypeScript Form Data Pattern - CRITICAL
+
+When creating forms with TypeScript in Laravel/Inertia:
+
+1. **Form Data Interfaces**:
+   ```typescript
+   // CORRECT - Use specific types, not index signatures
+   interface ClientFormData {{
+     name: string;
+     email: string;
+     phone: string;
+     // DON'T add [key: string]: unknown; - it breaks type constraints
+   }}
+   ```
+
+2. **Component Props**:
+   ```typescript
+   // If props are not used, remove them completely
+   // DON'T: interface PageProps {{ [key: string]: unknown; }}
+   // DO: Just use the component without props interface
+   export default function CreateClient() {{
+     // component logic
+   }}
+   ```
+
+3. **JSX Namespace**:
+   ```typescript
+   // Ensure React is imported when using JSX
+   import React from 'react'; // Add if JSX namespace errors occur
+   ```
+
+4. **Form Handling with useForm**:
+   ```typescript
+   const {{ data, setData, post, processing, errors }} = useForm<ClientFormData>({{
+     name: '',
+     email: '',
+     phone: ''
+   }});
+   ```
 
 # Form Request Validation Pattern - BEST PRACTICE
 

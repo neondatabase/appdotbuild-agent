@@ -1,3 +1,43 @@
+# Tool usage rules for all TRPC prompts
+TOOL_USAGE_RULES = """
+# File Management Tools
+
+Use the following tools to manage files:
+
+1. **read_file** - Read the content of an existing file
+   - Input: path (string)
+   - Returns: File content
+   - Use this to examine existing code before making changes
+
+2. **write_file** - Create a new file or completely replace an existing file's content
+   - Input: path (string), content (string)
+   - Use this when creating new files or when making extensive changes
+   - Preferred for creating new TypeScript/JavaScript files
+
+3. **edit_file** - Make targeted changes to an existing file
+   - Input: path (string), search (string), replace (string)
+   - Use this for small, precise edits where you know the exact text to replace
+   - The search text must match exactly (including whitespace/indentation)
+   - Will fail if search text is not found or appears multiple times
+
+4. **delete_file** - Remove a file
+   - Input: path (string)
+   - Use when explicitly asked to remove files
+
+5. **complete** - Mark the task as complete (runs tests and validation)
+   - No inputs required
+   - Use this after implementing all requested features
+
+# Tool Usage Guidelines
+
+- Always use tools to create or modify files - do not output file content in your responses
+- Use write_file for new files or complete rewrites
+- Use edit_file for small, targeted changes to existing files
+- Read files before editing to ensure you have the correct content
+- Ensure proper indentation when using edit_file - the search string must match exactly
+- For maximum efficiency, invoke multiple tools simultaneously when performing independent operations
+"""
+
 BASE_TYPESCRIPT_SCHEMA = """
 <file path="server/src/schema.ts">
 import { z } from 'zod';
@@ -537,6 +577,8 @@ Example:
 Keep the things simple and do not create entities that are not explicitly required by the task.
 Make sure to follow the best software engineering practices, write structured and maintainable code.
 Even stupid requests should be handled professionally - build precisely the app that user needs, keeping its quality high.
+
+{TOOL_USAGE_RULES}
 """.strip()
 
 BACKEND_DRAFT_USER_PROMPT = """
@@ -544,8 +586,7 @@ Key project files:
 {{project_context}}
 
 Generate typescript schema, database schema and handlers declarations.
-Return code within <file path="server/src/handlers/handler_name.ts">...</file> tags.
-On errors, modify only relevant files and return code within <file path="server/src/handlers/handler_name.ts">...</file> tags.
+Use the tools to create or modify files as needed.
 
 Task:
 {{user_prompt}}
@@ -719,6 +760,8 @@ Example Test:
 - Error handling does not need to be tested in unit tests
 - Do not use other handlers in implementation or tests - keep fully isolated
 - NEVER use mocks - always test against real database operations
+
+{TOOL_USAGE_RULES}
 """.strip()
 
 BACKEND_HANDLER_USER_PROMPT = """
@@ -729,8 +772,7 @@ Task:
 {{ feedback_data }}
 {% endif %}
 
-Return the handler implementation within <file path="server/src/handlers/{{handler_name}}.ts">...</file> tags.
-Return the test code within <file path="server/src/tests/{{handler_name}}.test.ts">...</file> tags.
+Use the tools to create or modify the handler implementation and test files.
 """.strip()
 
 
@@ -829,14 +871,15 @@ If and only if user prompt requires specific integration that can't be supported
       loadData();
     }}, [loadData]);
     ```
+
+{TOOL_USAGE_RULES}
 """.strip()
 
 FRONTEND_USER_PROMPT = """
 Key project files:
 {{project_context}}
 
-Return code within <file path="client/src/components/example_component_name.tsx">...</file> tags.
-On errors, modify only relevant files and return code within <file path="...">...</file> tags.
+Use the tools to create or modify frontend components as needed.
 
 Task:
 {{user_prompt}}
@@ -1027,6 +1070,7 @@ Example Test:
 - Do not use other handlers in implementation or tests - keep fully isolated
 - NEVER use mocks - always test against real database operations
 
+{TOOL_USAGE_RULES}
 
 Rules for changing files:
 - To apply local changes use SEARCH / REPLACE format.

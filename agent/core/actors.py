@@ -16,12 +16,23 @@ from log import get_logger
 logger = get_logger(__name__)
 
 
+class AgentSearchFailedException(Exception):
+    """Exception raised when an agent's search process fails to find candidates."""
+    def __init__(self, agent_name: str, message: str = "No candidates to evaluate, search terminated"):
+        self.agent_name = agent_name
+        self.message = message
+        # Create a more user-friendly message
+        user_message = f"The {agent_name} encountered an issue: {message}. This typically happens when the agent reaches its maximum search depth or cannot find valid solutions. Please try refining your request or providing more specific details."
+        super().__init__(user_message)
+
+
 @dataclasses.dataclass
 class BaseData:
     workspace: Workspace
     messages: list[Message]
     files: dict[str, str | None] = dataclasses.field(default_factory=dict)
     should_branch: bool = False
+    context: str = "default"
 
     def head(self) -> Message:
         if (num_messages := len(self.messages)) != 1:
@@ -113,6 +124,9 @@ class LLMActor(Protocol):
                             self.llm, history, system_prompt=system_prompt, **kwargs
                         )
                     ],
+                    files={},
+                    should_branch=False,
+                    context=getattr(node.data, 'context', 'default')
                 ),
                 parent=node,
             )

@@ -4,7 +4,7 @@ import anyio
 from typing import Callable, Awaitable
 from core.base_node import Node
 from core.workspace import Workspace
-from core.actors import BaseData, FileOperationsActor
+from core.actors import BaseData, FileOperationsActor, AgentSearchFailedException
 from llm.common import AsyncLLM, Message, TextRaw, ToolUse, ToolUseResult
 from laravel_agent import playbooks
 from laravel_agent.utils import run_migrations, run_tests
@@ -180,8 +180,12 @@ class LaravelActor(FileOperationsActor):
             iteration += 1
             candidates = self.select(self.root)
             if not candidates:
-                logger.info("No candidates to evaluate, search terminated")
-                break
+                logger.error("No candidates to evaluate, search terminated")
+                await notify_stage(self.event_callback, "❌ Laravel agent failed: No candidates to evaluate", "failed")
+                raise AgentSearchFailedException(
+                    agent_name="LaravelActor",
+                    message="No candidates to evaluate, search terminated"
+                )
 
             await notify_if_callback(self.event_callback, f"🔄 Working on implementation (iteration {iteration})...", "iteration progress")
 
@@ -206,7 +210,10 @@ class LaravelActor(FileOperationsActor):
         if solution is None:
             logger.error(f"{self.__class__.__name__} failed to find a solution")
             await notify_stage(self.event_callback, "❌ Laravel application generation failed", "failed")
-            raise ValueError("No solutions found")
+            raise AgentSearchFailedException(
+                agent_name="LaravelActor",
+                message="Failed to find a solution after all iterations"
+            )
         return solution
 
     def select(self, node: Node[BaseData]) -> list[Node[BaseData]]:

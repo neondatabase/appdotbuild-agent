@@ -19,17 +19,20 @@ import dagger
 logger = logging.getLogger(__name__)
 
 
-async def drizzle_push(client: dagger.Client, ctr: dagger.Container, postgresdb: dagger.Service | None) -> ExecResult:
+async def drizzle_push(
+    client: dagger.Client, ctr: dagger.Container, postgresdb: dagger.Service | None
+) -> ExecResult:
     """Run drizzle-kit push with postgres service."""
 
     if postgresdb is None:
         postgresdb = create_postgres_service(client)
 
     push_ctr = (
-        ctr
-        .with_exec(["apk", "--update", "add", "postgresql-client"])
+        ctr.with_exec(["apk", "--update", "add", "postgresql-client"])
         .with_service_binding("postgres", postgresdb)
-        .with_env_variable("APP_DATABASE_URL", "postgres://postgres:postgres@postgres:5432/postgres")
+        .with_env_variable(
+            "APP_DATABASE_URL", "postgres://postgres:postgres@postgres:5432/postgres"
+        )
         .with_exec(pg_health_check_cmd())
         .with_workdir("server")
         .with_exec(["bun", "run", "drizzle-kit", "push", "--force"])
@@ -61,7 +64,6 @@ class PlaywrightRunner:
     ) -> tuple[ExecResult, str | None]:
         logger.info("Running Playwright tests")
 
-
         workspace = node.data.workspace
         ctr = workspace.ctr.with_exec(["bun", "install", "."])
 
@@ -77,14 +79,19 @@ class PlaywrightRunner:
                 logger.info("Drizzle push succeeded")
                 entrypoint = "dev:all"
 
-        app_ctr = await ctr.with_entrypoint(["bun", "run", entrypoint]).with_exposed_port(5173)
+        app_ctr = await ctr.with_entrypoint(
+            ["bun", "run", entrypoint]
+        ).with_exposed_port(5173)
 
         if postgresdb:
             app_ctr = (
                 app_ctr.with_service_binding("postgres", postgresdb)
                 .with_exposed_port(2022)
                 .with_exposed_port(5173)
-                .with_env_variable("APP_DATABASE_URL", "postgres://postgres:postgres@postgres:5432/postgres")
+                .with_env_variable(
+                    "APP_DATABASE_URL",
+                    "postgres://postgres:postgres@postgres:5432/postgres",
+                )
             )
 
         # start the app as a service
@@ -98,17 +105,23 @@ class PlaywrightRunner:
                 .from_("alpine:latest")
                 .with_exec(["apk", "add", "--no-cache", "curl"])
                 .with_service_binding("app", app_service)
-                .with_exec([
-                    "sh", "-c",
-                    "for i in $(seq 1 30); do "
-                    "curl -f http://app:2022/healthcheck 2>/dev/null && exit 0; "
-                    "echo 'Waiting for backend...' && sleep 1; "
-                    "done; exit 1"
-                ])
+                .with_exec(
+                    [
+                        "sh",
+                        "-c",
+                        "for i in $(seq 1 30); do "
+                        "curl -f http://app:2022/healthcheck 2>/dev/null && exit 0; "
+                        "echo 'Waiting for backend...' && sleep 1; "
+                        "done; exit 1",
+                    ]
+                )
             )
             backend_result = await ExecResult.from_ctr(backend_check)
             if backend_result.exit_code != 0:
-                return backend_result, f"Backend service failed to start: {backend_result.stderr}"
+                return (
+                    backend_result,
+                    f"Backend service failed to start: {backend_result.stderr}",
+                )
 
             logger.info("Backend is ready")
 
@@ -127,7 +140,10 @@ class PlaywrightRunner:
             return result, f"Error running Playwright tests: {result.stderr}"
 
     async def evaluate(
-        self, node: Node[BaseData], user_prompt: str, mode: Literal["client", "full"] = "client"
+        self,
+        node: Node[BaseData],
+        user_prompt: str,
+        mode: Literal["client", "full"] = "client",
     ) -> list[str]:
         errors = []
         with TemporaryDirectory() as temp_dir:
@@ -139,16 +155,21 @@ class PlaywrightRunner:
                 case _:
                     raise ValueError(f"Unknown mode: {mode}")
 
-            result, err = await self.run(node, log_dir=temp_dir, mode=mode)
+            _, err = await self.run(node, log_dir=temp_dir, mode=mode)
             if err:
                 errors.append(err)
             else:
-                browsers = ("chromium", "webkit")  # firefox is flaky, let's skip it for now?
+                browsers = (
+                    "chromium",
+                    "webkit",
+                )  # firefox is flaky, let's skip it for now?
                 expected_files = [f"{browser}-screenshot.png" for browser in browsers]
                 console_logs = ""
                 for browser in browsers:
                     console_log_file = os.path.join(temp_dir, f"{browser}-console.log")
-                    screenshot_file = os.path.join(temp_dir, f"{browser}-screenshot.png")
+                    screenshot_file = os.path.join(
+                        temp_dir, f"{browser}-screenshot.png"
+                    )
                     if not os.path.exists(os.path.join(temp_dir, screenshot_file)):
                         errors.append(f"Could not make screenshot: {screenshot_file}")
 
@@ -160,11 +181,15 @@ class PlaywrightRunner:
                             console_logs += self._ts_cleanup_pattern.sub(r"\1", logs)
 
                 prompt = jinja2.Environment().from_string(prompt_template)
-                prompt_rendered = prompt.render(console_logs=console_logs, user_prompt=user_prompt)
+                prompt_rendered = prompt.render(
+                    console_logs=console_logs, user_prompt=user_prompt
+                )
                 message = Message(role="user", content=[TextRaw(prompt_rendered)])
                 self.counter[user_prompt] += 1  # for cache invalidation between runs
                 attach_files = AttachedFiles(
-                    files=[os.path.join(temp_dir, file) for file in expected_files], _cache_key=node.data.file_cache_key + str(self.counter[user_prompt])
+                    files=[os.path.join(temp_dir, file) for file in expected_files],
+                    _cache_key=node.data.file_cache_key
+                    + str(self.counter[user_prompt]),
                 )
                 vlm_feedback = await self.vlm.completion(
                     messages=[message],
@@ -177,8 +202,14 @@ class PlaywrightRunner:
                 answer = extract_tag(vlm_text, "answer") or ""
                 reason = extract_tag(vlm_text, "reason") or ""
                 if "no" in answer.lower():
-                    logger.info(f"Playwright validation failed. Answer: {answer}, reason: {reason}")
-                    errors.append(f"Playwright validation failed with the reason: {reason}, console_logs: {console_logs}")
+                    logger.info(
+                        f"Playwright validation failed. Answer: {answer}, reason: {reason}"
+                    )
+                    errors.append(
+                        f"Playwright validation failed with the reason: {reason}, console_logs: {console_logs}"
+                    )
                 else:
-                    logger.info(f"Playwright validation succeeded. Answer: {answer}, reason: {reason}")
+                    logger.info(
+                        f"Playwright validation succeeded. Answer: {answer}, reason: {reason}"
+                    )
         return errors

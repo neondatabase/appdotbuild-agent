@@ -4,7 +4,7 @@ import anyio
 from typing import Callable, Awaitable
 from core.base_node import Node
 from core.workspace import Workspace
-from core.actors import BaseData, FileOperationsActor
+from core.actors import BaseData, FileOperationsActor, AgentSearchFailedException
 from llm.common import AsyncLLM, Message, TextRaw, Tool, ToolUse, ToolUseResult
 from nicegui_agent import playbooks
 from core.notification_utils import notify_if_callback, notify_stage
@@ -96,8 +96,16 @@ class NiceguiActor(FileOperationsActor):
             iteration += 1
             candidates = self.select(self.root)
             if not candidates:
-                logger.info("No candidates to evaluate, search terminated")
-                break
+                logger.error("No candidates to evaluate, search terminated")
+                await notify_stage(
+                    self.event_callback,
+                    "❌ NiceGUI agent failed: No candidates to evaluate",
+                    "failed"
+                )
+                raise AgentSearchFailedException(
+                    agent_name="NiceguiActor",
+                    message="No candidates to evaluate, search terminated"
+                )
 
             await notify_if_callback(
                 self.event_callback,
@@ -134,7 +142,10 @@ class NiceguiActor(FileOperationsActor):
                 "❌ NiceGUI application generation failed",
                 "failed",
             )
-            raise ValueError("No solutions found")
+            raise AgentSearchFailedException(
+                agent_name="NiceguiActor",
+                message="Failed to find a solution after all iterations"
+            )
         return solution
 
     def select(self, node: Node[BaseData]) -> list[Node[BaseData]]:

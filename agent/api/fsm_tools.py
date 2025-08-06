@@ -306,7 +306,18 @@ class FSMToolProcessor:
             **model_params,
         }
 
-        response = await llm.completion(messages, **model_args)
+        try:
+            response = await llm.completion(messages, **model_args)
+        except Exception as e:
+            msg_sizes = [len(json.dumps(msg.to_dict())) for msg in messages]
+            last_message = messages[-1] if messages else None
+            if last_message:
+                last_side = last_message.role
+            else:
+                last_side = "unknown"
+            logger.error(f"LLM completion failed with messages of sizes: {msg_sizes}, last message side: {last_side}")
+            # FixMe: this is a workaround for debugging, remove it later
+            raise e
         input_tokens = response.input_tokens
         output_tokens = response.output_tokens
 
