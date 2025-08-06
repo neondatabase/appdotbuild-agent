@@ -7,8 +7,9 @@ from llm.common import AsyncLLM, Message, TextRaw, ContentBlock
 from llm.anthropic_client import AnthropicLLM
 from llm.cached import CachedLLM, CacheMode
 from llm.gemini import GeminiLLM
-from llm.models_config import MODELS_MAP, ALL_MODEL_NAMES, OLLAMA_MODEL_NAMES, ANTHROPIC_MODEL_NAMES, GEMINI_MODEL_NAMES, ModelCategory, get_model_for_category
+from llm.models_config import MODELS_MAP, ALL_MODEL_NAMES, OLLAMA_MODEL_NAMES, ANTHROPIC_MODEL_NAMES, GEMINI_MODEL_NAMES, OPENROUTER_MODEL_NAMES, ModelCategory, get_model_for_category
 from llm.lmstudio_client import LMStudioLLM
+from llm.openrouter_client import OpenRouterLLM
 
 from log import get_logger
 from hashlib import md5
@@ -23,7 +24,7 @@ logger = get_logger(__name__)
 # Cache for LLM clients
 llm_clients_cache: Dict[str, AsyncLLM] = {}
 
-LLMBackend = Literal["bedrock", "anthropic", "gemini", "ollama", "lmstudio"]
+LLMBackend = Literal["bedrock", "anthropic", "gemini", "ollama", "lmstudio", "openrouter"]
 
 
 def merge_text(content: list[ContentBlock]) -> list[ContentBlock]:
@@ -74,7 +75,15 @@ def _guess_llm_backend(model_name: str) -> LLMBackend:
     elif model_name in OLLAMA_MODEL_NAMES:
         # Default to localhost if no host is specified
         return "ollama"
+    elif model_name in OPENROUTER_MODEL_NAMES:
+        if os.getenv("OPENROUTER_API_KEY"):
+            return "openrouter"
+        raise ValueError("OpenRouter backend requires OPENROUTER_API_KEY to be set")
     else:
+        # Check if OpenRouter is preferred or configured
+        if os.getenv("PREFER_OPENROUTER") and os.getenv("OPENROUTER_API_KEY"):
+            logger.info(f"Using OpenRouter backend for custom model: {model_name}")
+            return "openrouter"
         # Check if LMSTUDIO_HOST is configured or default LMStudio settings
         if os.getenv("LMSTUDIO_HOST") or os.getenv("PREFER_LMSTUDIO"):
             logger.info(f"Using LMStudio backend for custom model: {model_name}")
@@ -105,7 +114,7 @@ def get_llm_client(
     If a client with the same parameters already exists, it will be returned.
 
     Args:
-        backend: LLM backend provider, either "bedrock", "anthropic", "gemini", "ollama", or "lmstudio"
+        backend: LLM backend provider, either "bedrock", "anthropic", "gemini", "ollama", "lmstudio", or "openrouter"
         model_name: Specific model name to use (overrides category)
         category: Model category ("best_coding", "universal", "ultra_fast", "vision") for automatic selection
         cache_mode: Cache mode, either "off", "record", or "replay"
@@ -141,12 +150,15 @@ def get_llm_client(
 
     # Otherwise create a new client
     if model_name not in MODELS_MAP:
-        # Allow any model for Ollama and LMStudio backends
+        # Allow any model for Ollama, LMStudio, and OpenRouter backends
         if backend == "ollama":
             logger.info(f"Using custom Ollama model: {model_name}")
             chosen_model = model_name
         elif backend == "lmstudio":
             logger.info(f"Using custom LMStudio model: {model_name}")
+            chosen_model = model_name
+        elif backend == "openrouter":
+            logger.info(f"Using custom OpenRouter model: {model_name}")
             chosen_model = model_name
         else:
             raise ValueError(f"Unknown model name: {model_name}. Available models: {', '.join(ALL_MODEL_NAMES)}")
@@ -177,6 +189,20 @@ def get_llm_client(
                 client_params.get("base_url", "http://localhost:1234/v1")
             )
             client = LMStudioLLM(base_url=base_url, model_name=chosen_model)
+        case "openrouter":
+            # OpenRouter requires an API key
+            api_key = os.getenv("OPENROUTER_API_KEY") or client_params.get("api_key")
+            if not api_key:
+                raise ValueError("OpenRouter backend requires OPENROUTER_API_KEY to be set")
+            # Optional app attribution
+            site_url = os.getenv("OPENROUTER_SITE_URL") or client_params.get("site_url")
+            site_name = os.getenv("OPENROUTER_SITE_NAME") or client_params.get("site_name")
+            client = OpenRouterLLM(
+                model_name=chosen_model,
+                api_key=api_key,
+                site_url=site_url,
+                site_name=site_name
+            )
         case _:
             raise ValueError(f"Unknown backend: {backend}")
 
