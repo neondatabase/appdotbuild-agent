@@ -107,12 +107,6 @@ class NiceguiActor(FileOperationsActor):
                     message="No candidates to evaluate, search terminated"
                 )
 
-            await notify_if_callback(
-                self.event_callback,
-                f"🔄 Working on implementation (step {iteration})...",
-                "iteration progress",
-            )
-
             logger.info(
                 f"Iteration {iteration}: Running LLM on {len(candidates)} candidates"
             )
@@ -126,6 +120,15 @@ class NiceguiActor(FileOperationsActor):
 
             for i, new_node in enumerate(nodes):
                 logger.info(f"Evaluating node {i + 1}/{len(nodes)}")
+
+                # show what actions are being taken
+                file_actions = self._get_file_actions(new_node)
+                await notify_if_callback(
+                    self.event_callback,
+                    f"💭 {file_actions}",
+                    "iteration progress",
+                )
+
                 if await self.eval_node(new_node, user_prompt):
                     logger.info(f"Found solution at depth {new_node.depth}")
                     await notify_stage(
@@ -583,3 +586,33 @@ class NiceguiActor(FileOperationsActor):
             ]:
                 repo_files.add(file_path)
         return sorted(list(repo_files))
+
+    def _get_file_actions(self, node: Node[BaseData]) -> str:
+        """analyze what file operations are being performed in a node"""
+        actions = []
+
+        for block in node.data.head().content:
+            if isinstance(block, ToolUse):
+                match block.name:
+                    case "write_file":
+                        path = block.input.get("path", "unknown") if isinstance(block.input, dict) else "unknown"
+                        actions.append(f"Writing `{path}`")
+                    case "edit_file":
+                        path = block.input.get("path", "unknown") if isinstance(block.input, dict) else "unknown"
+                        actions.append(f"Editing `{path}`")
+                    case "read_file":
+                        path = block.input.get("path", "unknown") if isinstance(block.input, dict) else "unknown"
+                        actions.append(f"Reading `{path}`")
+                    case "uv_add":
+                        packages = block.input.get("packages", []) if isinstance(block.input, dict) else []
+                        if packages:
+                            actions.append(f"Adding packages: {', '.join(packages[:2])}{'...' if len(packages) > 2 else ''}")
+                    case "databricks_list_tables" | "databricks_describe_table" | "databricks_execute_query":
+                        actions.append("Querying databricks")
+                    case "complete" | "mark_completed":
+                        actions.append("Verifying solution")
+
+        if not actions:
+            return "analyzing code"
+
+        return ", ".join(actions[:3]) + ("..." if len(actions) > 3 else "")

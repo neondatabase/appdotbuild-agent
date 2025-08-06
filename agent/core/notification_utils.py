@@ -46,13 +46,13 @@ async def notify_stage(
 
     # Create simple, consolidated messages without excessive emojis
     if status == "in_progress":
-        message = f"┃ ⎿  {stage}..."
+        message = f"{stage}..."
     elif status == "completed":
-        message = f"┃ ⎿  ✓ {stage}"
+        message = f"✓ {stage}"
     elif status == "failed":
-        message = f"┃ ⎿  ✗ {stage}"
+        message = f"✗ {stage}"
     else:
-        message = f"┃ ⎿  {stage}"
+        message = f"{stage}"
 
     try:
         await event_callback(message)
