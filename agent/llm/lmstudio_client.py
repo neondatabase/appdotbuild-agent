@@ -6,7 +6,12 @@ from llm import common
 from llm.telemetry import LLMTelemetry
 from log import get_logger
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential_jitter, before_sleep_log
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential_jitter,
+    before_sleep_log,
+)
 
 logger = get_logger(__name__)
 
@@ -22,9 +27,9 @@ def parse_tool_calls_from_content(content: str) -> tuple[List[common.ToolUse], s
 
     try:
         # Look for tool calls in format: <tool_call><function=name><parameter=key>value</parameter>...</function></tool_call>
-        tool_call_pattern = r'<tool_call>(.*?)</tool_call>'
-        function_pattern = r'<function=(\w+)>(.*?)</function>'
-        param_pattern = r'<parameter=(\w+)>(.*?)</parameter>'
+        tool_call_pattern = r"<tool_call>(.*?)</tool_call>"
+        function_pattern = r"<function=(\w+)>(.*?)</function>"
+        param_pattern = r"<parameter=(\w+)>(.*?)</parameter>"
 
         tool_calls_found = re.findall(tool_call_pattern, content, re.DOTALL)
 
@@ -36,7 +41,9 @@ def parse_tool_calls_from_content(content: str) -> tuple[List[common.ToolUse], s
 
                 # Extract parameters
                 params = {}
-                for param_match in re.finditer(param_pattern, function_content, re.DOTALL):
+                for param_match in re.finditer(
+                    param_pattern, function_content, re.DOTALL
+                ):
                     param_name = param_match.group(1)
                     param_value = param_match.group(2).strip()
 
@@ -47,29 +54,41 @@ def parse_tool_calls_from_content(content: str) -> tuple[List[common.ToolUse], s
                         # If not JSON, use as string
                         params[param_name] = param_value
 
-                tool_uses.append(common.ToolUse(
-                    name=function_name,
-                    input=params,
-                    id=f"tool_call_{i}"  # Generate an ID since it's not provided
-                ))
+                tool_uses.append(
+                    common.ToolUse(
+                        name=function_name,
+                        input=params,
+                        id=f"tool_call_{i}",  # Generate an ID since it's not provided
+                    )
+                )
 
-                logger.info(f"Successfully parsed tool call from content: {function_name} with params: {params}")
+                logger.info(
+                    f"Successfully parsed tool call from content: {function_name} with params: {params}"
+                )
 
         # Remove all tool calls from content
         if tool_calls_found:
-            remaining_content = re.sub(tool_call_pattern, '', content, flags=re.DOTALL).strip()
+            remaining_content = re.sub(
+                tool_call_pattern, "", content, flags=re.DOTALL
+            ).strip()
 
     except Exception as e:
-        logger.warning(f"Failed to parse tool call from content: {e}, keeping original content")
+        logger.warning(
+            f"Failed to parse tool call from content: {e}, keeping original content"
+        )
 
     return tool_uses, remaining_content
 
 
 class LMStudioLLM:
-    def __init__(self, base_url: str = "http://localhost:1234/v1", model_name: str = "loaded-model"):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:1234/v1",
+        model_name: str = "loaded-model",
+    ):
         self.client = AsyncOpenAI(
             base_url=base_url,
-            api_key="lm-studio"  # LM Studio doesn't require a real API key
+            api_key="lm-studio",  # LM Studio doesn't require a real API key
         )
         self.model_name = model_name
         self.default_model = model_name
@@ -93,17 +112,18 @@ class LMStudioLLM:
                         try:
                             arguments = json.dumps(arguments)
                         except (TypeError, ValueError) as e:
-                            logger.warning(f"Failed to serialize tool arguments: {e}, using str conversion")
+                            logger.warning(
+                                f"Failed to serialize tool arguments: {e}, using str conversion"
+                            )
                             arguments = str(arguments)
 
-                    tool_calls.append({
-                        "id": block.id,
-                        "type": "function",
-                        "function": {
-                            "name": block.name,
-                            "arguments": arguments
+                    tool_calls.append(
+                        {
+                            "id": block.id,
+                            "type": "function",
+                            "function": {"name": block.name, "arguments": arguments},
                         }
-                    })
+                    )
                 elif isinstance(block, common.ToolResult):
                     tool_results.append(block)
 
@@ -113,7 +133,10 @@ class LMStudioLLM:
                 if content_parts or tool_calls:
                     openai_message = {"role": message.role}
                     if content_parts:
-                        if len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                        if (
+                            len(content_parts) == 1
+                            and content_parts[0]["type"] == "text"
+                        ):
                             openai_message["content"] = content_parts[0]["text"]
                         else:
                             openai_message["content"] = content_parts  # type: ignore
@@ -128,17 +151,22 @@ class LMStudioLLM:
 
                 # Then add each tool result as separate messages
                 for tool_result in tool_results:
-                    openai_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_result.tool_use_id,
-                        "content": tool_result.content
-                    })
+                    openai_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_result.tool_use_id,
+                            "content": tool_result.content,
+                        }
+                    )
             else:
                 # Regular message without tool results
                 if content_parts or tool_calls or message.role == "user":
                     openai_message = {"role": message.role}
                     if content_parts:
-                        if len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                        if (
+                            len(content_parts) == 1
+                            and content_parts[0]["type"] == "text"
+                        ):
                             openai_message["content"] = content_parts[0]["text"]
                         else:
                             openai_message["content"] = content_parts  # type: ignore
@@ -153,7 +181,9 @@ class LMStudioLLM:
 
         return openai_messages
 
-    def _tools_into(self, tools: List[common.Tool] | None) -> List[Dict[str, Any]] | None:
+    def _tools_into(
+        self, tools: List[common.Tool] | None
+    ) -> List[Dict[str, Any]] | None:
         if not tools:
             return None
 
@@ -170,17 +200,21 @@ class LMStudioLLM:
 
             # Basic validation of parameter schema
             if parameters and not isinstance(parameters, dict):
-                logger.warning(f"Tool {name} has invalid parameter schema, using empty schema")
+                logger.warning(
+                    f"Tool {name} has invalid parameter schema, using empty schema"
+                )
                 parameters = {}
 
-            openai_tools.append({
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": description,
-                    "parameters": parameters
+            openai_tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": parameters,
+                    },
                 }
-            })
+            )
 
         if not openai_tools:
             logger.warning("No valid tools found after validation")
@@ -204,14 +238,16 @@ class LMStudioLLM:
                     else:
                         arguments = tool_call.function.arguments
                 except (json.JSONDecodeError, TypeError) as e:
-                    logger.warning(f"Failed to parse tool call arguments: {e}, using raw arguments")
+                    logger.warning(
+                        f"Failed to parse tool call arguments: {e}, using raw arguments"
+                    )
                     arguments = tool_call.function.arguments
 
-                content_blocks.append(common.ToolUse(
-                    name=tool_call.function.name,
-                    input=arguments,
-                    id=tool_call.id
-                ))
+                content_blocks.append(
+                    common.ToolUse(
+                        name=tool_call.function.name, input=arguments, id=tool_call.id
+                    )
+                )
 
             # Add any remaining text content if present
             if message.content:
@@ -219,8 +255,12 @@ class LMStudioLLM:
         elif message.content:
             # Check if content contains tool calls in XML format (workaround for some LMStudio models)
             if "<tool_call>" in message.content:
-                logger.info("Detected potential tool call in message content, attempting to parse...")
-                parsed_tool_uses, remaining_content = parse_tool_calls_from_content(message.content)
+                logger.info(
+                    "Detected potential tool call in message content, attempting to parse..."
+                )
+                parsed_tool_uses, remaining_content = parse_tool_calls_from_content(
+                    message.content
+                )
 
                 # Add remaining content first if any
                 if remaining_content:
@@ -239,10 +279,12 @@ class LMStudioLLM:
             "length": "max_tokens",
             "tool_calls": "tool_use",
             "content_filter": "stop_sequence",
-            None: "unknown"
+            None: "unknown",
         }
-        stop_reason = cast(Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "unknown"],
-                          stop_reason_map.get(finish_reason, "unknown"))
+        stop_reason = cast(
+            Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "unknown"],
+            stop_reason_map.get(finish_reason, "unknown"),
+        )
 
         # Get token usage
         usage = response.usage
@@ -254,7 +296,7 @@ class LMStudioLLM:
             content=content_blocks,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            stop_reason=stop_reason
+            stop_reason=stop_reason,
         )
 
     @retry(
@@ -295,12 +337,19 @@ class LMStudioLLM:
         if openai_tools:
             request_params["tools"] = openai_tools
             if tool_choice:
-                request_params["tool_choice"] = {"type": "function", "function": {"name": tool_choice}}
+                request_params["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": tool_choice},
+                }
 
         try:
-            logger.info(f"LM Studio request - model: {chosen_model}, temperature: {temperature}, max_tokens: {max_tokens}")
+            logger.info(
+                f"LM Studio request - model: {chosen_model}, temperature: {temperature}, max_tokens: {max_tokens}"
+            )
             if openai_tools:
-                logger.info(f"LM Studio request includes {len(openai_tools)} tools: {[tool['function']['name'] for tool in openai_tools]}")
+                logger.info(
+                    f"LM Studio request includes {len(openai_tools)} tools: {[tool['function']['name'] for tool in openai_tools]}"
+                )
             if tool_choice:
                 logger.info(f"LM Studio request with forced tool choice: {tool_choice}")
 
@@ -311,25 +360,33 @@ class LMStudioLLM:
             response = await self.client.chat.completions.create(**request_params)
 
             # Log telemetry
-            if hasattr(response, 'usage') and response.usage:
+            if hasattr(response, "usage") and response.usage:
                 telemetry.log_completion(
                     model=chosen_model,
                     input_tokens=response.usage.prompt_tokens,
                     output_tokens=response.usage.completion_tokens,
                     temperature=temperature,
                     has_tools=openai_tools is not None,
-                    provider="LMStudio"
+                    provider="LMStudio",
                 )
 
             # Convert response to common format
             completion = self._completion_into(response)
 
             # Enhanced logging for tool calls debugging
-            tool_use_blocks = [block for block in completion.content if isinstance(block, common.ToolUse)]
+            tool_use_blocks = [
+                block
+                for block in completion.content
+                if isinstance(block, common.ToolUse)
+            ]
             if tool_use_blocks:
-                logger.info(f"LM Studio response includes {len(tool_use_blocks)} tool calls: {[block.name for block in tool_use_blocks]}")
+                logger.info(
+                    f"LM Studio response includes {len(tool_use_blocks)} tool calls: {[block.name for block in tool_use_blocks]}"
+                )
 
-            logger.info(f"LM Studio response - content_blocks: {len(list(completion.content))}, stop_reason: {completion.stop_reason}")
+            logger.info(
+                f"LM Studio response - content_blocks: {len(list(completion.content))}, stop_reason: {completion.stop_reason}"
+            )
 
             return completion
 
@@ -346,31 +403,33 @@ if __name__ == "__main__":
         client = LMStudioLLM(base_url="http://127.0.0.1:1234/v1")
 
         # Define a test tool (properly typed)
-        tools: List[common.Tool] = [{
-            "name": "get_weather",
-            "description": "Get the current weather in a given location",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city and state, e.g. San Francisco, CA"
+        tools: List[common.Tool] = [
+            {
+                "name": "get_weather",
+                "description": "Get the current weather in a given location",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city and state, e.g. San Francisco, CA",
+                        },
+                        "unit": {
+                            "type": "string",
+                            "enum": ["celsius", "fahrenheit"],
+                            "description": "The unit of temperature",
+                        },
                     },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"],
-                        "description": "The unit of temperature"
-                    }
+                    "required": ["location"],
                 },
-                "required": ["location"]
             }
-        }]
+        ]
 
         # Create test messages
         messages = [
             common.InternalMessage(
                 role="user",
-                content=[common.TextRaw("What's the weather like in San Francisco?")]
+                content=[common.TextRaw("What's the weather like in San Francisco?")],
             )
         ]
 
@@ -378,10 +437,7 @@ if __name__ == "__main__":
             # First request - expecting tool use
             print("Sending request to LM Studio with tool support...")
             completion = await client.completion(
-                messages=messages,
-                max_tokens=200,
-                temperature=0.7,
-                tools=tools
+                messages=messages, max_tokens=200, temperature=0.7, tools=tools
             )
 
             # Print the response
@@ -395,34 +451,38 @@ if __name__ == "__main__":
                     print(f"Arguments: {block.input}")
                     tool_call = block
 
-            print(f"\nTokens used - Input: {completion.input_tokens}, Output: {completion.output_tokens}")
+            print(
+                f"\nTokens used - Input: {completion.input_tokens}, Output: {completion.output_tokens}"
+            )
             print(f"Stop reason: {completion.stop_reason}")
 
             # If we got a tool call, simulate tool response
             if tool_call:
                 # Add assistant message with tool call
-                messages.append(common.InternalMessage(
-                    role="assistant",
-                    content=list(completion.content)
-                ))
+                messages.append(
+                    common.InternalMessage(
+                        role="assistant", content=list(completion.content)
+                    )
+                )
 
                 # Add tool result
-                messages.append(common.InternalMessage(
-                    role="user",
-                    content=[common.ToolResult(
-                        content="The weather in San Francisco is 72°F (22°C) and sunny.",
-                        tool_use_id=tool_call.id,
-                        name=tool_call.name
-                    )]  # type: ignore[list-item]
-                ))
+                messages.append(
+                    common.InternalMessage(
+                        role="user",
+                        content=[
+                            common.ToolResult(
+                                content="The weather in San Francisco is 72°F (22°C) and sunny.",
+                                tool_use_id=tool_call.id,
+                                name=tool_call.name,
+                            )
+                        ],  # type: ignore[list-item]
+                    )
+                )
 
                 # Get final response
                 print("\n--- Sending follow-up with tool result ---")
                 final_completion = await client.completion(
-                    messages=messages,
-                    max_tokens=200,
-                    temperature=0.7,
-                    tools=tools
+                    messages=messages, max_tokens=200, temperature=0.7, tools=tools
                 )
 
                 print("\nFinal response:")
@@ -430,11 +490,15 @@ if __name__ == "__main__":
                     if isinstance(block, common.TextRaw):
                         print(block.text)
 
-                print(f"\nTokens used - Input: {final_completion.input_tokens}, Output: {final_completion.output_tokens}")
+                print(
+                    f"\nTokens used - Input: {final_completion.input_tokens}, Output: {final_completion.output_tokens}"
+                )
 
         except Exception as e:
             print(f"Error during test: {e}")
-            print("Make sure LM Studio is running on http://127.0.0.1:1234 with a model loaded that supports function calling")
+            print(
+                "Make sure LM Studio is running on http://127.0.0.1:1234 with a model loaded that supports function calling"
+            )
 
     # Run the test
     asyncio.run(test_lmstudio())

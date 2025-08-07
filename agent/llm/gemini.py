@@ -8,7 +8,13 @@ from llm import common
 from llm.telemetry import LLMTelemetry
 from log import get_logger
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential_jitter, retry_if_exception_type, before_sleep_log
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential_jitter,
+    retry_if_exception_type,
+    before_sleep_log,
+)
 import uuid
 
 
@@ -24,25 +30,26 @@ retry_gemini_errors = retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential_jitter(initial=1.5, max=30),
     retry=retry_if_exception_type((RetryableError, ServerError, RuntimeError)),
-    before_sleep=before_sleep_log(logger, logging.WARNING)
+    before_sleep=before_sleep_log(logger, logging.WARNING),
 )
 
 retry_file_upload = retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential_jitter(initial=0.5, max=1.5),
     retry=retry_if_exception_type(ServerError),
-    before_sleep=before_sleep_log(logger, logging.WARNING)
+    before_sleep=before_sleep_log(logger, logging.WARNING),
 )
 
+
 class GeminiLLM(common.AsyncLLM):
-    def __init__(self,
-                 model_name: str,
-                 api_key: str | None = None,
-                 client_params: dict = {}
-                 ):
+    def __init__(
+        self, model_name: str, api_key: str | None = None, client_params: dict = {}
+    ):
         super().__init__()
 
-        _client = genai.Client(api_key=api_key or os.environ["GEMINI_API_KEY"], **(client_params or {}))
+        _client = genai.Client(
+            api_key=api_key or os.environ["GEMINI_API_KEY"], **(client_params or {})
+        )
         self._async_client = _client.aio
         self.model_name = model_name
 
@@ -57,8 +64,8 @@ class GeminiLLM(common.AsyncLLM):
         system_prompt: str | None = None,
         force_tool_use: bool = False,
         attach_files: common.AttachedFiles | None = None,
-        *args, # consume unused args passed down
-        **kwargs, # consume unused kwargs passed down
+        *args,  # consume unused args passed down
+        **kwargs,  # consume unused kwargs passed down
     ) -> common.Completion:
         config = genai_types.GenerateContentConfig(
             max_output_tokens=max_tokens,
@@ -72,8 +79,9 @@ class GeminiLLM(common.AsyncLLM):
                 genai_types.FunctionDeclaration(
                     name=tool["name"],
                     description=tool.get("description", None),
-                    parameters=tool["input_schema"], # pyright: ignore
-                ) for tool in tools
+                    parameters=tool["input_schema"],  # pyright: ignore
+                )
+                for tool in tools
             ]
             config.tools = [genai_types.Tool(function_declarations=declarations)]
             if force_tool_use:
@@ -91,7 +99,7 @@ class GeminiLLM(common.AsyncLLM):
     async def _generate_content_with_retry(
         self,
         gemini_messages: List[genai_types.Content],
-        config: genai_types.GenerateContentConfig
+        config: genai_types.GenerateContentConfig,
     ) -> common.Completion:
         telemetry = LLMTelemetry()
         telemetry.start_timing()
@@ -103,18 +111,22 @@ class GeminiLLM(common.AsyncLLM):
         )
 
         # Log telemetry if usage metadata is available
-        if hasattr(response, 'usage_metadata'):
+        if hasattr(response, "usage_metadata"):
             usage = response.usage_metadata
             telemetry.log_completion(
                 model=self.model_name,
                 input_tokens=usage.prompt_token_count if usage else None,
                 output_tokens=usage.candidates_token_count if usage else None,
-                temperature=config.temperature if config and config.temperature is not None else None,
+                temperature=config.temperature
+                if config and config.temperature is not None
+                else None,
                 has_tools=bool(config and config.tools),
-                provider="Gemini"
+                provider="Gemini",
             )
         else:
-            logger.warning(f"Gemini response missing usage_metadata attribute for model {self.model_name}")
+            logger.warning(
+                f"Gemini response missing usage_metadata attribute for model {self.model_name}"
+            )
 
         return self._completion_from(response)
 
@@ -133,7 +145,9 @@ class GeminiLLM(common.AsyncLLM):
         return await self._async_client.files.upload(file=file_path)
 
     @staticmethod
-    def _completion_from(completion: genai_types.GenerateContentResponse) -> common.Completion:
+    def _completion_from(
+        completion: genai_types.GenerateContentResponse,
+    ) -> common.Completion:
         if not completion.candidates:
             raise RetryableError(f"Empty completion: {completion}")
             # usually it is caused by an error on Gemini side
@@ -149,15 +163,23 @@ class GeminiLLM(common.AsyncLLM):
                 else:
                     ours_content.append(common.TextRaw(text=block.text))
             if block.function_call and block.function_call.name:
-                ours_content.append(common.ToolUse(
-                    id=block.function_call.id or uuid.uuid4().hex,
-                    name=block.function_call.name,
-                    input=block.function_call.args
-                ))
+                ours_content.append(
+                    common.ToolUse(
+                        id=block.function_call.id or uuid.uuid4().hex,
+                        name=block.function_call.name,
+                        input=block.function_call.args,
+                    )
+                )
         match completion.usage_metadata:
-            case genai_types.GenerateContentResponseUsageMetadata(prompt_token_count=input_tokens, candidates_token_count=output_tokens, thoughts_token_count=thinking_tokens):
+            case genai_types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=input_tokens,
+                candidates_token_count=output_tokens,
+                thoughts_token_count=thinking_tokens,
+            ):
                 usage = (input_tokens, output_tokens, thinking_tokens)
-            case genai_types.GenerateContentResponseUsageMetadata(prompt_token_count=input_tokens, candidates_token_count=output_tokens):
+            case genai_types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=input_tokens, candidates_token_count=output_tokens
+            ):
                 usage = (input_tokens, output_tokens, None)
             case None:
                 usage = (0, 0, None)
@@ -169,7 +191,9 @@ class GeminiLLM(common.AsyncLLM):
             case genai_types.FinishReason.STOP:
                 stop_reason = "end_turn"
             case genai_types.FinishReason.MALFORMED_FUNCTION_CALL:
-                raise RetryableError(f"Malformed function call in completion: {completion}")
+                raise RetryableError(
+                    f"Malformed function call in completion: {completion}"
+                )
             case _:
                 stop_reason = "unknown"
 
@@ -182,7 +206,9 @@ class GeminiLLM(common.AsyncLLM):
             thinking_tokens=usage[2],
         )
 
-    async def _messages_into(self, messages: list[common.Message], files: common.AttachedFiles | None) -> List[genai_types.Content]:
+    async def _messages_into(
+        self, messages: list[common.Message], files: common.AttachedFiles | None
+    ) -> List[genai_types.Content]:
         theirs_messages: List[genai_types.Content] = []
         for message in messages:
             theirs_parts: List[genai_types.Part] = []
@@ -191,15 +217,26 @@ class GeminiLLM(common.AsyncLLM):
                     case common.TextRaw(text=text):
                         theirs_parts.append(genai_types.Part.from_text(text=text))
                     case common.ToolUse(name, input):
-                        theirs_parts.append(genai_types.Part.from_function_call(name=name, args=input)) # pyright: ignore
+                        theirs_parts.append(
+                            genai_types.Part.from_function_call(name=name, args=input)
+                        )  # pyright: ignore
                     case common.ToolUseResult(tool_use, tool_result):
-                        theirs_parts.append(genai_types.Part.from_function_response(name=tool_use.name, response={"result": tool_result.content}))
+                        theirs_parts.append(
+                            genai_types.Part.from_function_response(
+                                name=tool_use.name,
+                                response={"result": tool_result.content},
+                            )
+                        )
                     case _:
-                        raise ValueError(f"Unknown block type {type(block)} for {block}")
-            theirs_messages.append(genai_types.Content(
-                parts=theirs_parts,
-                role=message.role if message.role == "user" else "model"
-            ))
+                        raise ValueError(
+                            f"Unknown block type {type(block)} for {block}"
+                        )
+            theirs_messages.append(
+                genai_types.Content(
+                    parts=theirs_parts,
+                    role=message.role if message.role == "user" else "model",
+                )
+            )
 
         if files:
             uploaded = await self.upload_files(files.files)
@@ -218,8 +255,7 @@ class GeminiLLM(common.AsyncLLM):
                     theirs_messages[-1].parts.extend(files_parts)
                 case None:
                     # If the last message is None, create a new one
-                    theirs_messages.append(genai_types.Content(
-                        parts=files_parts,
-                        role="user"
-                    ))
+                    theirs_messages.append(
+                        genai_types.Content(parts=files_parts, role="user")
+                    )
         return theirs_messages

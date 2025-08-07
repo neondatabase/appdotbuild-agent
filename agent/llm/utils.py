@@ -1,7 +1,7 @@
 import itertools
 import os
 import re
-from typing import Literal, Dict, Sequence
+from typing import Literal, Dict
 from llm.common import AsyncLLM, Message, TextRaw, ContentBlock
 from llm.cached import CachedLLM, CacheMode
 from llm.models_config import ModelCategory, get_model_for_category
@@ -15,7 +15,9 @@ logger = get_logger(__name__)
 # cache for LLM clients
 llm_clients_cache: Dict[str, AsyncLLM] = {}
 
-LLMBackend = Literal["bedrock", "anthropic", "gemini", "ollama", "lmstudio", "openrouter"]
+LLMBackend = Literal[
+    "bedrock", "anthropic", "gemini", "ollama", "lmstudio", "openrouter"
+]
 
 
 def merge_text(content: list[ContentBlock]) -> list[ContentBlock]:
@@ -27,6 +29,7 @@ def merge_text(content: list[ContentBlock]) -> list[ContentBlock]:
             merged.extend(g)
     return merged
 
+
 def extract_tag(source: str | None, tag: str):
     if source is None:
         return None
@@ -36,17 +39,27 @@ def extract_tag(source: str | None, tag: str):
         return match.group(1).strip()
     return None
 
-async def loop_completion(m_client: AsyncLLM, messages: list[Message], system_prompt: str | None = None, **kwargs) -> Message:
+
+async def loop_completion(
+    m_client: AsyncLLM,
+    messages: list[Message],
+    system_prompt: str | None = None,
+    **kwargs,
+) -> Message:
     content: list[ContentBlock] = []
     while True:
-        payload = messages + [Message(role="assistant", content=content)] if content else messages
-        completion = await m_client.completion(messages=payload, system_prompt=system_prompt, **kwargs)
+        payload = (
+            messages + [Message(role="assistant", content=content)]
+            if content
+            else messages
+        )
+        completion = await m_client.completion(
+            messages=payload, system_prompt=system_prompt, **kwargs
+        )
         content.extend(completion.content)
         if completion.stop_reason != "max_tokens":
             break
     return Message(role="assistant", content=merge_text(content))
-
-
 
 
 def _cache_key_from_seq(backend: str, model_name: str, params: frozenset) -> str:
@@ -89,7 +102,7 @@ def get_llm_client(
         detected_backend = get_backend_for_model(model_name)
         backend = detected_backend  # type: ignore[assignment]
         logger.info(f"Auto-detected backend: {backend}")
-    
+
     # prepare parameters for caching
     client_params = client_params or {}
     params_key = frozenset(client_params.items())
@@ -109,7 +122,9 @@ def get_llm_client(
         current_dir = os.path.dirname(__file__)
         cache_path = os.path.join(current_dir, "caches", f"{cache_key}.json")
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        client = CachedLLM(client, cache_mode=cache_mode, cache_path=cache_path, max_cache_size=256)
+        client = CachedLLM(
+            client, cache_mode=cache_mode, cache_path=cache_path, max_cache_size=256
+        )
 
     # store in cache and return
     llm_clients_cache[cache_key] = client

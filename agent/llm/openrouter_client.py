@@ -6,7 +6,12 @@ from llm import common
 from llm.telemetry import LLMTelemetry
 from log import get_logger
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential_jitter, before_sleep_log
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential_jitter,
+    before_sleep_log,
+)
 
 logger = get_logger(__name__)
 
@@ -18,12 +23,14 @@ class OpenRouterLLM:
         model_name: str = "openai/gpt-4o-mini",
         api_key: str | None = None,
         site_url: str | None = None,
-        site_name: str | None = None
+        site_name: str | None = None,
     ):
         # use provided API key or get from environment
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         if not self.api_key:
-            raise ValueError("OpenRouter API key required. Set OPENROUTER_API_KEY environment variable.")
+            raise ValueError(
+                "OpenRouter API key required. Set OPENROUTER_API_KEY environment variable."
+            )
 
         # configure headers for app attribution if provided
         headers = {}
@@ -35,7 +42,7 @@ class OpenRouterLLM:
         self.client = AsyncOpenAI(
             base_url=base_url,
             api_key=self.api_key,
-            default_headers=headers if headers else None
+            default_headers=headers if headers else None,
         )
         self.model_name = model_name
         self.default_model = model_name
@@ -59,17 +66,18 @@ class OpenRouterLLM:
                         try:
                             arguments = json.dumps(arguments)
                         except (TypeError, ValueError) as e:
-                            logger.warning(f"Failed to serialize tool arguments: {e}, using str conversion")
+                            logger.warning(
+                                f"Failed to serialize tool arguments: {e}, using str conversion"
+                            )
                             arguments = str(arguments)
 
-                    tool_calls.append({
-                        "id": block.id,
-                        "type": "function",
-                        "function": {
-                            "name": block.name,
-                            "arguments": arguments
+                    tool_calls.append(
+                        {
+                            "id": block.id,
+                            "type": "function",
+                            "function": {"name": block.name, "arguments": arguments},
                         }
-                    })
+                    )
                 elif isinstance(block, common.ToolResult):
                     tool_results.append(block)
 
@@ -79,7 +87,10 @@ class OpenRouterLLM:
                 if content_parts or tool_calls:
                     openai_message = {"role": message.role}
                     if content_parts:
-                        if len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                        if (
+                            len(content_parts) == 1
+                            and content_parts[0]["type"] == "text"
+                        ):
                             openai_message["content"] = content_parts[0]["text"]
                         else:
                             openai_message["content"] = content_parts  # type: ignore
@@ -94,17 +105,22 @@ class OpenRouterLLM:
 
                 # then add each tool result as separate messages
                 for tool_result in tool_results:
-                    openai_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_result.tool_use_id,
-                        "content": tool_result.content
-                    })
+                    openai_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_result.tool_use_id,
+                            "content": tool_result.content,
+                        }
+                    )
             else:
                 # regular message without tool results
                 if content_parts or tool_calls or message.role == "user":
                     openai_message = {"role": message.role}
                     if content_parts:
-                        if len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                        if (
+                            len(content_parts) == 1
+                            and content_parts[0]["type"] == "text"
+                        ):
                             openai_message["content"] = content_parts[0]["text"]
                         else:
                             openai_message["content"] = content_parts  # type: ignore
@@ -119,7 +135,9 @@ class OpenRouterLLM:
 
         return openai_messages
 
-    def _tools_into(self, tools: List[common.Tool] | None) -> List[Dict[str, Any]] | None:
+    def _tools_into(
+        self, tools: List[common.Tool] | None
+    ) -> List[Dict[str, Any]] | None:
         if not tools:
             return None
 
@@ -136,17 +154,21 @@ class OpenRouterLLM:
 
             # basic validation of parameter schema
             if parameters and not isinstance(parameters, dict):
-                logger.warning(f"Tool {name} has invalid parameter schema, using empty schema")
+                logger.warning(
+                    f"Tool {name} has invalid parameter schema, using empty schema"
+                )
                 parameters = {}
 
-            openai_tools.append({
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": description,
-                    "parameters": parameters
+            openai_tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": parameters,
+                    },
                 }
-            })
+            )
 
         if not openai_tools:
             logger.warning("No valid tools found after validation")
@@ -170,14 +192,16 @@ class OpenRouterLLM:
                     else:
                         arguments = tool_call.function.arguments
                 except (json.JSONDecodeError, TypeError) as e:
-                    logger.warning(f"Failed to parse tool call arguments: {e}, using raw arguments")
+                    logger.warning(
+                        f"Failed to parse tool call arguments: {e}, using raw arguments"
+                    )
                     arguments = tool_call.function.arguments
 
-                content_blocks.append(common.ToolUse(
-                    name=tool_call.function.name,
-                    input=arguments,
-                    id=tool_call.id
-                ))
+                content_blocks.append(
+                    common.ToolUse(
+                        name=tool_call.function.name, input=arguments, id=tool_call.id
+                    )
+                )
 
             # add any remaining text content if present
             if message.content:
@@ -193,10 +217,12 @@ class OpenRouterLLM:
             "length": "max_tokens",
             "tool_calls": "tool_use",
             "content_filter": "stop_sequence",
-            None: "unknown"
+            None: "unknown",
         }
-        stop_reason = cast(Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "unknown"],
-                          stop_reason_map.get(finish_reason, "unknown"))
+        stop_reason = cast(
+            Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "unknown"],
+            stop_reason_map.get(finish_reason, "unknown"),
+        )
 
         # get token usage
         usage = response.usage
@@ -208,7 +234,7 @@ class OpenRouterLLM:
             content=content_blocks,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            stop_reason=stop_reason
+            stop_reason=stop_reason,
         )
 
     @retry(
@@ -250,14 +276,23 @@ class OpenRouterLLM:
         if openai_tools:
             request_params["tools"] = openai_tools
             if tool_choice:
-                request_params["tool_choice"] = {"type": "function", "function": {"name": tool_choice}}
+                request_params["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": tool_choice},
+                }
 
         try:
-            logger.info(f"OpenRouter request - model: {chosen_model}, temperature: {temperature}, max_tokens: {max_tokens}")
+            logger.info(
+                f"OpenRouter request - model: {chosen_model}, temperature: {temperature}, max_tokens: {max_tokens}"
+            )
             if openai_tools:
-                logger.info(f"OpenRouter request includes {len(openai_tools)} tools: {[tool['function']['name'] for tool in openai_tools]}")
+                logger.info(
+                    f"OpenRouter request includes {len(openai_tools)} tools: {[tool['function']['name'] for tool in openai_tools]}"
+                )
             if tool_choice:
-                logger.info(f"OpenRouter request with forced tool choice: {tool_choice}")
+                logger.info(
+                    f"OpenRouter request with forced tool choice: {tool_choice}"
+                )
 
             telemetry = LLMTelemetry()
             telemetry.start_timing()
@@ -266,25 +301,33 @@ class OpenRouterLLM:
             response = await self.client.chat.completions.create(**request_params)
 
             # log telemetry
-            if hasattr(response, 'usage') and response.usage:
+            if hasattr(response, "usage") and response.usage:
                 telemetry.log_completion(
                     model=chosen_model,
                     input_tokens=response.usage.prompt_tokens,
                     output_tokens=response.usage.completion_tokens,
                     temperature=temperature,
                     has_tools=openai_tools is not None,
-                    provider="OpenRouter"
+                    provider="OpenRouter",
                 )
 
             # convert response to common format
             completion = self._completion_into(response)
 
             # enhanced logging for tool calls debugging
-            tool_use_blocks = [block for block in completion.content if isinstance(block, common.ToolUse)]
+            tool_use_blocks = [
+                block
+                for block in completion.content
+                if isinstance(block, common.ToolUse)
+            ]
             if tool_use_blocks:
-                logger.info(f"OpenRouter response includes {len(tool_use_blocks)} tool calls: {[block.name for block in tool_use_blocks]}")
+                logger.info(
+                    f"OpenRouter response includes {len(tool_use_blocks)} tool calls: {[block.name for block in tool_use_blocks]}"
+                )
 
-            logger.info(f"OpenRouter response - content_blocks: {len(list(completion.content))}, stop_reason: {completion.stop_reason}")
+            logger.info(
+                f"OpenRouter response - content_blocks: {len(list(completion.content))}, stop_reason: {completion.stop_reason}"
+            )
 
             return completion
 
@@ -301,36 +344,38 @@ if __name__ == "__main__":
         # note: This requires OPENROUTER_API_KEY environment variable to be set
         client = OpenRouterLLM(
             model_name="openai/gpt-4o-mini",  # Using a common, cost-effective model for testing
-            site_url="https://example.com",   # Optional app attribution
-            site_name="Test App"              # Optional app attribution
+            site_url="https://example.com",  # Optional app attribution
+            site_name="Test App",  # Optional app attribution
         )
 
         # define a test tool (properly typed)
-        tools: List[common.Tool] = [{
-            "name": "get_weather",
-            "description": "Get the current weather in a given location",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city and state, e.g. San Francisco, CA"
+        tools: List[common.Tool] = [
+            {
+                "name": "get_weather",
+                "description": "Get the current weather in a given location",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city and state, e.g. San Francisco, CA",
+                        },
+                        "unit": {
+                            "type": "string",
+                            "enum": ["celsius", "fahrenheit"],
+                            "description": "The unit of temperature",
+                        },
                     },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"],
-                        "description": "The unit of temperature"
-                    }
+                    "required": ["location"],
                 },
-                "required": ["location"]
             }
-        }]
+        ]
 
         # create test messages
         messages = [
             common.InternalMessage(
                 role="user",
-                content=[common.TextRaw("What's the weather like in San Francisco?")]
+                content=[common.TextRaw("What's the weather like in San Francisco?")],
             )
         ]
 
@@ -338,10 +383,7 @@ if __name__ == "__main__":
             # first request - expecting tool use
             print("Sending request to OpenRouter with tool support...")
             completion = await client.completion(
-                messages=messages,
-                max_tokens=200,
-                temperature=0.7,
-                tools=tools
+                messages=messages, max_tokens=200, temperature=0.7, tools=tools
             )
 
             # print the response
@@ -355,34 +397,38 @@ if __name__ == "__main__":
                     print(f"Arguments: {block.input}")
                     tool_call = block
 
-            print(f"\nTokens used - Input: {completion.input_tokens}, Output: {completion.output_tokens}")
+            print(
+                f"\nTokens used - Input: {completion.input_tokens}, Output: {completion.output_tokens}"
+            )
             print(f"Stop reason: {completion.stop_reason}")
 
             # if we got a tool call, simulate tool response
             if tool_call:
                 # add assistant message with tool call
-                messages.append(common.InternalMessage(
-                    role="assistant",
-                    content=list(completion.content)
-                ))
+                messages.append(
+                    common.InternalMessage(
+                        role="assistant", content=list(completion.content)
+                    )
+                )
 
                 # add tool result
-                messages.append(common.InternalMessage(
-                    role="user",
-                    content=[common.ToolResult(
-                        content="The weather in San Francisco is 72°F (22°C) and sunny.",
-                        tool_use_id=tool_call.id,
-                        name=tool_call.name
-                    )]  # type: ignore[list-item]
-                ))
+                messages.append(
+                    common.InternalMessage(
+                        role="user",
+                        content=[
+                            common.ToolResult(
+                                content="The weather in San Francisco is 72°F (22°C) and sunny.",
+                                tool_use_id=tool_call.id,
+                                name=tool_call.name,
+                            )
+                        ],  # type: ignore[list-item]
+                    )
+                )
 
                 # get final response
                 print("\n--- Sending follow-up with tool result ---")
                 final_completion = await client.completion(
-                    messages=messages,
-                    max_tokens=200,
-                    temperature=0.7,
-                    tools=tools
+                    messages=messages, max_tokens=200, temperature=0.7, tools=tools
                 )
 
                 print("\nFinal response:")
@@ -390,11 +436,15 @@ if __name__ == "__main__":
                     if isinstance(block, common.TextRaw):
                         print(block.text)
 
-                print(f"\nTokens used - Input: {final_completion.input_tokens}, Output: {final_completion.output_tokens}")
+                print(
+                    f"\nTokens used - Input: {final_completion.input_tokens}, Output: {final_completion.output_tokens}"
+                )
 
         except Exception as e:
             print(f"Error during test: {e}")
-            print("Make sure OPENROUTER_API_KEY environment variable is set with a valid API key")
+            print(
+                "Make sure OPENROUTER_API_KEY environment variable is set with a valid API key"
+            )
 
     # run the test
     asyncio.run(test_openrouter())

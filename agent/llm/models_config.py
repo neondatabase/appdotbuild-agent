@@ -81,18 +81,19 @@ from typing import Dict
 
 class ModelCategory:
     BEST_CODING = "best_coding"  # slow, high quality coding
-    UNIVERSAL = "universal"      # medium speed, used for FSM tools
-    ULTRA_FAST = "ultra_fast"    # commit names etc
-    VISION = "vision"            # vision tasks
+    UNIVERSAL = "universal"  # medium speed, used for FSM tools
+    ULTRA_FAST = "ultra_fast"  # commit names etc
+    VISION = "vision"  # vision tasks
+
 
 ANTHROPIC_MODELS = {
     "sonnet": {
         "bedrock": "us.anthropic.claude-sonnet-4-20250514-v1:0",
-        "anthropic": "claude-sonnet-4-20250514"
+        "anthropic": "claude-sonnet-4-20250514",
     },
     "haiku": {
         "bedrock": "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-        "anthropic": "claude-3-5-haiku-20241022"
+        "anthropic": "claude-3-5-haiku-20241022",
     },
 }
 
@@ -110,25 +111,21 @@ GEMINI_MODELS = {
 
 OLLAMA_MODELS = {
     # Meta LLaMA
-    "llama3.3": {"ollama": "llama3.3"},           # Latest LLaMA, best for general coding
+    "llama3.3": {"ollama": "llama3.3"},  # Latest LLaMA, best for general coding
     "llama3.2-vision": {"ollama": "llama3.2-vision"},  # Latest vision capabilities
     "gemma3": {"ollama": "gemma3:27b"},  # Latest vision capabilities
-    "codellama": {"ollama": "codellama:13b"},     # Specialized for code
-
+    "codellama": {"ollama": "codellama:13b"},  # Specialized for code
     # Qwen3
-    "qwen3": {"ollama": "qwen3:30b"},             # Latest Qwen with thinking mode
-    "qwen3-coder": {"ollama": "qwen3-coder:7b"}, # Specialized for coding
-
+    "qwen3": {"ollama": "qwen3:30b"},  # Latest Qwen with thinking mode
+    "qwen3-coder": {"ollama": "qwen3-coder:7b"},  # Specialized for coding
     # Mistral
-    "mistral-large": {"ollama": "mistral-large:123b"}, # Latest large model
-    "devstral": {"ollama": "devstral:24b"},     # Latest code-specialized
-
+    "mistral-large": {"ollama": "mistral-large:123b"},  # Latest large model
+    "devstral": {"ollama": "devstral:24b"},  # Latest code-specialized
     # Microsoft Phi
-    "phi4": {"ollama": "phi4:14b"},               # Latest Phi model
-
+    "phi4": {"ollama": "phi4:14b"},  # Latest Phi model
     # Specialized models
-    "deepseek-coder": {"ollama": "deepseek-coder:33b"}, # Best for coding
-    "granite-code": {"ollama": "granite-code:20b"},     # IBM's code model
+    "deepseek-coder": {"ollama": "deepseek-coder:33b"},  # Best for coding
+    "granite-code": {"ollama": "granite-code:20b"},  # IBM's code model
 }
 
 OPENROUTER_MODELS = {
@@ -145,10 +142,10 @@ MODELS_MAP: Dict[str, Dict[str, str]] = {
 }
 
 DEFAULT_MODELS = {
-    ModelCategory.BEST_CODING: "qwen3-code",           # slow, high quality
-    ModelCategory.UNIVERSAL: "gemini-flash",       # medium speed for FSM tools
-    ModelCategory.ULTRA_FAST: "gemini-flash-lite", # ultra fast for commit names
-    ModelCategory.VISION: "gemini-flash-lite",     # vision tasks
+    ModelCategory.BEST_CODING: "qwen3-code",  # slow, high quality
+    ModelCategory.UNIVERSAL: "gemini-flash",  # medium speed for FSM tools
+    ModelCategory.ULTRA_FAST: "gemini-flash-lite",  # ultra fast for commit names
+    ModelCategory.VISION: "gemini-flash-lite",  # vision tasks
 }
 
 OLLAMA_DEFAULT_MODELS = {
@@ -157,6 +154,7 @@ OLLAMA_DEFAULT_MODELS = {
     ModelCategory.ULTRA_FAST: "phi4",
     ModelCategory.VISION: "gemma3",
 }
+
 
 def get_model_for_category(category: str) -> str:
     """Get model name for a specific category, with environment variable override support."""
@@ -173,9 +171,15 @@ def get_model_for_category(category: str) -> str:
     # Otherwise use regular defaults
     return DEFAULT_MODELS.get(category, "sonnet")
 
+
 ANTHROPIC_MODEL_NAMES = list(ANTHROPIC_MODELS.keys())
 GEMINI_MODEL_NAMES = list(GEMINI_MODELS.keys())
 OLLAMA_MODEL_NAMES = list(OLLAMA_MODELS.keys())
 OPENROUTER_MODEL_NAMES = list(OPENROUTER_MODELS.keys())
 
-ALL_MODEL_NAMES = ANTHROPIC_MODEL_NAMES + GEMINI_MODEL_NAMES + OLLAMA_MODEL_NAMES + OPENROUTER_MODEL_NAMES
+ALL_MODEL_NAMES = (
+    ANTHROPIC_MODEL_NAMES
+    + GEMINI_MODEL_NAMES
+    + OLLAMA_MODEL_NAMES
+    + OPENROUTER_MODEL_NAMES
+)

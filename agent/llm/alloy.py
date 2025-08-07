@@ -15,7 +15,7 @@ class AlloyLLM(AsyncLLM):
     def __init__(
         self,
         models: List[AsyncLLM],
-        selection_strategy: Literal["random", "round_robin"] = "random"
+        selection_strategy: Literal["random", "round_robin"] = "random",
     ):
         if not models:
             raise ValueError("At least one model must be provided")
@@ -23,13 +23,15 @@ class AlloyLLM(AsyncLLM):
         self.models = models
         self.selection_strategy = selection_strategy
         self.current_index = 0
-        logger.info(f"Initialized AlloyLLM with {len(models)} models, strategy: {selection_strategy}")
+        logger.info(
+            f"Initialized AlloyLLM with {len(models)} models, strategy: {selection_strategy}"
+        )
 
     @classmethod
     def from_models(
         cls,
         models: List[AsyncLLM],
-        selection_strategy: Literal["random", "round_robin"] = "random"
+        selection_strategy: Literal["random", "round_robin"] = "random",
     ) -> "AlloyLLM":
         """Create an AlloyLLM from a list of model instances.
 
@@ -63,7 +65,9 @@ class AlloyLLM(AsyncLLM):
             model_idx = self.current_index
             self.current_index = (self.current_index + 1) % len(self.models)
 
-        logger.info(f"AlloyLLM selected model index {model_idx} of {len(self.models)}, which is {repr(selected_model)}")
+        logger.info(
+            f"AlloyLLM selected model index {model_idx} of {len(self.models)}, which is {repr(selected_model)}"
+        )
 
         # delegate to selected model
         return await selected_model.completion(

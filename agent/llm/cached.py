@@ -52,8 +52,10 @@ def find_closest_dict(target: dict, candidates: list[dict]):
 
     target_str = json.dumps(target, sort_keys=True)
     candidate_strs = [json.dumps(c, sort_keys=True) for c in candidates]
-    similarity = [difflib.SequenceMatcher(None, target_str, c_str).ratio()
-                  for c_str in candidate_strs]
+    similarity = [
+        difflib.SequenceMatcher(None, target_str, c_str).ratio()
+        for c_str in candidate_strs
+    ]
 
     max_index = similarity.index(max(similarity))
     return max_index
@@ -82,7 +84,9 @@ class CachedLLM(AsyncLLM):
         max_cache_size: int = 256,
     ):
         self.client = client
-        self.cache_mode = self._infer_cache_mode() if cache_mode == "auto" else cache_mode
+        self.cache_mode = (
+            self._infer_cache_mode() if cache_mode == "auto" else cache_mode
+        )
         if cache_mode == "auto":
             logger.info(f"Inferred cache mode {self.cache_mode}")
         self.cache_path = cache_path
@@ -154,11 +158,13 @@ class CachedLLM(AsyncLLM):
 
     def report_closest_cache_key(self, cache_key: str, norm_params: dict) -> None:
         cache = list(self._cache.items())
-        idx = find_closest_dict(norm_params, [x[1]['params'] for x in cache])
+        idx = find_closest_dict(norm_params, [x[1]["params"] for x in cache])
         if idx is None:
-            logger.error(f"Cache miss by {self.client.__class__.__name__} - probably empty cache")
+            logger.error(
+                f"Cache miss by {self.client.__class__.__name__} - probably empty cache"
+            )
             return
-        cache_params = cache[idx][1]['params']
+        cache_params = cache[idx][1]["params"]
 
         def _compare(x, y, prefix=""):
             if isinstance(x, dict):
@@ -187,7 +193,11 @@ class CachedLLM(AsyncLLM):
         return cache_params
 
     async def _get_or_make_request(
-        self, cache_key: str, norm_params: dict, request_params: dict, use_lru: bool = False
+        self,
+        cache_key: str,
+        norm_params: dict,
+        request_params: dict,
+        use_lru: bool = False,
     ) -> Completion:
         """handle cache lookup and request coordination."""
         event = None
@@ -222,12 +232,17 @@ class CachedLLM(AsyncLLM):
             # model implementations (e.g. AnthropicLLM). We strip it to avoid
             # unexpected TypeError while keeping the argument available for
             # caching / higher-level coordination.
-            safe_request_params = {k: v for k, v in request_params.items() if k != "event_callback"}
+            safe_request_params = {
+                k: v for k, v in request_params.items() if k != "event_callback"
+            }
 
             response = await self.client.completion(**safe_request_params)
 
             async with self.lock:
-                self._cache[cache_key] = {"data": response.to_dict(), "params": norm_params}
+                self._cache[cache_key] = {
+                    "data": response.to_dict(),
+                    "params": norm_params,
+                }
                 if use_lru:
                     self._update_lru_cache(cache_key)
                 else:
@@ -255,7 +270,9 @@ class CachedLLM(AsyncLLM):
     ) -> Completion:
         """performs LLM completion with caching support."""
         if args:
-            raise RuntimeError("args are not expected in this method, use kwargs instead")
+            raise RuntimeError(
+                "args are not expected in this method, use kwargs instead"
+            )
 
         request_params = {
             "model": model,
@@ -274,11 +291,15 @@ class CachedLLM(AsyncLLM):
             case "record":
                 norm_params, cache_key = self._get_cache_key(**request_params)
                 logger.info(f"Caching response with key: {cache_key}")
-                return await self._get_or_make_request(cache_key, norm_params, request_params)
+                return await self._get_or_make_request(
+                    cache_key, norm_params, request_params
+                )
 
             case "lru":
                 norm_params, cache_key = self._get_cache_key(**request_params)
-                return await self._get_or_make_request(cache_key, norm_params, request_params, use_lru=True)
+                return await self._get_or_make_request(
+                    cache_key, norm_params, request_params, use_lru=True
+                )
 
             case "replay":
                 norm_params, cache_key = self._get_cache_key(**request_params)
@@ -287,7 +308,9 @@ class CachedLLM(AsyncLLM):
                     return Completion.from_dict(self._cache[cache_key]["data"])
                 else:
                     self.report_closest_cache_key(cache_key, norm_params)
-                    logger.error(f"Cache miss by {self.client.__class__.__name__}: {normalize(request_params)}")
+                    logger.error(
+                        f"Cache miss by {self.client.__class__.__name__}: {normalize(request_params)}"
+                    )
                     raise ValueError(
                         f"No cached response found for this request in replay mode; "
                         f"run in record mode first to populate the cache. Cache_key: {cache_key}"
