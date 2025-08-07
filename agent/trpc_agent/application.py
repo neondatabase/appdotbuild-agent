@@ -1,6 +1,7 @@
 import os
 import anyio
 import logging
+import tempfile
 import enum
 from typing import Dict, Self, Optional, Literal, Any
 from dataclasses import dataclass
@@ -379,8 +380,11 @@ class FSMApplication:
             logger.info(
                 f"SERVER get_diff_with: Snapshot sample paths (up to 5): {sorted_snapshot_keys[:5]}"
             )
-            for file_path, content in snapshot.items():
-                start = start.with_new_file(file_path, content)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                for file_path, content in snapshot.items():
+                    start = start.with_new_file(file_path, content)
+                start = start.with_directory(".", self.client.host().directory(temp_dir))
+                await start.sync()
             start = start.with_exec(["git", "add", "."]).with_exec(
                 ["git", "commit", "-m", "'snapshot'"]
             )

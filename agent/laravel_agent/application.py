@@ -1,5 +1,6 @@
 import os
 import anyio
+import tempfile
 import logging
 import enum
 from typing import Dict, Self, Optional, Literal, Any
@@ -314,7 +315,7 @@ class FSMApplication:
         logger.info(
             f"SERVER get_diff_with: Received snapshot with {len(snapshot)} files."
         )
-        
+
         # Temporary fix: exclude .png and .ico files from diffs
         def should_exclude_from_diff(file_path: str) -> bool:
             return file_path.lower().endswith(('.png', '.ico'))
@@ -332,14 +333,13 @@ class FSMApplication:
                 f"SERVER get_diff_with: Snapshot sample paths (up to 5): {sorted_snapshot_keys[:5]}"
             )
 
-            # Create a directory with all snapshot files first
-            snapshot_dir = self.client.directory()
-            for file_path, content in snapshot.items():
-                if not should_exclude_from_diff(file_path):
-                    snapshot_dir = snapshot_dir.with_new_file(file_path, content)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                for file_path, content in snapshot.items():
+                    if not should_exclude_from_diff(file_path):
+                        start = start.with_new_file(file_path, content)
+                start = start.with_directory(".", self.client.host().directory(temp_dir))
+                await start.sync()
 
-            # Now add the entire directory at once
-            start = start.with_directory(".", snapshot_dir)
             start = start.with_exec(["git", "add", "."]).with_exec(
                 ["git", "commit", "-m", "'snapshot'"]
             )
@@ -356,7 +356,7 @@ class FSMApplication:
         template_dir = self.client.host().directory(self.template_path())
         start = start.with_directory(".", template_dir)
         logger.info("SERVER get_diff_with: Added template directory to workspace")
-        
+
         # Exclude .png and .ico files from being tracked by git
         # Using || true to prevent failures if no files are found
         start = start.with_exec(["sh", "-c", "find . -name '*.png' -o -name '*.ico' | xargs -r git rm --cached || true"])
