@@ -86,6 +86,9 @@ class LMStudioLLM:
         base_url: str = "http://localhost:1234/v1",
         model_name: str = "loaded-model",
     ):
+        logger.info(
+            f"Initializing LMStudioLLM client with base URL: {base_url}"
+        )
         self.client = AsyncOpenAI(
             base_url=base_url,
             api_key="lm-studio",  # LM Studio doesn't require a real API key

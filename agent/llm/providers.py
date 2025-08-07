@@ -6,12 +6,6 @@ from llm.anthropic_client import AnthropicLLM
 from llm.gemini import GeminiLLM
 from llm.lmstudio_client import LMStudioLLM
 from llm.openrouter_client import OpenRouterLLM
-from llm.models_config import (
-    ANTHROPIC_MODEL_NAMES,
-    GEMINI_MODEL_NAMES,
-    OLLAMA_MODEL_NAMES,
-    OPENROUTER_MODEL_NAMES,
-)
 
 from llm.ollama_client import OllamaLLM
 
@@ -20,37 +14,28 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
     "anthropic": {
         "client": AnthropicLLM,
         "env_vars": ["ANTHROPIC_API_KEY"],
-        "models": ANTHROPIC_MODEL_NAMES,
         "requires_base_client": True,
     },
     "bedrock": {
         "client": AnthropicLLM,  # uses AWS client internally
         "env_vars": ["AWS_SECRET_ACCESS_KEY"],
-        "models": ANTHROPIC_MODEL_NAMES,
         "requires_base_client": True,
     },
     "gemini": {
         "client": GeminiLLM,
         "env_vars": ["GEMINI_API_KEY"],
-        "models": GEMINI_MODEL_NAMES,
     },
     "ollama": {
         "client": OllamaLLM,
         "env_vars": [],  # works with localhost by default
-        "models": OLLAMA_MODEL_NAMES,
-        "accepts_any_model": True,  # can use any model name
     },
     "lmstudio": {
         "client": LMStudioLLM,
         "env_vars": [],  # works with localhost by default
-        "models": [],
-        "accepts_any_model": True,  # can use any model name
     },
     "openrouter": {
         "client": OpenRouterLLM,
         "env_vars": ["OPENROUTER_API_KEY"],
-        "models": OPENROUTER_MODEL_NAMES,
-        "accepts_any_model": True,  # can route to many models
     },
 }
 
@@ -70,82 +55,62 @@ def is_backend_available(backend: str) -> bool:
 
 
 def get_backend_for_model(model_name: str) -> str:
-    """Determine the best backend for a given model name.
+    """Determine the backend for a given model name.
     
-    Supports backend:model format:
-    - openrouter:deepseek/deepseek-coder
-    - lmstudio:local-model
+    Requires backend:model format:
+    - anthropic:claude-sonnet-4-20250514
+    - gemini:gemini-2.5-flash-preview-05-20  
     - ollama:phi4
+    - openrouter:deepseek/deepseek-coder
+    - lmstudio:http://localhost:1234
     """
-    # check if model_name contains backend specification
-    if ":" in model_name:
-        backend, _ = model_name.split(":", 1)
-        if backend in PROVIDERS:
-            return backend
+    if ":" not in model_name:
+        raise ValueError(
+            f"Model '{model_name}' must specify backend using 'backend:model' format "
+            f"(e.g., 'anthropic:{model_name}', 'ollama:{model_name}')"
+        )
     
-
-    # check model-specific backends
-    for backend, config in PROVIDERS.items():
-        if model_name in config.get("models", []):
-            if is_backend_available(backend):
-                return backend
-
-    # special handling for AWS/Bedrock vs Anthropic
-    if model_name in ANTHROPIC_MODEL_NAMES:
-        if os.getenv("PREFER_BEDROCK") or os.getenv("AWS_SECRET_ACCESS_KEY"):
-            return "bedrock"
-        if os.getenv("ANTHROPIC_API_KEY"):
-            return "anthropic"
-        # fallback to bedrock for non-trivial AWS configs
-        return "bedrock"
-
-    # fallback logic for unknown models
-    if os.getenv("OPENROUTER_API_KEY"):
-        return "openrouter"
-
-    if os.getenv("OLLAMA_HOST") or os.getenv("OLLAMA_API_BASE"):
-        return "ollama"
-
-    # default to ollama for unknown models
-    return "ollama"
-
-
-def is_known_model(model_name: str) -> bool:
-    """Check if a model name is in any of our known model lists."""
-    all_known_models = (
-        ANTHROPIC_MODEL_NAMES
-        + GEMINI_MODEL_NAMES
-        + OLLAMA_MODEL_NAMES
-        + OPENROUTER_MODEL_NAMES
-    )
-    return model_name in all_known_models
+    backend, _ = model_name.split(":", 1)
+    if backend not in PROVIDERS:
+        raise ValueError(f"Unknown backend '{backend}' in model specification '{model_name}'")
+    
+    # check if backend has required env vars
+    config = PROVIDERS[backend]
+    required_vars = config.get("env_vars", [])
+    
+    if required_vars:
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        if missing_vars:
+            if backend == "bedrock":
+                # special case for AWS which has multiple auth methods
+                # PREFER_BEDROCK indicates AWS credentials are configured via other means (IAM role, etc)
+                if not os.getenv("PREFER_BEDROCK"):
+                    raise ValueError(
+                        f"Backend '{backend}' requires AWS credentials or PREFER_BEDROCK to be configured"
+                    )
+            else:
+                raise ValueError(
+                    f"Backend '{backend}' requires environment variable(s): {', '.join(missing_vars)}"
+                )
+    
+    return backend
 
 
 def get_model_mapping(model_name: str, backend: str) -> str:
-    """Get the backend-specific model name mapping.
+    """Extract the model part from backend:model format.
     
-    Handles backend:model format by extracting just the model part.
+    Examples:
+    - "anthropic:claude-sonnet" → "claude-sonnet"
+    - "lmstudio:http://localhost:1234" → "model"
+    - "ollama:phi4" → "phi4"
     """
-    from llm.models_config import MODELS_MAP
-    
     # extract model name if backend:model format is used
     if ":" in model_name:
         _, model_part = model_name.split(":", 1)
         # for lmstudio, if model_part is a URL, use a default model name
         if backend == "lmstudio" and (model_part.startswith("http://") or model_part.startswith("https://")):
-            model_name = "model"  # lmstudio doesn't care about model name
-        else:
-            model_name = model_part
-
-    # if model has a specific mapping for this backend, use it
-    if model_name in MODELS_MAP:
-        model_config = MODELS_MAP[model_name]
-        if backend in model_config:
-            return model_config[backend]
-
-    # for backends that accept any model, return as-is
-    config = PROVIDERS.get(backend, {})
-    if config.get("accepts_any_model"):
-        return model_name
-
-    raise ValueError(f"Model {model_name} not supported on backend {backend}")
+            return "model"  # lmstudio doesn't care about model name
+        return model_part
+    
+    # shouldn't happen with new format but handle gracefully
+    return model_name

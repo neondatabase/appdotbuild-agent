@@ -273,12 +273,8 @@ class OpenRouterLLM:
 
         try:
             logger.info(
-                f"OpenRouter request - model: {chosen_model}, temperature: {temperature}, max_tokens: {max_tokens}"
+                f"OpenRouter request - model: {chosen_model}, temperature: {temperature}, max_tokens: {max_tokens}, tools: {len(openai_tools) if openai_tools else 0}"
             )
-            if openai_tools:
-                logger.info(
-                    f"OpenRouter request includes {len(openai_tools)} tools: {[tool['function']['name'] for tool in openai_tools]}"
-                )
             if tool_choice:
                 logger.info(
                     f"OpenRouter request with forced tool choice: {tool_choice}"
