@@ -566,6 +566,7 @@ dependencies = [
     { name = "fire" },
     { name = "google-genai" },
     { name = "jinja2" },
+    { name = "ollama" },
     { name = "openai" },
     { name = "patch-ng" },
     { name = "polars" },
@@ -588,9 +589,6 @@ dev = [
     { name = "ruff" },
     { name = "streamlit" },
 ]
-ollama = [
-    { name = "ollama" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -605,6 +603,7 @@ requires-dist = [
     { name = "fire", specifier = ">=0.7.0" },
     { name = "google-genai", specifier = ">=1.18.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "ollama", specifier = ">=0.5.1" },
     { name = "openai", specifier = ">=1.68.2" },
     { name = "patch-ng", specifier = ">=1.17.4" },
     { name = "polars", specifier = ">=1.31.0" },
@@ -627,7 +626,6 @@ dev = [
     { name = "ruff", specifier = ">=0.11.5" },
     { name = "streamlit", specifier = ">=1.45.1" },
 ]
-ollama = [{ name = "ollama", specifier = ">=0.5.1" }]
 
 [[package]]
 name = "gitdb"

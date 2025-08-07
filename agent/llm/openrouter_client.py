@@ -22,8 +22,6 @@ class OpenRouterLLM:
         base_url: str = "https://openrouter.ai/api/v1",
         model_name: str = "openai/gpt-4o-mini",
         api_key: str | None = None,
-        site_url: str | None = None,
-        site_name: str | None = None,
     ):
         # use provided API key or get from environment
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
@@ -32,17 +30,9 @@ class OpenRouterLLM:
                 "OpenRouter API key required. Set OPENROUTER_API_KEY environment variable."
             )
 
-        # configure headers for app attribution if provided
-        headers = {}
-        if site_url:
-            headers["HTTP-Referer"] = site_url
-        if site_name:
-            headers["X-Title"] = site_name
-
         self.client = AsyncOpenAI(
             base_url=base_url,
             api_key=self.api_key,
-            default_headers=headers if headers else None,
         )
         self.model_name = model_name
         self.default_model = model_name
@@ -332,7 +322,16 @@ class OpenRouterLLM:
             return completion
 
         except Exception as e:
-            logger.error(f"OpenRouter API error: {e}")
+            error_msg = str(e)
+            # enhance error message for tool use failures
+            if "tool use" in error_msg.lower() or "404" in error_msg:
+                logger.error(
+                    f"OpenRouter API error for model '{chosen_model}': {error_msg}\n"
+                    f"Note: Model '{chosen_model}' may not support tool use. "
+                    f"Consider using a different model or disabling tools for this request."
+                )
+            else:
+                logger.error(f"OpenRouter API error for model '{chosen_model}': {error_msg}")
             raise
 
 

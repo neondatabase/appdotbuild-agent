@@ -13,10 +13,7 @@ from llm.models_config import (
     OPENROUTER_MODEL_NAMES,
 )
 
-try:
-    from llm.ollama_client import OllamaLLM
-except ImportError:
-    OllamaLLM = None
+from llm.ollama_client import OllamaLLM
 
 
 PROVIDERS: Dict[str, Dict[str, Any]] = {
@@ -73,18 +70,19 @@ def is_backend_available(backend: str) -> bool:
 
 
 def get_backend_for_model(model_name: str) -> str:
-    """Determine the best backend for a given model name."""
-    # explicit backend preferences via environment variables
-    if os.getenv("PREFER_LMSTUDIO"):
-        return "lmstudio"
-
-    if os.getenv("PREFER_OLLAMA"):
-        # ollama can handle both known and unknown models
-        if model_name in OLLAMA_MODEL_NAMES or not is_known_model(model_name):
-            return "ollama"
-
-    if os.getenv("PREFER_OPENROUTER") and is_backend_available("openrouter"):
-        return "openrouter"
+    """Determine the best backend for a given model name.
+    
+    Supports backend:model format:
+    - openrouter:deepseek/deepseek-coder
+    - lmstudio:local-model
+    - ollama:phi4
+    """
+    # check if model_name contains backend specification
+    if ":" in model_name:
+        backend, _ = model_name.split(":", 1)
+        if backend in PROVIDERS:
+            return backend
+    
 
     # check model-specific backends
     for backend, config in PROVIDERS.items():
@@ -105,21 +103,11 @@ def get_backend_for_model(model_name: str) -> str:
     if os.getenv("OPENROUTER_API_KEY"):
         return "openrouter"
 
-    if os.getenv("LMSTUDIO_HOST") or os.getenv("PREFER_LMSTUDIO"):
-        return "lmstudio"
-
     if os.getenv("OLLAMA_HOST") or os.getenv("OLLAMA_API_BASE"):
         return "ollama"
 
-    # default to ollama for unknown models if available
-    if OllamaLLM is not None:
-        return "ollama"
-
-    raise ValueError(
-        f"No backend available for model: {model_name}. "
-        f"Set one of: ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, "
-        f"or configure Ollama/LMStudio."
-    )
+    # default to ollama for unknown models
+    return "ollama"
 
 
 def is_known_model(model_name: str) -> bool:
@@ -134,8 +122,20 @@ def is_known_model(model_name: str) -> bool:
 
 
 def get_model_mapping(model_name: str, backend: str) -> str:
-    """Get the backend-specific model name mapping."""
+    """Get the backend-specific model name mapping.
+    
+    Handles backend:model format by extracting just the model part.
+    """
     from llm.models_config import MODELS_MAP
+    
+    # extract model name if backend:model format is used
+    if ":" in model_name:
+        _, model_part = model_name.split(":", 1)
+        # for lmstudio, if model_part is a URL, use a default model name
+        if backend == "lmstudio" and (model_part.startswith("http://") or model_part.startswith("https://")):
+            model_name = "model"  # lmstudio doesn't care about model name
+        else:
+            model_name = model_part
 
     # if model has a specific mapping for this backend, use it
     if model_name in MODELS_MAP:

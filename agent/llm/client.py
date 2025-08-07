@@ -10,10 +10,6 @@ from log import get_logger
 
 logger = get_logger(__name__)
 
-try:
-    from llm.ollama_client import OllamaLLM
-except ImportError:
-    OllamaLLM = None
 
 
 def create_client(
@@ -56,11 +52,6 @@ def create_client(
             return client_class(model_name=mapped_model, **client_params)
 
         case "ollama":
-            if client_class is None:
-                raise ValueError(
-                    "Ollama backend requires ollama package. Install with: uv sync --group ollama"
-                )
-
             # use OLLAMA_HOST/OLLAMA_API_BASE env vars or default
             host = (
                 os.getenv("OLLAMA_HOST")
@@ -70,10 +61,18 @@ def create_client(
             return client_class(host=host, model_name=mapped_model)
 
         case "lmstudio":
-            # use LMSTUDIO_HOST env var or default
-            base_url = os.getenv("LMSTUDIO_HOST") or client_params.get(
-                "base_url", "http://localhost:1234/v1"
-            )
+            # check if model_name contains host (e.g., lmstudio:http://localhost:1234)
+            if ":" in model_name and model_name.startswith("lmstudio:"):
+                _, host_part = model_name.split(":", 1)
+                # if host_part looks like a URL, use it as base_url
+                if host_part.startswith("http://") or host_part.startswith("https://"):
+                    base_url = host_part if "/v1" in host_part else f"{host_part}/v1"
+                else:
+                    # otherwise use default
+                    base_url = client_params.get("base_url", "http://localhost:1234/v1")
+            else:
+                # use default
+                base_url = client_params.get("base_url", "http://localhost:1234/v1")
             return client_class(base_url=base_url, model_name=mapped_model)
 
         case "openrouter":
@@ -84,17 +83,9 @@ def create_client(
                     "OpenRouter backend requires OPENROUTER_API_KEY environment variable"
                 )
 
-            # optional app attribution
-            site_url = os.getenv("OPENROUTER_SITE_URL") or client_params.get("site_url")
-            site_name = os.getenv("OPENROUTER_SITE_NAME") or client_params.get(
-                "site_name"
-            )
-
             return client_class(
                 model_name=mapped_model,
                 api_key=api_key,
-                site_url=site_url,
-                site_name=site_name,
             )
 
         case _:
