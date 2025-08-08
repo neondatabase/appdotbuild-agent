@@ -1,0 +1,23 @@
+id: prohibit-mock-data
+language: python
+message: |
+  Do not generate mock, dummy, or sample data. Always use real data sources.
+  Connect to actual database tables or external APIs for data.
+  
+  Use DataSourceService or query real database tables instead.
+severity: error
+rule:
+  # Match variable assignments with mock/dummy/fake/test prefixes containing lists
+  any:
+    - pattern: |
+        $VAR = [$$$]
+      has:
+        regex: '^(mock|dummy|sample|test|fake|demo|example)_'
+        inside:
+          pattern: $VAR
+    - pattern: |
+        $VAR = {$$$}
+      has:
+        regex: '^(mock|dummy|sample|test|fake|demo|example)_'
+        inside:
+          pattern: $VAR

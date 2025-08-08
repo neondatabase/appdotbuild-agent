@@ -12,22 +12,37 @@ T = TypeVar("T", bound="DatabricksModel")
 
 def execute_databricks_query(query: str) -> List[Dict[str, Any]]:
     """helper function to execute SQL query via WorkspaceClient"""
-    client = WorkspaceClient()
+    import os
+    
+    # Check if credentials are configured
+    if not os.getenv("DATABRICKS_HOST") or not os.getenv("DATABRICKS_TOKEN"):
+        logger.warning("Databricks credentials not configured. Returning empty result.")
+        return []
+    
+    try:
+        client = WorkspaceClient()
+    except Exception as e:
+        logger.error(f"Failed to initialize Databricks client: {e}")
+        return []
 
     # use warehouse to execute query
-    running_warehouses = [x for x in client.warehouses.list() if x.state == State.RUNNING]
-    if not running_warehouses:
-        warehouse = list(client.warehouses.list())[0]
-    else:
-        warehouse = running_warehouses[0]
+    try:
+        running_warehouses = [x for x in client.warehouses.list() if x.state == State.RUNNING]
+        if not running_warehouses:
+            warehouse = list(client.warehouses.list())[0]
+        else:
+            warehouse = running_warehouses[0]
 
-    if warehouse.id is None:
-        raise RuntimeError("Warehouse ID is None")
+        if warehouse.id is None:
+            raise RuntimeError("Warehouse ID is None")
 
-    logger.info(f"Executing query {query.replace('\n', '\t')} on warehouse: {warehouse.id}")
-    execution = client.statement_execution.execute_statement(
-        warehouse_id=warehouse.id, statement=query, wait_timeout="30s"
-    )
+        logger.info(f"Executing query {query.replace('\n', '\t')} on warehouse: {warehouse.id}")
+        execution = client.statement_execution.execute_statement(
+            warehouse_id=warehouse.id, statement=query, wait_timeout="30s"
+        )
+    except Exception as e:
+        logger.error(f"Failed to execute Databricks query: {e}")
+        return []
 
     if execution.status is None:
         raise RuntimeError("Execution status is None")

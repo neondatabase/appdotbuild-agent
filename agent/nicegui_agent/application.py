@@ -139,6 +139,14 @@ class FSMApplication:
         """Create the state machine for the application"""
         states = await cls.make_states(client, settings)
         context = ApplicationContext(user_prompt=user_prompt)
+        
+        # If initial_files are provided in settings (edit mode), load them into context
+        if settings and "initial_files" in settings:
+            initial_files = settings["initial_files"]
+            if isinstance(initial_files, dict):
+                context.files.update(initial_files)
+                logger.info(f"Loaded {len(initial_files)} initial files into FSM context")
+        
         fsm = StateMachine[ApplicationContext, FSMEvent](states, context)
         await fsm.send(FSMEvent("CONFIRM"))  # confirm running first stage immediately
         return cls(client, fsm)

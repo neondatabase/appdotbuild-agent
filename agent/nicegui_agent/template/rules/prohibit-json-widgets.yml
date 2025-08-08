@@ -1,0 +1,21 @@
+id: prohibit-json-widgets
+language: python
+message: |
+  Do not create widgets with static JSON data. Widgets must use real data sources from database or external APIs.
+  Use DataSourceService or widget_tools to connect widgets to real data.
+  
+  Instead of:
+    config = {"data": [1, 2, 3]}  # Static data
+  
+  Use:
+    data_source = {
+        "type": "query",
+        "query": "SELECT value FROM metrics"
+    }
+severity: error
+rule:
+  # Match config dictionaries containing list literals
+  pattern: |
+    config = {$$$}
+  has:
+    kind: list
