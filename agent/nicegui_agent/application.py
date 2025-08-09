@@ -7,6 +7,7 @@ from typing import Dict, Self, Optional, Literal, Any
 from dataclasses import dataclass
 from core.statemachine import StateMachine, State, Context
 from core.application import BaseApplicationContext
+from core.dagger_utils import write_files_bulk
 from llm.utils import get_best_coding_llm_client, get_universal_llm_client
 from llm.alloy import AlloyLLM
 from core.actors import BaseData
@@ -493,11 +494,7 @@ class FSMApplication:
             logger.info(
                 f"SERVER get_diff_with: Snapshot sample paths (up to 5): {sorted_snapshot_keys[:5]}"
             )
-            with tempfile.TemporaryDirectory() as temp_dir:
-                for file_path, content in snapshot.items():
-                    start = start.with_new_file(file_path, content)
-                start = start.with_directory(".", self.client.host().directory(temp_dir))
-                await start.sync()
+            start = await write_files_bulk(start, snapshot, self.client)
             start = start.with_exec(["git", "add", "."]).with_exec(
                 ["git", "commit", "-m", "'snapshot'"]
             )
@@ -516,8 +513,7 @@ class FSMApplication:
         logger.info("SERVER get_diff_with: Added template directory to workspace")
 
         # Add FSM context files on top
-        for file_path, content in self.fsm.context.files.items():
-            start = start.with_new_file(file_path, content)
+        start = await write_files_bulk(start, self.fsm.context.files, self.client)
 
         logger.info(
             "SERVER get_diff_with: Calling workspace.diff() to generate final diff."
