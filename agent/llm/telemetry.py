@@ -25,7 +25,7 @@ class LLMTelemetry:
         temperature: Optional[float] = None,
         has_tools: bool = False,
         provider: Optional[str] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """
         Log LLM completion telemetry in a consistent format.

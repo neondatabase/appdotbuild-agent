@@ -15,27 +15,30 @@ async def generate_app_name(prompt: str, llm_client: AsyncLLM) -> str:
         logger.info(f"Generating app name from prompt: {prompt[:50]}...")
 
         messages = [
-            Message(role="user", content=[
-                TextRaw(f"""Based on this application description, generate a short, concise name suitable for use as a GitHub repository name.
+            Message(
+                role="user",
+                content=[
+                    TextRaw(f"""Based on this application description, generate a short, concise name suitable for use as a GitHub repository name.
 The name should be lowercase with words separated by hyphens (kebab-case) and should not include any special characters.
 Application description: "{prompt}"
 Return ONLY the name, nothing else.""")
-            ])
+                ],
+            )
         ]
 
         completion = await llm_client.completion(
-            messages=messages,
-            max_tokens=50,
-            temperature=0.7
+            messages=messages, max_tokens=50, temperature=0.7
         )
 
         generated_name = ""
         for block in completion.content:
             if isinstance(block, TextRaw):
-                name = block.text.strip().strip('"\'').lower()
-                name = re.sub(r'[^a-z0-9\-]', '-', name.replace(' ', '-').replace('_', '-'))
-                name = re.sub(r'-+', '-', name)
-                name = name.strip('-')
+                name = block.text.strip().strip("\"'").lower()
+                name = re.sub(
+                    r"[^a-z0-9\-]", "-", name.replace(" ", "-").replace("_", "-")
+                )
+                name = re.sub(r"-+", "-", name)
+                name = name.strip("-")
                 generated_name = name
                 break
 
@@ -56,24 +59,25 @@ async def generate_commit_message(user_request: str, llm_client: AsyncLLM) -> st
         logger.info(f"Generating commit message from prompt: {user_request[:50]}...")
 
         messages = [
-            Message(role="user", content=[
-                TextRaw(f"""Based on this user request,
+            Message(
+                role="user",
+                content=[
+                    TextRaw(f"""Based on this user request,
 generate a concise Git commit message that follows best practices.
 The message should be clear, descriptive, and follow conventional commit format.
 User request: "{user_request}"
 Return ONLY the commit message, nothing else.""")
-            ])
+                ],
+            )
         ]
         completion = await llm_client.completion(
-            messages=messages,
-            max_tokens=100,
-            temperature=0.7
+            messages=messages, max_tokens=100, temperature=0.7
         )
 
         commit_message = ""
         for block in completion.content:
             if isinstance(block, TextRaw):
-                message = block.text.strip().strip('"\'')
+                message = block.text.strip().strip("\"'")
                 commit_message = message
                 break
 
@@ -85,4 +89,4 @@ Return ONLY the commit message, nothing else.""")
         return commit_message
     except Exception as e:
         logger.exception(f"Error generating commit message: {e}")
-        return "Initial commit" 
+        return "Initial commit"

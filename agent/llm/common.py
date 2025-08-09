@@ -1,6 +1,17 @@
-from typing import Literal, Protocol, Self, Iterable, TypedDict, TypeAlias, Union, Required, NotRequired
+from typing import (
+    Literal,
+    Protocol,
+    Self,
+    Iterable,
+    TypedDict,
+    TypeAlias,
+    Union,
+    Required,
+    NotRequired,
+)
 from dataclasses import dataclass
 import hashlib
+
 
 @dataclass
 class TextRaw:
@@ -33,7 +44,9 @@ class ToolUseResult:
     tool_result: ToolResult
 
     @classmethod
-    def from_tool_use(cls, tool_use: ToolUse, content: str, is_error: bool | None = None) -> "ToolUseResult":
+    def from_tool_use(
+        cls, tool_use: ToolUse, content: str, is_error: bool | None = None
+    ) -> "ToolUseResult":
         return cls(tool_use, ToolResult(content, tool_use.id, tool_use.name, is_error))
 
 
@@ -49,7 +62,9 @@ class AttachedFiles:
         return self._cache_key
 
 
-ContentBlock: TypeAlias = Union[TextRaw, ToolUse, ToolUseResult, ThinkingBlock]
+ContentBlock: TypeAlias = Union[
+    TextRaw, ToolUse, ToolUseResult, ThinkingBlock, ToolResult
+]
 
 
 def dump_content(content: Iterable[ContentBlock]) -> list[dict]:
@@ -59,23 +74,27 @@ def dump_content(content: Iterable[ContentBlock]) -> list[dict]:
             case TextRaw(text):
                 result.append({"type": "text", "text": text})
             case ToolUse(name, input, id):
-                result.append({"type": "tool_use", "name": name, "input": input, "id": id})
+                result.append(
+                    {"type": "tool_use", "name": name, "input": input, "id": id}
+                )
             case ThinkingBlock(thinking):
                 result.append({"type": "thinking", "thinking": thinking})
             case ToolUseResult(tool_use, tool_result):
-                result.append({
-                    "type": "tool_use_result",
-                    "tool_use": {
-                        "name": tool_use.name,
-                        "input": tool_use.input,
-                        "id": tool_use.id,
-                    },
-                    "tool_result": {
-                        "content": tool_result.content,
-                        "name": tool_result.name,
-                        "is_error": tool_result.is_error,
-                    },
-                })
+                result.append(
+                    {
+                        "type": "tool_use_result",
+                        "tool_use": {
+                            "name": tool_use.name,
+                            "input": tool_use.input,
+                            "id": tool_use.id,
+                        },
+                        "tool_result": {
+                            "content": tool_result.content,
+                            "name": tool_result.name,
+                            "is_error": tool_result.is_error,
+                        },
+                    }
+                )
     return result
 
 
@@ -89,11 +108,21 @@ def load_content(data: list[dict]) -> list[ContentBlock]:
                 content.append(ToolUse(name, input, id))
             case {"type": "thinking", "thinking": thinking}:
                 content.append(ThinkingBlock(thinking))
-            case {"type": "tool_use_result", "tool_use": tool_use, "tool_result": tool_result}:
-                content.append(ToolUseResult(
-                    ToolUse(tool_use["name"], tool_use["input"], tool_use["id"]),
-                    ToolResult(tool_result["content"], tool_result["name"], tool_result["is_error"])
-                ))
+            case {
+                "type": "tool_use_result",
+                "tool_use": tool_use,
+                "tool_result": tool_result,
+            }:
+                content.append(
+                    ToolUseResult(
+                        ToolUse(tool_use["name"], tool_use["input"], tool_use["id"]),
+                        ToolResult(
+                            tool_result["content"],
+                            tool_result["name"],
+                            tool_result["is_error"],
+                        ),
+                    )
+                )
             case _:
                 raise ValueError(f"Unknown block type in content: {block}")
     return content
@@ -118,7 +147,9 @@ class Completion:
     content: Iterable[ContentBlock]
     input_tokens: int
     output_tokens: int
-    stop_reason: Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "unknown"]
+    stop_reason: Literal[
+        "end_turn", "max_tokens", "stop_sequence", "tool_use", "unknown"
+    ]
     thinking_tokens: int | None = None
 
     def to_dict(self) -> dict:
@@ -157,6 +188,7 @@ Message = InternalMessage
 # Async LLM protocol
 # ----------------------------------
 
+
 class AsyncLLM(Protocol):
     async def completion(
         self,
@@ -169,5 +201,4 @@ class AsyncLLM(Protocol):
         system_prompt: str | None = None,
         *args,
         **kwargs,
-    ) -> Completion:
-        ...
+    ) -> Completion: ...

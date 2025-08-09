@@ -5,7 +5,7 @@ from llm.common import AsyncLLM, Message, Tool, Completion
 class LangfuseLLM(AsyncLLM):
     def __init__(self, client: AsyncLLM):
         self.client = client
-    
+
     @observe(as_type="generation", name="AsyncLLM-generation")
     async def completion(
         self,
@@ -35,13 +35,13 @@ class LangfuseLLM(AsyncLLM):
             tools=tools,
             tool_choice=tool_choice,
             *args,
-            **kwargs
+            **kwargs,
         )
         langfuse_context.update_current_observation(
             output=completion,
             usage={
                 "input": completion.input_tokens,
                 "output": completion.output_tokens,
-            }
+            },
         )
         return completion

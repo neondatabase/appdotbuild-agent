@@ -1,7 +1,6 @@
 import os
 import anyio
 import logging
-import tempfile
 import enum
 from typing import Dict, Self, Optional, Literal, Any
 from dataclasses import dataclass
@@ -162,7 +161,7 @@ class FSMApplication:
             vlm=vlm,
             workspace=workspace.clone(),
             beam_width=settings.get("beam_width", 1) if settings else 1,
-            max_depth=settings.get("max_depth", 20) if settings else 20,
+            max_depth=settings.get("max_depth", 50) if settings else 50,
             event_callback=event_callback,
         )
 

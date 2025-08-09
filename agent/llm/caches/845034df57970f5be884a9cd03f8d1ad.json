@@ -1,0 +1,235 @@
+{
+  "ff429864e93a38fb72c20e3a94a90282": {
+    "data": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I am a large language model, trained by Google."
+        }
+      ],
+      "input_tokens": 7,
+      "output_tokens": 11,
+      "stop_reason": "end_turn",
+      "thinking_tokens": null
+    },
+    "params": {
+      "max_tokens": 512,
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "Hello, what are you?",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "temperature": 1.0,
+      "tool_choice": null,
+      "tools": null
+    }
+  },
+  "4b83a6f1958bcb753f18b774325a1dda": {
+    "data": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "simple-counter-app"
+        }
+      ],
+      "input_tokens": 104,
+      "output_tokens": 5,
+      "stop_reason": "end_turn",
+      "thinking_tokens": null
+    },
+    "params": {
+      "max_tokens": 50,
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "Based on this application description, generate a short, concise name suitable for use as a GitHub repository name.\nThe name should be lowercase with words separated by hyphens (kebab-case) and should not include any special characters.\nApplication description: \"A web application with a single button. Each time the button is clicked, a counter increments. The current value of the counter is displayed on the page. The counter value must be persistently stored in a database.\"\nReturn ONLY the name, nothing else.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "temperature": 0.7,
+      "tool_choice": null,
+      "tools": null
+    }
+  },
+  "95810a60631ffd58d8273f0036db75ec": {
+    "data": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "feat: Implement core functionality as requested"
+        }
+      ],
+      "input_tokens": 59,
+      "output_tokens": 7,
+      "stop_reason": "end_turn",
+      "thinking_tokens": null
+    },
+    "params": {
+      "max_tokens": 100,
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "Based on this user request,\ngenerate a concise Git commit message that follows best practices.\nThe message should be clear, descriptive, and follow conventional commit format.\nUser request: \"just do it! no more questions, please\"\nReturn ONLY the commit message, nothing else.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "temperature": 0.7,
+      "tool_choice": null,
+      "tools": null
+    }
+  },
+  "d7e9be10c4a2e3ba85d507fbb49aebc6": {
+    "data": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "feat: Add fun message with emojis to app \ud83c\udf89"
+        }
+      ],
+      "input_tokens": 62,
+      "output_tokens": 10,
+      "stop_reason": "end_turn",
+      "thinking_tokens": null
+    },
+    "params": {
+      "max_tokens": 100,
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "Based on this user request,\ngenerate a concise Git commit message that follows best practices.\nThe message should be clear, descriptive, and follow conventional commit format.\nUser request: \"Add message with emojis to the app to make it more fun\"\nReturn ONLY the commit message, nothing else.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "temperature": 0.7,
+      "tool_choice": null,
+      "tools": null
+    }
+  },
+  "1f10c6f5332fe41e1b11ef75a5c7d229": {
+    "data": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "click-counter-app"
+        }
+      ],
+      "input_tokens": 105,
+      "output_tokens": 5,
+      "stop_reason": "end_turn",
+      "thinking_tokens": null
+    },
+    "params": {
+      "max_tokens": 50,
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "Based on this application description, generate a short, concise name suitable for use as a GitHub repository name.\nThe name should be lowercase with words separated by hyphens (kebab-case) and should not include any special characters.\nApplication description: \"A simple web application with a single button. When the button is clicked, a counter on the page should increment and the updated count should be persistently stored in a database. The page should display the current click count.\"\nReturn ONLY the name, nothing else.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "temperature": 0.7,
+      "tool_choice": null,
+      "tools": null
+    }
+  },
+  "6473578121650dbcd6d195aa3d749f4e": {
+    "data": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "<reason>The screenshot shows a \"Click Counter\" with a message \"Loading counter...\". The console logs indicate a \"500 Internal Server Error\" and TRPCClientError with messages about unexpected end of JSON input or string not matching expected pattern. These errors point to a backend issue (as stated in the prompt, the backend is not implemented), which prevents the frontend from fetching and displaying the counter value. The frontend itself appears to be correctly structured to display a counter and handle button clicks, but it's blocked by backend errors.<\/reason>\n<answer>yes<\/answer>"
+        }
+      ],
+      "input_tokens": 1125,
+      "output_tokens": 120,
+      "stop_reason": "end_turn",
+      "thinking_tokens": null
+    },
+    "params": {
+      "attach_files": "d41d8cd98f00b204e9800998ecf8427e1",
+      "max_tokens": 1024,
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "Given the attached screenshot, decide where the frontend code is correct and relevant to the original prompt. Keep in mind that the backend is currently not implemented, so you can only validate the frontend code and ignore the backend part.\nOriginal prompt to generate this website: A simple web application with a single button. When the button is clicked, a counter on the page should increment and the updated count should be persistently stored in a database. The page should display the current click count..\n\nConsole logs from the browsers:\n\nchromium:\n[debug] [vite] connecting...\n[debug] [vite] connected.\n[info] %cDownload the React DevTools for a better development experience: https:\/\/react.dev\/link\/react-devtools font-weight:bold\n[error] Failed to load resource: the server responded with a status of 500 (Internal Server Error)\n[error] Failed to load counter: TRPCClientError: Failed to execute 'json' on 'Response': Unexpected end of JSON input\n    at _TRPCClientError.from (http:\/\/debughost:5173\/node_modules\/.vite\/deps\/@trpc_client.js?v=)\n    at http:\/\/debughost:5173\/node_modules\/.vite\/deps\/@trpc_client.js?v=\n[error] Failed to load counter: TRPCClientError: Failed to execute 'json' on 'Response': Unexpected end of JSON input\n    at _TRPCClientError.from (http:\/\/debughost:5173\/node_modules\/.vite\/deps\/@trpc_client.js?v=)\n    at http:\/\/debughost:5173\/node_modules\/.vite\/deps\/@trpc_client.js?v=\nwebkit:\n[debug] [vite] connecting...\n[debug] [vite] connected.\n[error] Failed to load resource: the server responded with a status of 500 (Internal Server Error)\n[error] Failed to load counter: TRPCClientError: The string did not match the expected pattern.\n[error] Failed to load counter: TRPCClientError: The string did not match the expected pattern.\n\nAnswer \"yes\" or \"no\" wrapped in <answer> tag. Explain error in logs if it exists. Follow the example below.\n\nExample 1:\n<reason>the website looks valid<\/reason>\n<answer>yes<\/answer>\n\nExample 2:\n<reason>there is nothing on the screenshot, rendering issue caused by unhandled empty collection in the react component<\/reason>\n<answer>no<\/answer>\n\nExample 3:\n<reason>the website looks okay, but displays database connection error. Given it is not frontend-related, I should answer yes<\/reason>\n<answer>yes<\/answer>",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "temperature": 1.0,
+      "tool_choice": null,
+      "tools": null
+    }
+  },
+  "cd415e9914f15f0ea4faa29c1729836e": {
+    "data": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "<reason>The screenshot shows a \"Click Counter\" application with a button and a displayed count of 0. The console logs indicate that the application is connected and running without any errors. There's no information in the logs or screenshot to suggest a database connection failure or any other functional issue. Therefore, based on the provided information, the app appears to be working correctly according to the prompt.<\/reason>\n<answer>yes<\/answer>"
+        }
+      ],
+      "input_tokens": 797,
+      "output_tokens": 90,
+      "stop_reason": "end_turn",
+      "thinking_tokens": null
+    },
+    "params": {
+      "attach_files": "d41d8cd98f00b204e9800998ecf8427e1",
+      "max_tokens": 1024,
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "Given the attached screenshot and browser logs, decide where the app is correct and working.\n User prompt: A simple web application with a single button. When the button is clicked, a counter on the page should increment and the updated count should be persistently stored in a database. The page should display the current click count. \nConsole logs from the browsers:\n\nchromium:\n[debug] [vite] connecting...\n[debug] [vite] connected.\n[info] %cDownload the React DevTools for a better development experience: https:\/\/react.dev\/link\/react-devtools font-weight:bold\nwebkit:\n[debug] [vite] connecting...\n[debug] [vite] connected.\n\nAnswer \"yes\" or \"no\" wrapped in <answer> tag. Explain error in logs if it exists. Follow the example below.\n\nExample 1:\n<reason>the website looks okay, but displays database connection error. Given we evaluate full app, I should answer no<\/reason>\n<answer>no<\/answer>\n\nExample 2:\n<reason>there is nothing on the screenshot, rendering issue caused by unhandled empty collection in the react component<\/reason>\n<answer>no<\/answer>\n\nExample 3:\n<reason>the website looks valid<\/reason>\n<answer>yes<\/answer>",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": null,
+      "temperature": 1.0,
+      "tool_choice": null,
+      "tools": null
+    }
+  }
+}

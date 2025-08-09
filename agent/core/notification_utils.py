@@ -48,9 +48,9 @@ async def notify_stage(
     if status == "in_progress":
         message = f"{stage}..."
     elif status == "completed":
-        message = f"✓ {stage}"
+        message = f"{stage}"
     elif status == "failed":
-        message = f"✗ {stage}"
+        message = f"{stage}"
     else:
         message = f"{stage}"
 

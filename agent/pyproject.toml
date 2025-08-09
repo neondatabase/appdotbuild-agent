@@ -1,7 +1,7 @@
 [project]
 name = "fullstack-agent"
 version = "0.1.0"
-description = "Opinionated Tanstack codegen agent."
+description = "Opinionated prompt-to-app AI agent."
 requires-python = ">=3.12"
 dependencies = [
     "anthropic[bedrock]>=0.49.0",
@@ -22,6 +22,8 @@ dependencies = [
     "brotli-asgi>=1.4.0",
     "python-dotenv>=1.1.0",
     "polars>=1.31.0",
+    "openai>=1.68.2",
+    "ollama>=0.5.1",
 ]
 
 [build-system]
@@ -79,6 +81,3 @@ dev = [
     "pyright>=1.1.400",
     "streamlit>=1.45.1",
 ]
-google = ["google-genai>=1.7.0"]
-openai = ["openai>=1.68.2"]
-ollama = ["ollama>=0.5.1"]

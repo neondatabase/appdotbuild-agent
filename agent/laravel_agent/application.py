@@ -1,6 +1,5 @@
 import os
 import anyio
-import tempfile
 import logging
 import enum
 from typing import Dict, Self, Optional, Literal, Any
