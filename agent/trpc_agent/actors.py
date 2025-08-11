@@ -560,6 +560,11 @@ class TrpcActor(FileOperationsActor):
                 if error := await self.run_build_check(node):
                     errors.append(error)
 
+            async def check_drizzle():
+                if error := await self.run_drizzle_check(node):
+                    errors.append(error)
+
+            tg.start_soon(check_drizzle)
             tg.start_soon(check_backend_tsc)
             tg.start_soon(check_frontend_tsc)
             tg.start_soon(check_tests)
@@ -658,7 +663,7 @@ class TrpcActor(FileOperationsActor):
     async def run_checks(self, node: Node[BaseData], user_prompt: str) -> str | None:
         """Run context-aware validation checks based on node context."""
         context = node.data.context
-        
+
         # Run validation based on context
         match context:
             case "draft":
@@ -672,7 +677,7 @@ class TrpcActor(FileOperationsActor):
             case _:
                 logger.warning(f"Unknown context: {context}, skipping validation")
                 return None  # No validation for unknown context
-        
+
         # If validation failed, extract error message from last message
         if not success and node.data.messages:
             last_msg = node.data.messages[-1]
@@ -686,7 +691,7 @@ class TrpcActor(FileOperationsActor):
                     # Remove the last message as we'll return it as error
                     node.data.messages.pop()
                     return "\n".join(error_texts)
-        
+
         return None if success else "Validation failed"
 
     def _render_prompt(self, template_name: str, **kwargs) -> str:
