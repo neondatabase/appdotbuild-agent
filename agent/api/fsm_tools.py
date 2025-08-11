@@ -8,6 +8,7 @@ from core.application import ApplicationBase
 from llm.utils import AsyncLLM, extract_tag
 from llm.common import InternalMessage, ToolUse, ToolResult as CommonToolResult, ToolUseResult, TextRaw, Tool
 from log import get_logger
+from integrations.analyze_spreadsheet import SpreadsheetAnalyzer
 import ujson as json
 
 logger = get_logger(__name__)
@@ -113,6 +114,20 @@ class FSMToolProcessor:
                 "description": "Finalize and return all generated artifacts from the FSM",
                 "input_schema": {"type": "object", "properties": {}, "required": []},
             },
+            {
+                "name": "analyze_spreadsheet",
+                "description": "Analyze a Google Spreadsheet and generate a technical specification for building a web application",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "spreadsheet_url": {
+                            "type": "string",
+                            "description": "URL or ID of the Google Spreadsheet to analyze",
+                        }
+                    },
+                    "required": ["spreadsheet_url"],
+                },
+            },
         ]
 
         # Map tool names to their implementation methods
@@ -121,6 +136,7 @@ class FSMToolProcessor:
             "confirm_state": self.tool_confirm_state,
             "change": self.tool_change,
             "complete_fsm": self.tool_complete_fsm,
+            "analyze_spreadsheet": self.tool_analyze_spreadsheet,
         }
 
     async def tool_start_fsm(self, app_description: str) -> CommonToolResult:
@@ -233,6 +249,30 @@ class FSMToolProcessor:
         except Exception as e:
             logger.exception(f"Error completing FSM: {str(e)}")
             return CommonToolResult(content=f"Failed to complete FSM: {str(e)}", is_error=True)
+
+    async def tool_analyze_spreadsheet(self, spreadsheet_url: str) -> CommonToolResult:
+        """Tool implementation for analyzing Google Spreadsheets"""
+        try:
+            logger.info(f"Analyzing spreadsheet: {spreadsheet_url}")
+
+            # Create analyzer instance
+            analyzer = SpreadsheetAnalyzer()
+
+            # Fetch spreadsheet data
+            data = analyzer.fetch_spreadsheet_data(spreadsheet_url)
+
+            # Convert to markdown for analysis
+            markdown_data = analyzer.to_markdown(data)
+
+            # Analyze with LLM
+            analysis_result = await analyzer.analyze_with_llm(markdown_data)
+
+            logger.info("Spreadsheet analysis completed successfully")
+            return CommonToolResult(content=analysis_result + "\nPlease use this full description when passing the user's request to FSM")
+
+        except Exception as e:
+            logger.exception(f"Error analyzing spreadsheet: {str(e)}")
+            return CommonToolResult(content=f"Failed to analyze spreadsheet: {str(e)}", is_error=True)
 
     async def compact_thread(self, messages: list[InternalMessage], llm: AsyncLLM) -> list[InternalMessage]:
         last_message = messages[-1]
@@ -413,6 +453,8 @@ The final app is expected to be deployed to the Neon platform or run locally wit
 
 If the user's problem requires a specific integration that is not available, make sure to ask for user's approval to use mock/stub data or a workaround. Once this workaround is explicitly agreed upon, reflect it when starting the FSM session. Otherwise using generated sample data is STRICTLY FORBIDDEN, and agent should require FSM to use real data.
 
+Once there enough details in the conversation, make sure to pass all the relevant information to the FSM when starting it. Include all the user requirements, clarifications, and any other relevant context that can help the FSM generate the correct output. Do not include technical requirements or a small talk you had with the user, these are not relevant. Having a long detailed input for the FSM - once you have it from the conversation - is great and positively impacts the result.
+
 Make sure to appreciate the best software engineering practices, no matter what the user asks. Even stupid requests should be handled professionally.
 Do not consider the work complete until all components have been generated and the complete_fsm tool has been called.""".strip()
 
@@ -443,18 +485,18 @@ async def main(initial_prompt: str = "A simple greeting app that says hello in f
         ]
         # Main interaction loop
         while True:
-            new_messages = await processor.step(current_messages, client, model_params)
+            thread, status, full_thread = await processor.step(current_messages, client, model_params)
 
-            logger.debug(f"New messages: {new_messages}")
-            if new_messages:
-                current_messages += new_messages
+            logger.debug(f"New messages: {thread}")
+            if thread:
+                current_messages = full_thread
 
             logger.info(f"Iteration completed: {len(current_messages) - 1}")
 
             break # Early out until feedback is wired to component name
 
     logger.info("FSM interaction completed successfully")
-    return new_messages
+    return thread
 
 def run_main(initial_prompt: str = "A simple greeting app that says hello in five languages and stores history of greetings"):
     return anyio.run(main, initial_prompt)
