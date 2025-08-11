@@ -463,18 +463,21 @@ class NiceguiActor(FileOperationsActor):
             case _:
                 return await super().handle_custom_tool(tool_use, node)
 
+    def _changed_files(self, node: Node[BaseData]) -> list[str]:
+        return [path for path in node.data.files.keys()]
+
     async def run_type_checks(self, node: Node[BaseData]) -> str | None:
-        type_check_result = await node.data.workspace.exec(
-            ["uv", "run", "pyright", "."]
-        )
+        changed = self._changed_files(node)
+        args = ["uv", "run", "pyright"] + (changed if changed else ["."])
+        type_check_result = await node.data.workspace.exec(args)
         if type_check_result.exit_code != 0:
             return f"{type_check_result.stdout}\n{type_check_result.stderr}"
         return None
 
     async def run_lint_checks(self, node: Node[BaseData]) -> str | None:
-        lint_result = await node.data.workspace.exec(
-            ["uv", "run", "ruff", "check", ".", "--fix"]
-        )
+        changed = self._changed_files(node)
+        args = ["uv", "run", "ruff", "check", "--fix"] + (changed if changed else ["."])
+        lint_result = await node.data.workspace.exec(args)
         if lint_result.exit_code != 0:
             return f"{lint_result.stdout}\n{lint_result.stderr}"
         return None
@@ -499,6 +502,14 @@ class NiceguiActor(FileOperationsActor):
             )
         return None
 
+    async def run_ui_smoke(self, node: Node[BaseData]) -> str | None:
+        ui_smoke = await node.data.workspace.exec_with_pg(
+            ["uv", "run", "pytest", "-k", "test_all_pages_smoke_fast", "-q"]
+        )
+        if ui_smoke.exit_code != 0:
+            return f"UI smoke failed:\n{ui_smoke.stdout}\n{ui_smoke.stderr}"
+        return None
+
     async def run_astgrep_checks(self, node: Node[BaseData]) -> str | None:
         astgrep_result = await node.data.workspace.exec(
             ["uv", "run", "ast-grep", "scan", "app/", "tests/"]
@@ -513,17 +524,15 @@ class NiceguiActor(FileOperationsActor):
         )
 
         all_errors = ""
-        results = {}
+        results: dict[str, str | None] = {}
 
+        # Phase 1: quick checks on changed files + ast-grep
         async with anyio.create_task_group() as tg:
-
             async def run_and_store(key, coro):
-                """Helper to run a coroutine and store its result in the results dict."""
                 start_time = anyio.current_time()
                 try:
                     results[key] = await coro
                 except Exception as e:
-                    # Catch unexpected exceptions during check execution
                     logger.error(f"Error running check {key}: {e}")
                     results[key] = f"Internal error running check {key}: {e}"
                 finally:
@@ -532,25 +541,39 @@ class NiceguiActor(FileOperationsActor):
 
             tg.start_soon(run_and_store, "lint", self.run_lint_checks(node))
             tg.start_soon(run_and_store, "type_check", self.run_type_checks(node))
-            tg.start_soon(run_and_store, "tests", self.run_tests(node))
-            tg.start_soon(run_and_store, "sqlmodel", self.run_sqlmodel_checks(node))
             tg.start_soon(run_and_store, "astgrep", self.run_astgrep_checks(node))
 
-        if lint_result := results.get("lint"):
-            logger.info(f"Lint checks failed: {lint_result}")
-            all_errors += f"Lint errors:\n{lint_result}\n"
-        if type_check_result := results.get("type_check"):
-            logger.info(f"Type checks failed: {type_check_result}")
-            all_errors += f"Type errors:\n{type_check_result}\n"
-        if test_result := results.get("tests"):
-            logger.info(f"Tests failed: {test_result}")
-            all_errors += f"Test errors:\n{test_result}\n"
-        if sqlmodel_result := results.get("sqlmodel"):
-            logger.info(f"SQLModel checks failed: {sqlmodel_result}")
-            all_errors += f"SQLModel errors:\n{sqlmodel_result}\n"
-        if astgrep_result := results.get("astgrep"):
-            logger.info(f"AST-grep checks failed: {astgrep_result}")
-            all_errors += f"Code pattern violations:\n{astgrep_result}\n"
+        for key in ("lint", "type_check", "astgrep"):
+            if results.get(key):
+                err = results[key]
+                logger.info(f"{key} failed: {err}")
+                all_errors += f"{key.replace('_', ' ').title()} errors:\n{err}\n"
+
+        # Phase 2: smoke tests (sqlmodel and UI)
+        if not all_errors:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(run_and_store, "sqlmodel", self.run_sqlmodel_checks(node))
+                tg.start_soon(run_and_store, "ui_smoke", self.run_ui_smoke(node))
+
+            for key in ("sqlmodel", "ui_smoke"):
+                if results.get(key):
+                    err = results[key]
+                    logger.info(f"{key} failed: {err}")
+                    all_errors += f"{key.replace('_', ' ').title()} errors:\n{err}\n"
+
+        # Phase 3: full tests only if smokes passed and milestone condition met
+        models_changed = any(
+            p in {"app/models.py", "app/widget_models.py", "app/database.py"}
+            for p in self._changed_files(node)
+        )
+        milestone = (getattr(node, "depth", 0) or 0) % 5 == 0
+        should_run_full = not all_errors and (models_changed or milestone)
+
+        if should_run_full:
+            full_tests = await self.run_tests(node)
+            if full_tests:
+                logger.info(f"Tests failed: {full_tests}")
+                all_errors += f"Test errors:\n{full_tests}\n"
 
         if all_errors:
             await notify_stage(

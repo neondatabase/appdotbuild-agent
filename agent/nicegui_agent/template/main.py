@@ -2,10 +2,8 @@ import logging
 import os
 from app.startup import startup
 from nicegui import app, ui
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+import os
 
 # configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -17,13 +15,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Content-Security-Policy"] = "default-src 'self' http: https: data: blob: 'unsafe-inline'; frame-ancestors https://app.build/ https://www.app.build/ https://staging.app.build/"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self' http: https: data: blob: 'unsafe-inline' 'unsafe-eval'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "frame-ancestors https://app.build/ https://www.app.build/ https://staging.app.build/"
+        )
         return response
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "nicegui-app"}
+    status = {
+        "status": "healthy",
+        "service": "nicegui-app",
+        "databricks": "configured" if (os.environ.get("DATABRICKS_HOST") and os.environ.get("DATABRICKS_TOKEN")) else "missing",
+    }
+    return status
 
 
 # suppress sqlalchemy engine logs below warning level

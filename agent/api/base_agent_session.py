@@ -1,4 +1,5 @@
 import logging
+import os
 from abc import ABC
 from typing import Dict, Any, Optional, TypedDict, List, Union, Type
 from datetime import datetime
@@ -134,7 +135,13 @@ class BaseAgentSession(AgentInterface, ABC):
                     app_name=metadata["app_name"],
                 )
 
-            fsm_settings = {**self.settings, 'event_callback': emit_intermediate_message}
+            # Merge request.settings into session settings; inject fast mode from env
+            merged_settings = {**self.settings}
+            if request.settings:
+                merged_settings.update(request.settings)
+            if os.environ.get("AGENT_FAST_MODE", "0") == "1":
+                merged_settings["fast"] = True
+            fsm_settings = {**merged_settings, 'event_callback': emit_intermediate_message}
 
             if request.agent_state:
                 logger.info(f"Continuing with existing state for trace {self.trace_id}")
@@ -150,15 +157,24 @@ class BaseAgentSession(AgentInterface, ABC):
                     metadata.update(req_metadata)
             else:
                 logger.info(f"Initializing new session for trace {self.trace_id}")
+                # If we have files from the request but no FSM state, prepare initial files
+                if request.all_files and not fsm_state:
+                    logger.info(f"Initializing with {len(request.all_files)} files from request")
+                    initial_files = {p.path: p.content for p in request.all_files}
+                    # Pass the initial files through settings so FSM can access them
+                    fsm_settings["initial_files"] = initial_files
 
             # Unconditional initialization with event callback
-            self.processor_instance = FSMToolProcessor(self.client, self.fsm_application_class, fsm_app=fsm_app, settings=fsm_settings, event_callback=emit_intermediate_message)
+            self.processor_instance = FSMToolProcessor(self.client, self.fsm_application_class, fsm_app=fsm_app, settings=fsm_settings, event_callback=emit_intermediate_message, initial_files=request.all_files if request.all_files else None)
             agent_state: AgentState = {
                 "fsm_messages": fsm_message_history,
                 "fsm_state": fsm_state,
                 "metadata": metadata,
             }
             snapshot_files = {**fsm_state["context"]["files"]} if fsm_state else {}  # pyright: ignore
+            # Add files from request if we don't have FSM state yet
+            if not fsm_state and request.all_files:
+                snapshot_files = {p.path: p.content for p in request.all_files}
 
             # Processing
             logger.info(f"Last user message: {fsm_message_history[-1].content}")

@@ -1,0 +1,11 @@
+id: prohibit-static-metrics
+language: python
+message: |
+  Do not hardcode metric values. Metrics must fetch real data from database.
+  
+  Use WidgetTools.create_metric_from_query() to create metrics with real data.
+severity: warning
+rule:
+  # Match metric widgets with hardcoded values
+  pattern: |
+    type=WidgetType.METRIC

@@ -9,6 +9,7 @@ from app import models
 
 
 @pytest.mark.sqlmodel
+@pytest.mark.models_smoke
 def test_sqlmodel_smoke():
     """Single smoke test to validate SQLModel setup works end-to-end."""
 

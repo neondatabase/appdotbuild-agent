@@ -1,0 +1,37 @@
+id: require-data-source
+language: python
+message: |
+  Widgets must have a data_source configuration to connect to real data.
+  Use one of these data source types:
+  - "query": Custom SQL query
+  - "table": Direct table access
+  - "aggregation": Aggregated data from table
+  
+  Example:
+    data_source = {
+        "type": "query",
+        "query": "SELECT * FROM sales",
+        "refresh_interval": 60
+    }
+severity: warning
+rule:
+  # Match Widget or create_widget calls without data_source parameter
+  any:
+    - pattern: |
+        WidgetService.create_widget(
+          name=$NAME,
+          type=$TYPE,
+          $$$ARGS
+        )
+      not:
+        has:
+          pattern: data_source = $$$
+    - pattern: |
+        Widget(
+          name=$NAME,
+          type=$TYPE,
+          $$$ARGS
+        )
+      not:
+        has:
+          pattern: data_source = $$$

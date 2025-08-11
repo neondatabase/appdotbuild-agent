@@ -56,6 +56,7 @@ class FSMToolProcessor:
         settings: Dict[str, Any] | None = None,
         event_callback: Callable[[str], Awaitable[None]] | None = None,
         max_messages_tokens: int = 512 * 1024,
+        initial_files: list | None = None,
     ):
         """
         Initialize the FSM Tool Processor
@@ -65,6 +66,7 @@ class FSMToolProcessor:
             fsm_app: Optional existing FSM application instance
             settings: Optional dictionary of settings for the FSM/LLM
             event_callback: Optional callback to emit intermediate SSE events with diffs
+            initial_files: Optional list of FileEntry objects for edit mode
         """
         self.fsm_class = fsm_class
         self.fsm_app = fsm_app
@@ -72,18 +74,26 @@ class FSMToolProcessor:
         self.client = client
         self.event_callback = event_callback
         self.max_messages_tokens = max_messages_tokens
+        self.initial_files = initial_files
 
         # Define tool definitions for the AI agent using the common Tool structure
+        # Adjust description based on whether we have initial files
+        start_fsm_description = (
+            "Start editing the existing application files that were provided. Use this to review and modify the existing code."
+            if self.initial_files
+            else "Start a new interactive FSM session for application generation"
+        )
+        
         self.tool_definitions: list[Tool] = [
             {
                 "name": "start_fsm",
-                "description": "Start a new interactive FSM session for application generation",
+                "description": start_fsm_description,
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "app_description": {
                             "type": "string",
-                            "description": "Description for the application to generate. Avoid using technical terms and focus on the user's request.",
+                            "description": "Description of what to do with the application - either review it or describe changes to make" if self.initial_files else "Description for the application to generate. Avoid using technical terms and focus on the user's request.",
                         }
                     },
                     "required": ["app_description"],
@@ -126,7 +136,11 @@ class FSMToolProcessor:
     async def tool_start_fsm(self, app_description: str) -> CommonToolResult:
         """Tool implementation for starting a new FSM session"""
         try:
-            logger.info(f"Starting new FSM session with description: {app_description}")
+            logger.info(f"Starting FSM session with description: {app_description}")
+            
+            # Log if we're in edit mode
+            if self.initial_files:
+                logger.info(f"Edit mode: Working with {len(self.initial_files)} existing files")
 
             # Check if there's an active session first
             if self.fsm_app:
@@ -136,8 +150,18 @@ class FSMToolProcessor:
                     is_error=True,
                 )
 
+            # Pass initial files through settings if they exist
+            settings_with_files = {**self.settings}
+            if self.initial_files:
+                # Convert file entries to a format the FSM can use
+                initial_files_dict = {}
+                for file_entry in self.initial_files:
+                    initial_files_dict[file_entry.path] = file_entry.content
+                settings_with_files["initial_files"] = initial_files_dict
+                logger.info(f"Passing {len(self.initial_files)} files to FSM through settings")
+
             self.fsm_app = await self.fsm_class.start_fsm(
-                self.client, user_prompt=app_description, settings=self.settings
+                self.client, user_prompt=app_description, settings=settings_with_files
             )
 
             # Check for errors
@@ -443,11 +467,11 @@ async def main(initial_prompt: str = "A simple greeting app that says hello in f
         ]
         # Main interaction loop
         while True:
-            new_messages = await processor.step(current_messages, client, model_params)
+            new_messages, status, full_thread = await processor.step(current_messages, client, model_params)
 
             logger.debug(f"New messages: {new_messages}")
             if new_messages:
-                current_messages += new_messages
+                current_messages.extend(new_messages)
 
             logger.info(f"Iteration completed: {len(current_messages) - 1}")
 

@@ -139,6 +139,14 @@ class FSMApplication:
         """Create the state machine for the application"""
         states = await cls.make_states(client, settings)
         context = ApplicationContext(user_prompt=user_prompt)
+        
+        # If initial_files are provided in settings (edit mode), load them into context
+        if settings and "initial_files" in settings:
+            initial_files = settings["initial_files"]
+            if isinstance(initial_files, dict):
+                context.files.update(initial_files)
+                logger.info(f"Loaded {len(initial_files)} initial files into FSM context")
+        
         fsm = StateMachine[ApplicationContext, FSMEvent](states, context)
         await fsm.send(FSMEvent("CONFIRM"))  # confirm running first stage immediately
         return cls(client, fsm)
@@ -261,11 +269,23 @@ class FSMApplication:
                 "DATABRICKS_HOST", databricks_host
             ).add_env_variable("DATABRICKS_TOKEN", databricks_token)
 
+        # Fast mode tuning
+        fast_mode = False
+        try:
+            fast_mode = bool(int(os.environ.get("AGENT_FAST_MODE", "0"))) or bool(settings.get("fast", False))  # type: ignore[arg-type]
+        except Exception:
+            fast_mode = bool(settings.get("fast", False)) if settings else False  # type: ignore[arg-type]
+
+        data_beam = 2 if fast_mode else 3
+        data_depth = 30 if fast_mode else 50
+        app_beam = 2 if fast_mode else 3
+        app_depth = 60 if fast_mode else 100
+
         data_actor = NiceguiActor(
             llm=llm,
             workspace=workspace.clone(),
-            beam_width=3,
-            max_depth=50,
+            beam_width=data_beam,
+            max_depth=data_depth,
             system_prompt=playbooks.get_data_model_system_prompt(
                 use_databricks=use_databricks
             ),
@@ -278,8 +298,8 @@ class FSMApplication:
         app_actor = NiceguiActor(
             llm=llm,
             workspace=workspace.clone(),
-            beam_width=3,
-            max_depth=100,  # can be larger given every file change is a separate tool call,
+            beam_width=app_beam,
+            max_depth=app_depth,  # can be larger given every file change is a separate tool call,
             system_prompt=playbooks.get_application_system_prompt(),
             event_callback=event_callback,
             databricks_host=databricks_host,

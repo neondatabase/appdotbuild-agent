@@ -1,0 +1,40 @@
+id: use-widget-tools
+language: python
+message: |
+  Use WidgetTools helper functions to create data-driven widgets.
+  Available methods:
+  - WidgetTools.create_metric_from_query() - For single value metrics
+  - WidgetTools.create_chart_from_table() - For charts from table data
+  - WidgetTools.create_table_from_query() - For data tables
+  - WidgetTools.create_widgets_for_table() - Auto-create widgets for a table
+  - WidgetTools.create_dashboard_from_schema() - Auto-create complete dashboard
+  
+  These ensure widgets are connected to real data sources.
+severity: warning
+rule:
+  any:
+    # Direct Widget instantiation without using WidgetTools
+    - pattern: |
+        Widget(
+          name=$NAME,
+          type=$TYPE,
+          $$$REST
+        )
+      not:
+        inside:
+          any:
+            - pattern: class WidgetTools
+            - pattern: def create_$$$
+            - pattern: WidgetTools.$$$
+    
+    # Direct WidgetService.create_widget without data_source
+    - pattern: |
+        WidgetService.create_widget(
+          $$$ARGS
+        )
+      not:
+        any:
+          - has:
+              pattern: data_source = $$$
+          - inside:
+              pattern: class WidgetTools

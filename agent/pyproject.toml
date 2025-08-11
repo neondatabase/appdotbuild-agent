@@ -55,8 +55,8 @@ record = "Updates VCR cache for tests by running pytest in record mode (alias fo
 lint = "Runs ruff to check and fix linting issues. Example: uv run lint"
 type_check = "Runs type checking with pyright. Example: uv run type_check"
 format = "Runs ruff to format code, optionally accepts target. Example: uv run format [file.py]"
-generate = "Generates code based on a prompt. Example: uv run generate --prompt='your app description'"
-interactive = "Starts an interactive CLI session with the agent. Examples: uv run interactive (local server), uv run interactive --host=prod-agent-service-alb-999031216.us-west-2.elb.amazonaws.com --port=80 (remote server). Make sure to use BUILDER_TOKEN env fvar for access grant."
+generate = "Generates code based on a prompt. Example: uv run generate --prompt='your app description' | Edit mode: uv run generate --edit-mode --input-folder=/path/to/project --prompt='add new feature' | Monitor existing project: uv run generate --monitor --input-folder=/path/to/project (starts Docker, monitors logs, auto-fixes errors) | Monitor new: uv run generate --monitor --prompt='your app'"
+interactive = "Starts an interactive CLI session with the agent. Examples: uv run interactive (local server), uv run interactive --host=prod-agent-service-alb-999031216.us-west-2.elb.amazonaws.com --port=80 (remote server), uv run interactive --edit-mode --input-folder=/path/to/project (edit existing project). Make sure to use BUILDER_TOKEN env var for access grant."
 help = "Displays this help message. Example: uv run help"
 
 [tool.ruff]

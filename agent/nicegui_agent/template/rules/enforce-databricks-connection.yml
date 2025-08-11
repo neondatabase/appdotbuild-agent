@@ -1,0 +1,35 @@
+id: enforce-databricks-connection
+language: python
+message: |
+  When creating BI dashboards, connect to Databricks data models.
+  Use the existing Databricks models:
+  - SalesKPIs
+  - DailySalesRevenue
+  - ProductPerformance
+  - FranchisePerformance
+  - CustomerSpendingAnalysis
+  - PaymentMethodAnalysis
+  - GeographicSales
+  - HourlySalesPattern
+  
+  Example:
+    from app.models import SalesKPIs
+    kpis = SalesKPIs.fetch(days=30)
+severity: info
+rule:
+  any:
+    # Creating dashboard without using Databricks models
+    - pattern: |
+        class $NAME:
+          $$$BODY
+      has:
+        any:
+          - pattern: Dashboard
+          - pattern: UI
+          - pattern: Service
+      not:
+        has:
+          any:
+            - pattern: from app.models import
+            - pattern: .fetch(
+            - pattern: DataSourceService
