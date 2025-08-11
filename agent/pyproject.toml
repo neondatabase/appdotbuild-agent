@@ -24,6 +24,7 @@ dependencies = [
     "polars>=1.31.0",
     "openai>=1.68.2",
     "ollama>=0.5.1",
+    "gspread>=6.1.2",
 ]
 
 [build-system]
