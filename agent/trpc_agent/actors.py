@@ -443,28 +443,16 @@ class TrpcActor(FileOperationsActor):
         return candidates
 
     async def eval_node(self, node: Node[BaseData], user_prompt: str) -> bool:
-        """Context-aware node evaluation using node-stored context."""
-        # First, process any tool uses
-        tool_results, _ = await self.run_tools(node, user_prompt)
-        if tool_results:
-            node.data.messages.append(Message(role="user", content=tool_results))
-            return False
-
-        # Get context from node data
-        context = node.data.context
-
-        # Then run context-specific validation
-        if context == "draft":
-            return await self._validate_draft(node)
-        elif context.startswith("handler:"):
-            return await self._validate_handler(node)
-        elif context == "frontend":
-            return await self._validate_frontend(node)
-        elif context == "edit":
-            return await self._validate_edit(node)
-        else:
-            logger.warning(f"Unknown context: {context}")
-            return True
+        """Evaluate node using base class flow with context-aware checks."""
+        # Use base class implementation which calls run_tools and handles completion
+        tool_calls, is_completed = await self.run_tools(node, user_prompt)
+        if tool_calls:
+            node.data.messages.append(Message(role="user", content=tool_calls))
+        elif not is_completed:
+            # Only add continue message if not completed and no tool calls
+            content = [TextRaw(text="Continue or mark completed via tool call")]
+            node.data.messages.append(Message(role="user", content=content))
+        return is_completed
 
     async def _validate_draft(self, node: Node[BaseData]) -> bool:
         """Validate draft: TypeScript compilation + Drizzle schema."""
@@ -572,6 +560,11 @@ class TrpcActor(FileOperationsActor):
                 if error := await self.run_build_check(node):
                     errors.append(error)
 
+            async def check_drizzle():
+                if error := await self.run_drizzle_check(node):
+                    errors.append(error)
+
+            tg.start_soon(check_drizzle)
             tg.start_soon(check_backend_tsc)
             tg.start_soon(check_frontend_tsc)
             tg.start_soon(check_tests)
@@ -668,9 +661,38 @@ class TrpcActor(FileOperationsActor):
         return feedback if feedback else None
 
     async def run_checks(self, node: Node[BaseData], user_prompt: str) -> str | None:
-        # This is handled by eval_node with context awareness
-        # Just to keep the interface consistent for now
-        return None
+        """Run context-aware validation checks based on node context."""
+        context = node.data.context
+
+        # Run validation based on context
+        match context:
+            case "draft":
+                success = await self._validate_draft(node)
+            case "frontend":
+                success = await self._validate_frontend(node)
+            case "edit":
+                success = await self._validate_edit(node)
+            case s if s.startswith("handler:"):
+                success = await self._validate_handler(node)
+            case _:
+                logger.warning(f"Unknown context: {context}, skipping validation")
+                return None  # No validation for unknown context
+
+        # If validation failed, extract error message from last message
+        if not success and node.data.messages:
+            last_msg = node.data.messages[-1]
+            if last_msg.role == "user" and last_msg.content:
+                # Extract error text from message content
+                error_texts = []
+                for content_item in last_msg.content:
+                    if isinstance(content_item, TextRaw):
+                        error_texts.append(content_item.text)
+                if error_texts:
+                    # Remove the last message as we'll return it as error
+                    node.data.messages.pop()
+                    return "\n".join(error_texts)
+
+        return None if success else "Validation failed"
 
     def _render_prompt(self, template_name: str, **kwargs) -> str:
         """Render Jinja template with given parameters."""

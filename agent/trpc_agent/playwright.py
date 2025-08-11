@@ -35,7 +35,7 @@ async def drizzle_push(
         )
         .with_exec(pg_health_check_cmd())
         .with_workdir("server")
-        .with_exec(["bun", "run", "drizzle-kit", "push", "--force"])
+        .with_exec(["bun", "run", "db:push"])
     )
     result = await ExecResult.from_ctr(push_ctr)
     return result
