@@ -10,6 +10,7 @@ from llm.common import InternalMessage, ToolUse, ToolResult as CommonToolResult,
 from log import get_logger
 import ujson as json
 import os
+from integrations.analyze_spreadsheet import SpreadsheetAnalyzer
 
 logger = get_logger(__name__)
 
@@ -279,9 +280,6 @@ class FSMToolProcessor:
                 )
             
             logger.info(f"Analyzing spreadsheet: {spreadsheet_url}")
-
-            # lazy import to avoid import errors when not available
-            from integrations.analyze_spreadsheet import SpreadsheetAnalyzer
             
             # Create analyzer instance
             analyzer = SpreadsheetAnalyzer()
