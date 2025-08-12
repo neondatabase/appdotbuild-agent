@@ -8,8 +8,8 @@ from core.application import ApplicationBase
 from llm.utils import AsyncLLM, extract_tag
 from llm.common import InternalMessage, ToolUse, ToolResult as CommonToolResult, ToolUseResult, TextRaw, Tool
 from log import get_logger
-from integrations.analyze_spreadsheet import SpreadsheetAnalyzer
 import ujson as json
+import os
 
 logger = get_logger(__name__)
 
@@ -48,6 +48,17 @@ class FSMToolProcessor:
     fsm_class: type[FSMInterface]
     fsm_app: FSMInterface | None
     settings: Dict[str, Any]
+
+    @classmethod
+    def is_spreadsheet_available(cls, settings: Dict[str, Any] | None = None) -> bool:
+        """Check if Google Sheets integration is available."""
+        settings = settings or {}
+        # check for credentials in settings or environment
+        return bool(
+            settings.get("google_sheets_credentials") or 
+            os.getenv("GOOGLE_SHEETS_CREDENTIALS") or
+            os.path.exists(os.path.expanduser("~/.config/gspread/credentials.json"))
+        )
 
     def __init__(
         self,
@@ -114,7 +125,11 @@ class FSMToolProcessor:
                 "description": "Finalize and return all generated artifacts from the FSM",
                 "input_schema": {"type": "object", "properties": {}, "required": []},
             },
-            {
+        ]
+        
+        # conditionally add spreadsheet tool if available
+        if self.is_spreadsheet_available(settings):
+            self.tool_definitions.append({
                 "name": "analyze_spreadsheet",
                 "description": "Analyze a Google Spreadsheet and generate a technical specification for building a web application",
                 "input_schema": {
@@ -127,8 +142,7 @@ class FSMToolProcessor:
                     },
                     "required": ["spreadsheet_url"],
                 },
-            },
-        ]
+            })
 
         # Map tool names to their implementation methods
         self.tool_mapping: dict[str, Callable[..., Awaitable[CommonToolResult]]] = {
@@ -136,8 +150,11 @@ class FSMToolProcessor:
             "confirm_state": self.tool_confirm_state,
             "change": self.tool_change,
             "complete_fsm": self.tool_complete_fsm,
-            "analyze_spreadsheet": self.tool_analyze_spreadsheet,
         }
+        
+        # conditionally add spreadsheet tool mapping if available
+        if self.is_spreadsheet_available(settings):
+            self.tool_mapping["analyze_spreadsheet"] = self.tool_analyze_spreadsheet
 
     async def tool_start_fsm(self, app_description: str) -> CommonToolResult:
         """Tool implementation for starting a new FSM session"""
@@ -253,8 +270,19 @@ class FSMToolProcessor:
     async def tool_analyze_spreadsheet(self, spreadsheet_url: str) -> CommonToolResult:
         """Tool implementation for analyzing Google Spreadsheets"""
         try:
+            # check if spreadsheet integration is available
+            if not self.is_spreadsheet_available(self.settings):
+                logger.warning("Spreadsheet integration not available - no credentials configured")
+                return CommonToolResult(
+                    content="Google Sheets integration is not available. Please configure GOOGLE_SHEETS_CREDENTIALS environment variable or provide credentials.", 
+                    is_error=True
+                )
+            
             logger.info(f"Analyzing spreadsheet: {spreadsheet_url}")
 
+            # lazy import to avoid import errors when not available
+            from integrations.analyze_spreadsheet import SpreadsheetAnalyzer
+            
             # Create analyzer instance
             analyzer = SpreadsheetAnalyzer()
 
@@ -268,8 +296,14 @@ class FSMToolProcessor:
             analysis_result = await analyzer.analyze_with_llm(markdown_data)
 
             logger.info("Spreadsheet analysis completed successfully")
-            return CommonToolResult(content=analysis_result + "\nPlease use this full description when passing the user's request to FSM")
+            return CommonToolResult(content=analysis_result + "\nPlease use this full description when passing the user's request to FSM. Make sure to include both the logic and initial data.")
 
+        except ImportError as e:
+            logger.exception(f"Failed to import spreadsheet dependencies: {str(e)}")
+            return CommonToolResult(
+                content="Google Sheets integration dependencies are not installed. Please install gspread and related packages.", 
+                is_error=True
+            )
         except Exception as e:
             logger.exception(f"Error analyzing spreadsheet: {str(e)}")
             return CommonToolResult(content=f"Failed to analyze spreadsheet: {str(e)}", is_error=True)
@@ -387,8 +421,8 @@ class FSMToolProcessor:
         thread = [InternalMessage(role="assistant", content=response.content)]
         if tool_results:
             thread += [
-                InternalMessage(role="user", content=[*tool_results, TextRaw("Analyze tool results.")])
-            ]  # TODO: change this for assistant message since it's not a user message
+                InternalMessage(role="user", content=[*tool_results]),
+            ]
         match (tool_results, self.fsm_app):
             case (_, app) if app and app.maybe_error():
                 fsm_status = FSMStatus.FAILED
@@ -418,6 +452,13 @@ class FSMToolProcessor:
 
     @property
     def system_prompt(self) -> str:
+        # check if spreadsheet integration is available
+        spreadsheet_part = ""
+        if self.is_spreadsheet_available(self.settings):
+            spreadsheet_part = """
+
+If the user provides a Google Spreadsheet URL or requests to analyze spreadsheet data, use the analyze_spreadsheet tool first to generate a technical specification. This tool will analyze the spreadsheet structure and content to create a detailed specification for building a web application based on that data."""
+        
         return f"""You are a software engineering expert who can generate application code using a code generation framework. This framework uses a Finite State Machine (FSM) to guide the generation process.
 
 Your task is to control the FSM through the following stages of code generation:
@@ -433,7 +474,7 @@ To successfully complete this task, follow these steps:
 3. Repeat step 2 until all components have been generated and confirmed.
 4. Use the complete_fsm tool to finalize the process and retrieve all artifacts.
 
-Even if the app is ready, you can always continue to refine it by providing feedback according to user's requests. The framework will handle the changes and allow you to confirm or modify the output as needed.
+Even if the app is ready, you can always continue to refine it by providing feedback according to user's requests. The framework will handle the changes and allow you to confirm or modify the output as needed.{spreadsheet_part}
 
 During your review process, consider the following questions:
 - Does the code correctly implement the application requirements?
