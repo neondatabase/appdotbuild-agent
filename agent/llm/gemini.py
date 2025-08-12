@@ -31,6 +31,7 @@ retry_gemini_errors = retry(
     wait=wait_exponential_jitter(initial=1.5, max=30),
     retry=retry_if_exception_type((RetryableError, ServerError, RuntimeError)),
     before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
 )
 
 retry_file_upload = retry(
@@ -38,6 +39,7 @@ retry_file_upload = retry(
     wait=wait_exponential_jitter(initial=0.5, max=1.5),
     retry=retry_if_exception_type(ServerError),
     before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
 )
 
 

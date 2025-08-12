@@ -2,7 +2,7 @@ import itertools
 import os
 import re
 from typing import Literal, Dict
-from llm.common import AsyncLLM, Message, TextRaw, ContentBlock
+from llm.common import AsyncLLM, Message, TextRaw, ContentBlock, ToolUse
 from llm.cached import CachedLLM, CacheMode
 from llm.models_config import ModelCategory, get_model_for_category
 from llm.providers import get_backend_for_model
@@ -57,7 +57,9 @@ async def loop_completion(
             messages=payload, system_prompt=system_prompt, **kwargs
         )
         content.extend(completion.content)
-        if completion.stop_reason != "max_tokens":
+        # If the model returned any tool_use, stop immediately to allow tool_result to follow
+        has_tool_use = any(isinstance(b, ToolUse) for b in completion.content)
+        if completion.stop_reason != "max_tokens" or has_tool_use:
             break
     return Message(role="assistant", content=merge_text(content))
 

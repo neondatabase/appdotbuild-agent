@@ -21,28 +21,27 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
     before_sleep_log,
+    retry_if_exception,
 )
 
 logger = get_logger(__name__)
 
 
 # retry decorator for anthropic API errors
-def is_retryable_error(exception):
+def is_retryable_error(exception: BaseException) -> bool:
     """Check if the exception is retryable (rate limit or server error)."""
     if isinstance(exception, anthropic.APIStatusError):
-        # Retry on rate limits (413, 429) and server errors (500+)
-        return exception.status_code >= 413 or exception.status_code >= 500
+        # Retry on rate limits (429) and server errors (>=500)
+        return exception.status_code == 429 or exception.status_code >= 500
     return False
 
 
 retry_rate_limits = retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential_jitter(initial=1.5, max=30),
-    retry=is_retryable_error,
+    retry=retry_if_exception(is_retryable_error),
     before_sleep=before_sleep_log(logger, logging.WARNING),
-    retry_error_callback=lambda retry_state: logger.warning(
-        f"Retry failed: {retry_state.outcome.exception()}"
-    ),
+    reraise=True,
 )
 
 
