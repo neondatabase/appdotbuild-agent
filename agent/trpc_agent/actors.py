@@ -179,6 +179,7 @@ class TrpcActor(FileOperationsActor):
             allowed=self.paths.files_allowed_draft + self.paths.files_allowed_frontend,
             protected=self.paths.files_protected_frontend,
         )
+        await workspace.exec_mut(["bun", "install"]) # sync deps
         self.workspace = workspace
 
         # Build context with relevant files
@@ -261,6 +262,7 @@ class TrpcActor(FileOperationsActor):
 
         results: dict[str, Node[BaseData]] = {}
 
+        await self.workspace.exec_mut(["bun", "install"]) # sync deps from draft stage
         async with anyio.create_task_group() as tg:
             # Start frontend generation
             tg.start_soon(
@@ -373,7 +375,7 @@ class TrpcActor(FileOperationsActor):
 
         # Search for solution
         solution = await self._search_single_node(
-            self.frontend_node, playbooks.FRONTEND_SYSTEM_PROMPT, True
+            self.frontend_node, playbooks.FRONTEND_SYSTEM_PROMPT
         )
 
         if solution:
@@ -404,7 +406,7 @@ class TrpcActor(FileOperationsActor):
             nodes = await self.run_llm(
                 candidates,
                 system_prompt=system_prompt,
-                tools=self.tools + self.conditional_tools if conditional_tools else [],
+                tools=self.tools + (self.conditional_tools if conditional_tools else []),
                 max_tokens=8192,
             )
             logger.info(f"Received {len(nodes)} nodes from LLM")
@@ -887,9 +889,10 @@ class TrpcActor(FileOperationsActor):
 
                 node.data.workspace.cwd(cwd)
                 exec_res = await node.data.workspace.exec_mut(
-                    ["bun", "install", " ".join(packages)]
+                    ["bun", "add", " ".join(packages)]
                 )
                 node.data.workspace.cwd("/app")
+                await node.data.workspace.exec_mut(["bun", "install"]) # update root lockfile
                 if exec_res.exit_code != 0:
                     return ToolUseResult.from_tool_use(
                         tool_use,
@@ -902,7 +905,8 @@ class TrpcActor(FileOperationsActor):
                         {
                             package_path: await node.data.workspace.read_file(
                                 package_path
-                            )
+                            ),
+                            "bun.lock": await node.data.workspace.read_file("bun.lock")
                         }
                     )
                     return ToolUseResult.from_tool_use(tool_use, "success")
