@@ -2,7 +2,7 @@ from typing import List
 
 from google import genai
 from google.genai import types as genai_types
-from google.genai.errors import ServerError
+from google.genai.errors import ServerError, ClientError
 import os
 from llm import common
 from llm.telemetry import LLMTelemetry
@@ -13,6 +13,7 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
     retry_if_exception_type,
+    retry_if_exception,
     before_sleep_log,
 )
 import uuid
@@ -26,10 +27,19 @@ class RetryableError(RuntimeError):
 
 
 # retry decorator for gemini API errors
+def is_retryable_error(exception: BaseException) -> bool:
+    """Check if the exception is retryable (rate limit or server error)."""
+    if isinstance(exception, ClientError):
+        # Retry on rate limits (429) and server errors (>=500)
+        return exception.code == 429 or exception.code >= 500
+    # Keep existing retry behavior for ServerError, RetryableError, and RuntimeError
+    return isinstance(exception, (ServerError, RetryableError, RuntimeError))
+
+
 retry_gemini_errors = retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential_jitter(initial=1.5, max=30),
-    retry=retry_if_exception_type((RetryableError, ServerError, RuntimeError)),
+    retry=retry_if_exception(is_retryable_error),
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
