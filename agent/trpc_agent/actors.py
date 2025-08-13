@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from core.base_node import Node
 from core.workspace import Workspace
 from core.actors import BaseData, FileOperationsActor, AgentSearchFailedException
-from llm.common import AsyncLLM, Message, TextRaw, Tool
+from llm.common import AsyncLLM, Message, TextRaw, Tool, ToolUse, ToolUseResult
 from trpc_agent import playbooks
 from trpc_agent.playwright import PlaywrightRunner, drizzle_push
 from core.notification_utils import notify_if_callback, notify_stage
@@ -198,7 +198,7 @@ class TrpcActor(FileOperationsActor):
 
         # Search for solution
         solution = await self._search_single_node(
-            root_node, playbooks.EDIT_ACTOR_SYSTEM_PROMPT
+            root_node, playbooks.EDIT_ACTOR_SYSTEM_PROMPT, True
         )
 
         if not solution:
@@ -242,7 +242,7 @@ class TrpcActor(FileOperationsActor):
 
         # Search for solution
         solution = await self._search_single_node(
-            self.draft_node, playbooks.BACKEND_DRAFT_SYSTEM_PROMPT
+            self.draft_node, playbooks.BACKEND_DRAFT_SYSTEM_PROMPT, True
         )
 
         if solution:
@@ -373,7 +373,7 @@ class TrpcActor(FileOperationsActor):
 
         # Search for solution
         solution = await self._search_single_node(
-            self.frontend_node, playbooks.FRONTEND_SYSTEM_PROMPT
+            self.frontend_node, playbooks.FRONTEND_SYSTEM_PROMPT, True
         )
 
         if solution:
@@ -385,7 +385,7 @@ class TrpcActor(FileOperationsActor):
             )
 
     async def _search_single_node(
-        self, root_node: Node[BaseData], system_prompt: str
+        self, root_node: Node[BaseData], system_prompt: str, conditional_tools: bool = False,
     ) -> Optional[Node[BaseData]]:
         """Search for solution from a single node."""
         solution: Optional[Node[BaseData]] = None
@@ -404,7 +404,7 @@ class TrpcActor(FileOperationsActor):
             nodes = await self.run_llm(
                 candidates,
                 system_prompt=system_prompt,
-                tools=self.tools,
+                tools=self.tools + self.conditional_tools if conditional_tools else [],
                 max_tokens=8192,
             )
             logger.info(f"Received {len(nodes)} nodes from LLM")
@@ -861,8 +861,69 @@ class TrpcActor(FileOperationsActor):
             return context.split(":", 1)[1]
         return "unknown"
 
+    async def handle_custom_tool(
+        self, tool_use: ToolUse, node: Node[BaseData]
+    ) -> ToolUseResult:
+        """Handle tRPC-specific custom tools."""
+        assert isinstance(tool_use.input, dict), (
+            f"Tool input must be dict, got {type(tool_use.input)}"
+        )
+        match tool_use.name:
+            case "npm_install":
+                packages = tool_use.input["packages"]  # pyright: ignore[reportIndexIssue]
+                target = tool_use.input["target"]  # pyright: ignore[reportIndexIssue]
+
+                match target:
+                    case "server":
+                        cwd = "server"
+                    case "client":
+                        cwd = "client"
+                    case other:
+                        return ToolUseResult.from_tool_use(
+                            tool_use,
+                            f"Invalid target: {other}. Must be 'server' or 'client'",
+                            is_error=True,
+                        )
+
+                node.data.workspace.cwd(cwd)
+                exec_res = await node.data.workspace.exec_mut(
+                    ["bun", "install", " ".join(packages)]
+                )
+                node.data.workspace.cwd("/app")
+                if exec_res.exit_code != 0:
+                    return ToolUseResult.from_tool_use(
+                        tool_use,
+                        f"Failed to add packages: {exec_res.stderr}",
+                        is_error=True,
+                    )
+                else:
+                    package_path = f"{cwd}/package.json"
+                    node.data.files.update(
+                        {
+                            package_path: await node.data.workspace.read_file(
+                                package_path
+                            )
+                        }
+                    )
+                    return ToolUseResult.from_tool_use(tool_use, "success")
+            case _:
+                return await super().handle_custom_tool(tool_use, node)
+
     @property
-    def additional_tools(self) -> list[Tool]:
-        """Additional tools specific to tRPC actor."""
-        # Base tools from FileOperationsActor are sufficient
-        return []
+    def conditional_tools(self) -> list[Tool]:
+        """Conditional tools specific to tRPC actor."""
+        tools = [
+            {
+                "name": "npm_install",
+                "description": "Install additional packages",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "packages": {"type": "array", "items": {"type": "string"}},
+                        "target": {"type": "string", "enum": ["server", "client"]},
+                    },
+                    "required": ["packages", "target"],
+                },
+            },
+        ]
+        return tools

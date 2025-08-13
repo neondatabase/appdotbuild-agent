@@ -18,7 +18,7 @@ from api.docker_utils import setup_docker_env, start_docker_compose, stop_docker
 
 logger = get_logger(__name__)
 
-DEFAULT_APP_REQUEST = "Implement a simple app with a counter of clicks on a single button with a backend with persistence in DB and a frontend"
+DEFAULT_APP_REQUEST = "Implement a simple app with a counter of clicks on a single button with a backend with persistence in DB and a frontend, number of clicks should be retured using cowsay ascii art"
 DEFAULT_EDIT_REQUEST = "Add message with emojis to the app to make it more fun"
 
 
@@ -423,8 +423,8 @@ atexit.register(cleanup_docker_projects)
 
 # Common directories to exclude when collecting project files
 EXCLUDED_DIRS = {
-    "node_modules", "vendor", ".git", "dist", "build", 
-    ".cache", "coverage", "public/build", "storage/logs", 
+    "node_modules", "vendor", ".git", "dist", "build",
+    ".cache", "coverage", "public/build", "storage/logs",
     "bootstrap/cache", ".cursor", ".claude", ".github",
     "__pycache__", ".pytest_cache", ".venv", "venv",
     ".next", ".nuxt", ".svelte-kit", ".output",
@@ -444,7 +444,7 @@ def get_all_files_from_project_dir(project_dir_path: str) -> List[FileEntry]:
     for root, dirs, files in os.walk(project_dir_path):
         # Filter out excluded directories to prevent walking into them
         dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
-        
+
         # Also check if the current directory path contains any excluded patterns
         rel_root = os.path.relpath(root, project_dir_path)
         skip_dir = False
@@ -454,7 +454,7 @@ def get_all_files_from_project_dir(project_dir_path: str) -> List[FileEntry]:
                 break
         if skip_dir:
             continue
-            
+
         for filename in files:
             # Exclude common problematic/temporary files but allow .gitignore
             if (
