@@ -3,7 +3,7 @@ services:
     build: .
     container_name: ${BACKEND_CONTAINER_NAME:-app}
     ports:
-      - "80:8000"
+      - "${HOST_PORT:-80}:8000"
     environment:
       - NICEGUI_STORAGE_SECRET=${NICEGUI_STORAGE_SECRET:-STORAGE_SECRET}
       - NICEGUI_PORT=8000

@@ -9,7 +9,7 @@ services:
     container_name: ${BACKEND_CONTAINER_NAME:-laravel-app}
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "${HOST_PORT:-80}:80"
     environment:
       APP_ENV: ${APP_ENV:-local}
       APP_DEBUG: false

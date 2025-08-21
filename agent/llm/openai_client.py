@@ -337,11 +337,22 @@ class OpenAILLM:
             )
             raise
 
+        # always log telemetry to ensure validation
         if hasattr(response, "usage") and response.usage:
             telemetry.log_completion(
                 model=chosen_model,
                 input_tokens=response.usage.prompt_tokens,
                 output_tokens=response.usage.completion_tokens,
+                temperature=temperature,
+                has_tools=openai_tools is not None,
+                provider=self.provider_name,
+            )
+        else:
+            # always call telemetry even without usage data - this will trigger validation errors
+            telemetry.log_completion(
+                model=chosen_model,
+                input_tokens=None,
+                output_tokens=None,
                 temperature=temperature,
                 has_tools=openai_tools is not None,
                 provider=self.provider_name,

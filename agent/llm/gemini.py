@@ -122,7 +122,7 @@ class GeminiLLM(common.AsyncLLM):
             config=config,
         )
 
-        # Log telemetry if usage metadata is available
+        # Log telemetry - always call to ensure validation
         if hasattr(response, "usage_metadata"):
             usage = response.usage_metadata
             telemetry.log_completion(
@@ -136,8 +136,16 @@ class GeminiLLM(common.AsyncLLM):
                 provider="Gemini",
             )
         else:
-            logger.warning(
-                f"Gemini response missing usage_metadata attribute for model {self.model_name}"
+            # always call telemetry even without usage data - this will trigger validation errors
+            telemetry.log_completion(
+                model=self.model_name,
+                input_tokens=None,
+                output_tokens=None,
+                temperature=config.temperature
+                if config and config.temperature is not None
+                else None,
+                has_tools=bool(config and config.tools),
+                provider="Gemini",
             )
 
         return self._completion_from(response)

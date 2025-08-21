@@ -4,7 +4,7 @@
 
 # app.build (agent)
 
-**app.build** is an open-source AI agent for generating production-ready full-stack applications from a single prompt.
+**app.build** is an open-source AI agent for generating production-ready applications with testing, linting and deployment setup from a single prompt.
 
 ## What it builds
 
@@ -31,7 +31,7 @@ We're currently supporting the following application types:
 - **Additional packages management** with uv;
 
 All applications support:
-- **Neon Postgres database** provisioned instantly via API
+- **[Neon Postgres DB](https://get.neon.com/ab5)** provisioned instantly via API
 - **GitHub repository** with complete source code
 - **CI/CD and deployment** via the [app.build platform](https://github.com/appdotbuild/platform).
 
@@ -41,25 +41,8 @@ New application types are work in progress, stay tuned for updates!
 
 ### Via the [managed service](https://app.build)
 
-```bash
-# for tRPC CRUD apps
-npx @app.build/cli
-
-# for Laravel apps (Alpha)
-npx @app.build/cli --template=laravel
-
-# for Python/NiceGUI apps
-npx @app.build/cli --template=python
-```
-
 ### Locally
 Local usage and development instructions are available in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-### Local Models with Ollama (expreimental)
-
-Want to run everything locally without API keys? We  added experimental support [Ollama](https://ollama.ai) for local model inference. Set up Ollama, pull your preferred models, and run the agent completely offline. See [PROJECT_GUIDELINES.md](PROJECT_GUIDELINES.md) for detailed setup instructions and recommended models.
-
-We are open for you contributions in better supporting local models. Feel free to send you PRs!
 
 ## Architecture
 
@@ -79,6 +62,30 @@ This agent doesn't generate entire applications at once. Instead, it breaks down
 Each task is validated independently using language-specific tools (ESLint/TypeScript for JS, PHPStan for PHP), test execution, and runtime logs before being accepted.
 
 More details on the architecture can be found in the [blog on our design decisions](https://www.app.build/blog/design-decisions).
+
+## Custom LLM Configuration
+
+Override default models using `backend:model` format:
+
+```bash
+# Local (Ollama and LMStudio supported)
+LLM_BEST_CODING_MODEL=ollama:devstral
+LLM_UNIVERSAL_MODEL=lmstudio:[host] # just lmstudio: works too
+
+# Cloud providers
+OPENROUTER_API_KEY=your-key
+LLM_BEST_CODING_MODEL=openrouter:deepseek/deepseek-coder
+```
+Among cloud providers, we support Gemini, Anthropic, OpenAI, and OpenRouter.
+
+**Defaults**:
+
+```bash
+LLM_BEST_CODING_MODEL=anthropic:claude-sonnet-4-20250514   # code generation
+LLM_UNIVERSAL_MODEL=gemini:gemini-2.5-flash-preview-05-20  # universal model, chat with user
+LLM_ULTRA_FAST_MODEL=gemini:gemini-2.5-flash-lite-preview-06-17  # commit generation etc.
+LLM_VISION_MODEL=gemini:gemini-2.5-flash-lite-preview-06-17  # vision model for UI validation
+```
 
 ## Repository structure
 

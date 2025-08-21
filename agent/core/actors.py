@@ -13,12 +13,20 @@ from llm.common import Tool, ToolUse, ToolUseResult, TextRaw
 from llm.utils import get_ultra_fast_llm_client
 from log import get_logger
 
+# ExceptionGroup support for Python 3.11+
+from builtins import BaseExceptionGroup
+
 logger = get_logger(__name__)
 
 
 class AgentSearchFailedException(Exception):
     """Exception raised when an agent's search process fails to find candidates."""
-    def __init__(self, agent_name: str, message: str = "No candidates to evaluate, search terminated"):
+
+    def __init__(
+        self,
+        agent_name: str,
+        message: str = "No candidates to evaluate, search terminated",
+    ):
         self.agent_name = agent_name
         self.message = message
         # Create a more user-friendly message
@@ -126,7 +134,7 @@ class LLMActor(Protocol):
                     ],
                     files={},
                     should_branch=False,
-                    context=getattr(node.data, 'context', 'default')
+                    context=getattr(node.data, "context", "default"),
                 ),
                 parent=node,
             )
@@ -247,13 +255,26 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
             if isinstance(v, str)
         )
 
+    def _unpack_exception_group(self, exc: BaseException) -> list[BaseException]:
+        """Recursively unpack ExceptionGroup to get all individual exceptions."""
+        if isinstance(exc, BaseExceptionGroup):
+            exceptions = []
+            for e in exc.exceptions:
+                exceptions.extend(self._unpack_exception_group(e))
+            return exceptions
+        else:
+            # base case: regular exception
+            return [exc]
+
     async def handle_custom_tool(
         self, tool_use: ToolUse, node: Node[BaseData]
     ) -> ToolUseResult:
         """Handle custom tools specific to subclasses. Override in subclasses."""
         raise ValueError(f"Unknown tool: {tool_use.name}")
 
-    async def compact_error_message(self, error_msg: str, max_length: int = 4096) -> str:
+    async def compact_error_message(
+        self, error_msg: str, max_length: int = 4096
+    ) -> str:
         if len(error_msg) <= max_length:
             return error_msg
 
@@ -356,7 +377,11 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
 
         try:
             result = await self.llm.completion(
-                messages=[InternalMessage.from_dict({"role": "user", "content": [{"type": "text", "text": prompt}]})],
+                messages=[
+                    InternalMessage.from_dict(
+                        {"role": "user", "content": [{"type": "text", "text": prompt}]}
+                    )
+                ],
                 max_tokens=1024,
             )
 
@@ -365,7 +390,9 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                     case TextRaw(text=text):
                         compacted = extract_tag(text, "error")
                         if compacted:
-                            logger.info(f"Compacted error message size: {len(compacted)}, original size: {original_length}")
+                            logger.info(
+                                f"Compacted error message size: {len(compacted)}, original size: {original_length}"
+                            )
                             return compacted.strip()
                     case _:
                         pass
@@ -423,9 +450,7 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                                 )
                             )
                         except PermissionError as e:
-                            error_msg = (
-                                f"Permission denied writing file '{path}': {str(e)}. Probably this file is out of scope for this particular task."
-                            )
+                            error_msg = f"Permission denied writing file '{path}': {str(e)}. Probably this file is out of scope for this particular task."
                             logger.info(
                                 f"Permission error writing file {path}: {str(e)}"
                             )
@@ -468,12 +493,19 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                                 case num_hits:
                                     if replace_all:
                                         new_content = original.replace(search, replace)
-                                        node.data.workspace.write_file(path, new_content)
+                                        node.data.workspace.write_file(
+                                            path, new_content
+                                        )
                                         node.data.files.update({path: new_content})
                                         result.append(
-                                            ToolUseResult.from_tool_use(block, f"success - replaced {num_hits} occurrences")
+                                            ToolUseResult.from_tool_use(
+                                                block,
+                                                f"success - replaced {num_hits} occurrences",
+                                            )
                                         )
-                                        logger.debug(f"Applied bulk edit to file: {path} ({num_hits} occurrences)")
+                                        logger.debug(
+                                            f"Applied bulk edit to file: {path} ({num_hits} occurrences)"
+                                        )
                                     else:
                                         raise ValueError(
                                             f"Search text found {num_hits} times in file '{path}' (expected exactly 1). Use replace_all=true to replace all occurrences. Search:\n{search}"
@@ -489,9 +521,7 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                                 )
                             )
                         except PermissionError as e:
-                            error_msg = (
-                                f"Permission denied editing file '{path}': {str(e)}. Probably this file is out of scope for this particular task."
-                            )
+                            error_msg = f"Permission denied editing file '{path}': {str(e)}. Probably this file is out of scope for this particular task."
                             logger.info(
                                 f"Permission error editing file {path}: {str(e)}"
                             )
@@ -531,9 +561,7 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                     case _:
                         # Handle custom tools via subclass
                         if isinstance(block.input, dict):
-                            custom_result = await self.handle_custom_tool(
-                                block, node
-                            )
+                            custom_result = await self.handle_custom_tool(block, node)
                             result.append(custom_result)
                         else:
                             raise ValueError(
@@ -550,8 +578,26 @@ class FileOperationsActor(BaseActor, LLMActor, ABC):
                 logger.info(f"Value error: {e}")
                 result.append(ToolUseResult.from_tool_use(block, str(e), is_error=True))
             except Exception as e:
-                logger.error(f"Unknown error: {e}")
-                result.append(ToolUseResult.from_tool_use(block, str(e), is_error=True))
+                # handle ExceptionGroup by unpacking recursively
+                if isinstance(e, BaseExceptionGroup):
+                    all_exceptions = self._unpack_exception_group(e)
+                    error_messages = []
+                    for exc in all_exceptions:
+                        logger.error(f"Exception in group: {type(exc).__name__}: {exc}")
+                        error_messages.append(f"{type(exc).__name__}: {str(exc)}")
+                    combined_error = "Multiple errors occurred:\n" + "\n".join(
+                        error_messages
+                    )
+                    result.append(
+                        ToolUseResult.from_tool_use(
+                            block, combined_error, is_error=True
+                        )
+                    )
+                else:
+                    logger.error(f"Unknown error: {e}")
+                    result.append(
+                        ToolUseResult.from_tool_use(block, str(e), is_error=True)
+                    )
 
         return result, is_completed
 

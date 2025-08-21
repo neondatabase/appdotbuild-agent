@@ -4,8 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "80:80"
-      - "2022:2022"
+      - "${HOST_PORT:-80}:80"
+      - "${HOST_PORT_TRPC:-2022}:2022"
     environment:
       - APP_DATABASE_URL=${APP_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/postgres}
     container_name: ${BACKEND_CONTAINER_NAME:-app}

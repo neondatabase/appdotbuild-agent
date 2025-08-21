@@ -9,6 +9,7 @@ request/response validation and interacts with LLMs via the `llm` wrappers
 
 Refer to `architecture.puml` for a visual overview.
 """
+
 from typing import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -20,6 +21,7 @@ from laravel_agent.agent_session import LaravelAgentSession
 import uvicorn
 from fire import Fire
 import os
+
 # Disable dagger telemetry
 os.environ["DO_NOT_TRACK"] = "1"
 os.environ["OTEL_TRACES_EXPORTER"] = "none"
@@ -38,7 +40,7 @@ from api.agent_server.models import (
     AgentStatus,
     MessageKind,
     ErrorResponse,
-    ExternalContentBlock
+    ExternalContentBlock,
 )
 from api.agent_server.interface import AgentInterface
 from trpc_agent.agent_session import TrpcAgentSession
@@ -47,8 +49,10 @@ from api.agent_server.template_diff_impl import TemplateDiffAgentImplementation
 from api.config import CONFIG
 
 from log import get_logger, configure_uvicorn_logging, set_trace_id, clear_trace_id
+from llm.telemetry import save_cumulative_stats
 
 logger = get_logger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,19 +61,28 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Async Agent Server API")
     logger.info(f"Current working directory: {os.getcwd()}")
     logger.info(f"PREFER_OLLAMA: {os.getenv('PREFER_OLLAMA', 'NOT_SET')}")
-    logger.info(f"AWS_SECRET_ACCESS_KEY: {'SET' if os.getenv('AWS_SECRET_ACCESS_KEY') else 'NOT_SET'}")
-    logger.info(f"ANTHROPIC_API_KEY: {'SET' if os.getenv('ANTHROPIC_API_KEY') else 'NOT_SET'}")
-    logger.info(f"GEMINI_API_KEY: {'SET' if os.getenv('GEMINI_API_KEY') else 'NOT_SET'}")
+    logger.info(
+        f"AWS_SECRET_ACCESS_KEY: {'SET' if os.getenv('AWS_SECRET_ACCESS_KEY') else 'NOT_SET'}"
+    )
+    logger.info(
+        f"ANTHROPIC_API_KEY: {'SET' if os.getenv('ANTHROPIC_API_KEY') else 'NOT_SET'}"
+    )
+    logger.info(
+        f"GEMINI_API_KEY: {'SET' if os.getenv('GEMINI_API_KEY') else 'NOT_SET'}"
+    )
 
     yield
     logger.info("Shutting down Async Agent Server API")
+
+    # save cumulative telemetry stats on shutdown
+    save_cumulative_stats()
 
 
 app = FastAPI(
     title="Async Agent Server API",
     description="Async API for communication between the Platform (Backend) and the Agent Server",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # add Brotli compression middleware with optimized settings for SSE
@@ -77,13 +90,15 @@ app.add_middleware(
     BrotliMiddleware,
     quality=4,  # balanced compression/speed for streaming
     minimum_size=500,  # compress responses >= 500 bytes
-    gzip_fallback=True  # fallback to gzip for older clients
+    gzip_fallback=True,  # fallback to gzip for older clients
 )
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+async def verify_token(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+):
     valid_token = CONFIG.builder_token
     if not valid_token:
         logger.info("No token configured, skipping authentication")
@@ -92,15 +107,13 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(beare
     if not credentials or not credentials.scheme == "Bearer":
         logger.info("Missing authentication token")
         raise HTTPException(
-            status_code=401,
-            detail="Unauthorized - missing authentication token"
+            status_code=401, detail="Unauthorized - missing authentication token"
         )
 
     if credentials.scheme.lower() != "bearer" or credentials.credentials != valid_token:
         logger.info("Invalid authentication token")
         raise HTTPException(
-            status_code=403,
-            detail="Unauthorized - invalid authentication token"
+            status_code=403, detail="Unauthorized - invalid authentication token"
         )
 
     return True
@@ -116,7 +129,7 @@ class SessionManager:
         request: AgentRequest,
         agent_class: type[T],
         *args,
-        **kwargs
+        **kwargs,
     ) -> T:
         session_id = f"{request.application_id}:{request.trace_id}"
 
@@ -127,7 +140,7 @@ class SessionManager:
             trace_id=request.trace_id,
             settings=request.settings,
             *args,
-            **kwargs
+            **kwargs,
         )
         return agent
 
@@ -137,7 +150,9 @@ class SessionManager:
             logger.info(f"Removing session for {session_id}")
             del self.sessions[session_id]
 
+
 session_manager = SessionManager()
+
 
 async def run_agent[T: AgentInterface](
     request: AgentRequest,
@@ -145,14 +160,24 @@ async def run_agent[T: AgentInterface](
     *args,
     **kwargs,
 ) -> AsyncGenerator[str, None]:
-    logger.info(f"Running agent for session {request.application_id}:{request.trace_id}")
+    logger.info(
+        f"Running agent for session {request.application_id}:{request.trace_id}"
+    )
 
-    async with dagger.Connection(dagger.Config(log_output=open(os.devnull, "w"))) as client:
+    async with dagger.Connection(
+        dagger.Config(log_output=open(os.devnull, "w"))
+    ) as client:
         # Establish Dagger connection for the agent's execution context
-        agent = session_manager.get_or_create_session(client, request, agent_class, *args, **kwargs)
+        agent = session_manager.get_or_create_session(
+            client, request, agent_class, *args, **kwargs
+        )
 
-        event_tx, event_rx = anyio.create_memory_object_stream[AgentSseEvent](max_buffer_size=0)
-        keep_alive_tx = event_tx.clone()  # Clone the sender for use in the keep-alive task
+        event_tx, event_rx = anyio.create_memory_object_stream[AgentSseEvent](
+            max_buffer_size=0
+        )
+        keep_alive_tx = (
+            event_tx.clone()
+        )  # Clone the sender for use in the keep-alive task
         final_state = None
 
         # Use this flag to control the keep-alive task
@@ -179,8 +204,8 @@ async def run_agent[T: AgentInterface](
                                 content="",
                                 messages=[],
                                 agentState=None,
-                                unifiedDiff=None
-                            )
+                                unifiedDiff=None,
+                            ),
                         )
                         await keep_alive_tx.send(keep_alive_event)
                         elapsed = 0.0  # Reset elapsed time
@@ -213,45 +238,71 @@ async def run_agent[T: AgentInterface](
                             # Only log that we'll clean up later - don't do the actual cleanup here
                             # The actual cleanup happens in the finally block
                             if request.agent_state is None:
-                                logger.info(f"Agent idle, will clean up session for {request.application_id}:{request.trace_id} when all events are processed")
+                                logger.info(
+                                    f"Agent idle, will clean up session for {request.application_id}:{request.trace_id} when all events are processed"
+                                )
 
         except* Exception as excgroup:
             for e in excgroup.exceptions:
                 # Log the specific exception from the group with traceback
-                logger.exception(f"Error in SSE generator TaskGroup for trace {request.trace_id}:", exc_info=e)
+                logger.exception(
+                    f"Error in SSE generator TaskGroup for trace {request.trace_id}:",
+                    exc_info=e,
+                )
                 error_event = AgentSseEvent(
                     status=AgentStatus.IDLE,
                     traceId=request.trace_id,
                     message=AgentMessage(
                         role="assistant",
                         kind=MessageKind.RUNTIME_ERROR,
-                        content=json.dumps([{"role": "assistant", "content": [{"type": "text", "text": f"Error processing request: {str(e)}"}]}]),
-                        messages=[ExternalContentBlock(
-                            content=f"Error processing request: {str(e)}",
-                            #timestamp=datetime.datetime.now(datetime.UTC)
-                        )],
+                        content=json.dumps(
+                            [
+                                {
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": f"Error processing request: {str(e)}",
+                                        }
+                                    ],
+                                }
+                            ]
+                        ),
+                        messages=[
+                            ExternalContentBlock(
+                                content=f"Error processing request: {str(e)}",
+                                # timestamp=datetime.datetime.now(datetime.UTC)
+                            )
+                        ],
                         agentState=None,
-                        unifiedDiff=""
-                    )
+                        unifiedDiff="",
+                    ),
                 )
                 # Format error SSE event properly
                 yield f"data: {error_event.to_json()}\n\n"
 
                 # On error, remove the session entirely
-                session_manager.cleanup_session(request.application_id, request.trace_id)
+                session_manager.cleanup_session(
+                    request.application_id, request.trace_id
+                )
         finally:
             # For requests without agent state or where the session completed, clean up
             # Ensure cleanup happens outside the dagger connection if needed, though session removal should be fine
-            if request.agent_state is None and (final_state is None or final_state == {}):
-                logger.info(f"Cleaning up completed agent session for {request.application_id}:{request.trace_id}")
-                session_manager.cleanup_session(request.application_id, request.trace_id)
+            if request.agent_state is None and (
+                final_state is None or final_state == {}
+            ):
+                logger.info(
+                    f"Cleaning up completed agent session for {request.application_id}:{request.trace_id}"
+                )
+                session_manager.cleanup_session(
+                    request.application_id, request.trace_id
+                )
                 clear_trace_id()
 
 
 @app.post("/message", response_model=None)
 async def message(
-    request: AgentRequest,
-    token: str = Depends(verify_token)
+    request: AgentRequest, token: str = Depends(verify_token)
 ) -> StreamingResponse:
     """
     Send a message to the agent and stream responses via SSE.
@@ -277,7 +328,9 @@ async def message(
         Streaming response with SSE events according to the API spec
     """
     try:
-        logger.info(f"Received message request for application {request.application_id}, trace {request.trace_id}")
+        logger.info(
+            f"Received message request for application {request.application_id}, trace {request.trace_id}"
+        )
         set_trace_id(request.trace_id)
         logger.info("Starting SSE stream for application")
         template_id = request.template_id or CONFIG.agent_type
@@ -287,29 +340,24 @@ async def message(
             "template_diff": TemplateDiffAgentImplementation,
             "trpc_agent": TrpcAgentSession,
             "nicegui_agent": NiceguiAgentSession,
-            "laravel_agent": LaravelAgentSession
+            "laravel_agent": LaravelAgentSession,
         }
 
         if template_id not in agent_types:
-            logger.warning(f"Unknown template {template_id}, available types: {agent_types}, falling back to default")
+            logger.warning(
+                f"Unknown template {template_id}, available types: {agent_types}, falling back to default"
+            )
             template_id = CONFIG.agent_type
 
         return StreamingResponse(
-            run_agent(request, agent_types[template_id]),
-            media_type="text/event-stream"
+            run_agent(request, agent_types[template_id]), media_type="text/event-stream"
         )
 
     except Exception as e:
         logger.error(f"Error processing message request: {str(e)}")
         # Return an HTTP error response for non-SSE errors
-        error_response = ErrorResponse(
-            error="Internal Server Error",
-            details=str(e)
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=error_response.to_json()
-        )
+        error_response = ErrorResponse(error="Internal Server Error", details=str(e))
+        raise HTTPException(status_code=500, detail=error_response.to_json())
 
 
 @app.get("/templates")
@@ -317,21 +365,23 @@ async def list_templates():
     """List available templates"""
     return {
         "templates": CONFIG.available_templates,
-        "default": CONFIG.default_template_id
+        "default": CONFIG.default_template_id,
     }
 
 
 @app.get("/health")
 async def dagger_healthcheck():
     """Dagger connection health check endpoint"""
-    async with dagger.Connection(dagger.Config(log_output=open(os.devnull, "w"))) as client:
+    async with dagger.Connection(
+        dagger.Config(log_output=open(os.devnull, "w"))
+    ) as client:
         # Try a simple Dagger operation to verify connectivity
         container = client.container().from_("alpine:latest")
         version = await container.with_exec(["cat", "/etc/alpine-release"]).stdout()
         return {
             "status": "healthy",
             "dagger_connection": "successful",
-            "alpine_version": version.strip()
+            "alpine_version": version.strip(),
         }
 
 
@@ -339,7 +389,7 @@ def main(
     host: str = "0.0.0.0",
     port: int = 8001,
     reload: bool = False,
-    log_level: str = "info"
+    log_level: str = "info",
 ):
     uvicorn.run(
         "api.agent_server.async_server:app",
@@ -349,6 +399,7 @@ def main(
         log_level=log_level,
         log_config=configure_uvicorn_logging(),
     )
+
 
 if __name__ == "__main__":
     Fire(main)

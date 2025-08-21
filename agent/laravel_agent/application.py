@@ -318,7 +318,7 @@ class FSMApplication:
 
         # Temporary fix: exclude .png and .ico files from diffs
         def should_exclude_from_diff(file_path: str) -> bool:
-            return file_path.lower().endswith(('.png', '.ico'))
+            return file_path.lower().endswith((".png", ".ico"))
 
         # Start with empty directory and git init
         start = self.client.container().from_("alpine/git").with_workdir("/app")
@@ -352,34 +352,37 @@ class FSMApplication:
 
         # Exclude .png and .ico files from being tracked by git
         # Using || true to prevent failures if no files are found
-        start = start.with_exec(["sh", "-c", "find . -name '*.png' -o -name '*.ico' | xargs -r git rm --cached || true"])
+        start = start.with_exec(
+            [
+                "sh",
+                "-c",
+                "find . -name '*.png' -o -name '*.ico' | xargs -r git rm --cached || true",
+            ]
+        )
 
         # Add FSM context files on top
-        filtered_ctx_files = {k: v for k, v in self.fsm.context.files.items() if not should_exclude_from_diff(k)}
+        filtered_ctx_files = {
+            k: v
+            for k, v in self.fsm.context.files.items()
+            if not should_exclude_from_diff(k)
+        }
         start = await write_files_bulk(start, filtered_ctx_files, self.client)
 
         logger.info(
             "SERVER get_diff_with: Calling workspace.diff() to generate final diff."
         )
-        diff = ""
-        try:
-            diff = (
-                await start.with_exec(["git", "add", "."])
-                .with_exec(["git", "diff", "HEAD"])
-                .stdout()
+        diff = (
+            await start.with_exec(["git", "add", "."])
+            .with_exec(["git", "diff", "HEAD"])
+            .stdout()
+        )
+        logger.info(
+            f"SERVER get_diff_with: workspace.diff() Succeeded. Diff length: {len(diff)}"
+        )
+        if not diff:
+            logger.warning(
+                "SERVER get_diff_with: Diff output is EMPTY. This might be expected if states match or an issue."
             )
-            logger.info(
-                f"SERVER get_diff_with: workspace.diff() Succeeded. Diff length: {len(diff)}"
-            )
-            if not diff:
-                logger.warning(
-                    "SERVER get_diff_with: Diff output is EMPTY. This might be expected if states match or an issue."
-                )
-        except Exception as e:
-            logger.exception(
-                "SERVER get_diff_with: Error during workspace.diff() execution."
-            )
-            diff = f"# ERROR GENERATING DIFF: {e}"
 
         return diff
 

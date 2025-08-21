@@ -506,36 +506,46 @@ class FSMApplication:
                 ["git", "commit", "-m", "'initial'", "--allow-empty"]
             )
 
+        tree_snapshot = await start.with_exec(["tree"]).stdout()
+        logger.error(f"[ctr tree] [snapshot]\n{tree_snapshot}")
+
         # Add template files (they will appear in diff if not in snapshot)
         template_dir = self.client.host().directory("./nicegui_agent/template")
         start = start.with_directory(".", template_dir)
         logger.info("SERVER get_diff_with: Added template directory to workspace")
 
+        tree_snapshot = await start.with_exec(["tree"]).stdout()
+        logger.error(f"[ctr tree] [template]\n{tree_snapshot}")
+
         # Add FSM context files on top
         start = await write_files_bulk(start, self.fsm.context.files, self.client)
+
+        tree_snapshot = await start.with_exec(["tree"]).stdout()
+        logger.error(f"[ctr tree] [fsm_context]\n{tree_snapshot}")
+        fsm_file_keys = list(self.fsm.context.files.keys())
+        logger.error(f"[fsm context] [files] {fsm_file_keys}")
 
         logger.info(
             "SERVER get_diff_with: Calling workspace.diff() to generate final diff."
         )
-        diff = ""
-        try:
-            diff = (
-                await start.with_exec(["git", "add", "."])
-                .with_exec(["git", "diff", "HEAD"])
-                .stdout()
+        diff = (
+            await start.with_exec(["git", "add", "."])
+            .with_exec(["git", "diff", "HEAD"])
+            .stdout()
+        )
+        logger.info(
+            f"SERVER get_diff_with: workspace.diff() Succeeded. Diff length: {len(diff)}"
+        )
+        if not diff:
+            logger.warning(
+                "SERVER get_diff_with: Diff output is EMPTY. This might be expected if states match or an issue."
             )
-            logger.info(
-                f"SERVER get_diff_with: workspace.diff() Succeeded. Diff length: {len(diff)}"
-            )
-            if not diff:
-                logger.warning(
-                    "SERVER get_diff_with: Diff output is EMPTY. This might be expected if states match or an issue."
-                )
-        except Exception as e:
-            logger.exception(
-                "SERVER get_diff_with: Error during workspace.diff() execution."
-            )
-            diff = f"# ERROR GENERATING DIFF: {e}"
+        diff_names_only = (
+            await start.with_exec(["git", "add", "."])
+            .with_exec(["git", "diff", "HEAD", "--name-only"])
+            .stdout()
+        )
+        logger.error(f"[diff] [names] {diff_names_only}")
 
         return diff
 

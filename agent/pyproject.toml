@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "anthropic[bedrock]>=0.49.0",
     "anyio>=4.9.0",
-    "dagger-io>=0.18.9",
+    "dagger-io>=0.18.16",
     "databricks-sdk>=0.57.0",
     "fastapi>=0.115.12",
     "fire>=0.7.0",

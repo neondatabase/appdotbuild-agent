@@ -160,8 +160,9 @@ class OllamaLLM:
         response = await self.client.chat(**request_params)
 
         # log telemetry - ollama returns token counts in response dict
-        input_tokens = response.get("prompt_eval_count", 0)
-        output_tokens = response.get("eval_count", 0)
+        # use None instead of 0 as default to trigger validation if tokens are missing
+        input_tokens = response.get("prompt_eval_count")
+        output_tokens = response.get("eval_count")
 
         telemetry.log_completion(
             model=chosen_model,

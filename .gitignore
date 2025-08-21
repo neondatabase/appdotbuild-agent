@@ -173,3 +173,4 @@ agent/FSMAppRecovery.ipynb
 agent/app_dumps/*.*
 agent/bin/*.*
 agent/laravel_agent/template_backup_*/**
+agent/benchmark_results*/*

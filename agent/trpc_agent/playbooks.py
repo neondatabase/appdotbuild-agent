@@ -586,7 +586,7 @@ Key project files:
 {{project_context}}
 
 Generate typescript schema, database schema and handlers declarations.
-Use the tools to create or modify files as needed.
+Use the tools to create or modify files as needed and install required packages.
 
 Task:
 {{user_prompt}}
@@ -1111,6 +1111,7 @@ resetDB().then(() => console.log('DB reset successfully'));
 EDIT_ACTOR_USER_PROMPT = """
 {{ project_context }}
 
+Use the tools to create or modify files as needed and install required packages.
 Given original user request:
 {{ user_prompt }}
 Implement solely the required changes according to the user feedback:

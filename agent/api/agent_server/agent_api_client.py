@@ -423,13 +423,33 @@ atexit.register(cleanup_docker_projects)
 
 # Common directories to exclude when collecting project files
 EXCLUDED_DIRS = {
-    "node_modules", "vendor", ".git", "dist", "build", 
-    ".cache", "coverage", "public/build", "storage/logs", 
-    "bootstrap/cache", ".cursor", ".claude", ".github",
-    "__pycache__", ".pytest_cache", ".venv", "venv",
-    ".next", ".nuxt", ".svelte-kit", ".output",
-    "tmp", "temp", ".idea", ".vscode"
+    "node_modules",
+    "vendor",
+    ".git",
+    "dist",
+    "build",
+    ".cache",
+    "coverage",
+    "public/build",
+    "storage/logs",
+    "bootstrap/cache",
+    ".cursor",
+    ".claude",
+    ".github",
+    "__pycache__",
+    ".pytest_cache",
+    ".venv",
+    "venv",
+    ".next",
+    ".nuxt",
+    ".svelte-kit",
+    ".output",
+    "tmp",
+    "temp",
+    ".idea",
+    ".vscode",
 }
+
 
 # Function to get all files from the project directory
 def get_all_files_from_project_dir(project_dir_path: str) -> List[FileEntry]:
@@ -444,7 +464,7 @@ def get_all_files_from_project_dir(project_dir_path: str) -> List[FileEntry]:
     for root, dirs, files in os.walk(project_dir_path):
         # Filter out excluded directories to prevent walking into them
         dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
-        
+
         # Also check if the current directory path contains any excluded patterns
         rel_root = os.path.relpath(root, project_dir_path)
         skip_dir = False
@@ -454,11 +474,12 @@ def get_all_files_from_project_dir(project_dir_path: str) -> List[FileEntry]:
                 break
         if skip_dir:
             continue
-            
+
         for filename in files:
             # Exclude common problematic/temporary files but allow .gitignore
             if (
-                filename.startswith(".") and filename not in {".gitignore", ".env", ".env.example"}
+                filename.startswith(".")
+                and filename not in {".gitignore", ".env", ".env.example"}
             ) or filename.endswith((".patch", ".swp", ".swo", ".rej", ".pyc", ".pyo")):
                 continue
 
@@ -492,6 +513,7 @@ async def run_chatbot_client(
     # .env file itself) but not to the CLI process, causing 401 errors.
     try:
         from dotenv import load_dotenv  # type: ignore
+
         load_dotenv()
     except Exception:
         # Loading .env is best-effort – continue if python-dotenv is not installed.
@@ -520,7 +542,10 @@ async def run_chatbot_client(
         settings_dict["databricks_host"] = os.getenv("DATABRICKS_HOST")
         settings_dict["databricks_token"] = os.getenv("DATABRICKS_TOKEN")
 
-        if not settings_dict["databricks_host"] or not settings_dict["databricks_token"]:
+        if (
+            not settings_dict["databricks_host"]
+            or not settings_dict["databricks_token"]
+        ):
             raise ValueError(
                 "Databricks host and token must be set in environment variables to use Databricks"
             )
@@ -1161,11 +1186,14 @@ def spawn_local_server(
     Args:
         command: Command to run the server as a list of strings
         host: Host to use for connection
-        port: Port to use for connection
+        port: Port to use for connection (can be overridden by AGENT_SERVER_PORT env var)
 
     Yields:
         Tuple of (host, port) for connecting to the server
     """
+    # allow port override via environment variable for concurrent execution
+    port = int(os.getenv("AGENT_SERVER_PORT", port))
+
     proc = None
     std_err_file = None
     temp_dir = None
@@ -1173,8 +1201,14 @@ def spawn_local_server(
     try:
         temp_dir = tempfile.mkdtemp()
         std_err_file = open(os.path.join(temp_dir, "server_stderr.log"), "a+")
+
+        # add port argument to the command if it's different from default
+        cmd = command.copy()
+        if port != 8001:
+            cmd.extend(["--port", str(port)])
+
         proc = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=std_err_file, text=True
+            cmd, stdout=subprocess.PIPE, stderr=std_err_file, text=True
         )
         print(
             f"Local server started, pid {proc.pid}, check `tail -f {std_err_file.name}` for logs"

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from core.base_node import Node
 from core.workspace import Workspace
 from core.actors import BaseData, FileOperationsActor, AgentSearchFailedException
-from llm.common import AsyncLLM, Message, TextRaw, Tool
+from llm.common import AsyncLLM, Message, TextRaw, Tool, ToolUse, ToolUseResult
 from trpc_agent import playbooks
 from trpc_agent.playwright import PlaywrightRunner, drizzle_push
 from core.notification_utils import notify_if_callback, notify_stage
@@ -179,6 +179,7 @@ class TrpcActor(FileOperationsActor):
             allowed=self.paths.files_allowed_draft + self.paths.files_allowed_frontend,
             protected=self.paths.files_protected_frontend,
         )
+        await workspace.exec_mut(["bun", "install"]) # sync deps
         self.workspace = workspace
 
         # Build context with relevant files
@@ -198,7 +199,7 @@ class TrpcActor(FileOperationsActor):
 
         # Search for solution
         solution = await self._search_single_node(
-            root_node, playbooks.EDIT_ACTOR_SYSTEM_PROMPT
+            root_node, playbooks.EDIT_ACTOR_SYSTEM_PROMPT, True
         )
 
         if not solution:
@@ -242,12 +243,17 @@ class TrpcActor(FileOperationsActor):
 
         # Search for solution
         solution = await self._search_single_node(
-            self.draft_node, playbooks.BACKEND_DRAFT_SYSTEM_PROMPT
+            self.draft_node, playbooks.BACKEND_DRAFT_SYSTEM_PROMPT, True
         )
 
         if solution:
             await notify_if_callback(
                 self.event_callback, "✅ Schema and types generated!", "draft complete"
+            )
+        else:
+            raise AgentSearchFailedException(
+                agent_name="TrpcActor",
+                message="Draft generation failed - no solution found",
             )
 
         return solution
@@ -261,6 +267,7 @@ class TrpcActor(FileOperationsActor):
 
         results: dict[str, Node[BaseData]] = {}
 
+        await self.workspace.exec_mut(["bun", "install"]) # sync deps from draft stage
         async with anyio.create_task_group() as tg:
             # Start frontend generation
             tg.start_soon(
@@ -329,10 +336,16 @@ class TrpcActor(FileOperationsActor):
                     if solution:
                         results[f"handler_{handler_name}"] = solution
                         logger.info(f"Handler {handler_name} completed")
+                    else:
+                        await notify_if_callback(
+                            self.event_callback,
+                            f"💥 Handler {handler_name} failed to generate",
+                            "handler failure",
+                        )
 
         await notify_if_callback(
             self.event_callback,
-            "✅ All backend handlers generated!",
+            "✅ Backend handlers generation finished!",
             "handlers complete",
         )
 
@@ -383,9 +396,15 @@ class TrpcActor(FileOperationsActor):
                 "✅ Frontend application generated!",
                 "frontend complete",
             )
+        else:
+            await notify_if_callback(
+                self.event_callback,
+                "💥 Frontend failed to generate, keeping the template page as is",
+                "handler failure",
+            )
 
     async def _search_single_node(
-        self, root_node: Node[BaseData], system_prompt: str
+        self, root_node: Node[BaseData], system_prompt: str, conditional_tools: bool = False,
     ) -> Optional[Node[BaseData]]:
         """Search for solution from a single node."""
         solution: Optional[Node[BaseData]] = None
@@ -404,7 +423,7 @@ class TrpcActor(FileOperationsActor):
             nodes = await self.run_llm(
                 candidates,
                 system_prompt=system_prompt,
-                tools=self.tools,
+                tools=self.tools + (self.conditional_tools if conditional_tools else []),
                 max_tokens=8192,
             )
             logger.info(f"Received {len(nodes)} nodes from LLM")
@@ -599,7 +618,7 @@ class TrpcActor(FileOperationsActor):
             ["bun", "run", "tsc", "--noEmit"], cwd="server"
         )
         if result.exit_code != 0:
-            error_output = result.stdout or result.stderr
+            error_output = f"{result.stdout}\n{result.stderr}"
             return f"TypeScript errors (backend):\n{error_output}"
         return None
 
@@ -609,7 +628,7 @@ class TrpcActor(FileOperationsActor):
             ["bun", "run", "tsc", "-p", "tsconfig.app.json", "--noEmit"], cwd="client"
         )
         if result.exit_code != 0:
-            error_output = result.stdout or result.stderr
+            error_output = f"{result.stdout}\n{result.stderr}"
             return f"TypeScript errors (frontend):\n{error_output}"
         return None
 
@@ -619,7 +638,7 @@ class TrpcActor(FileOperationsActor):
             node.data.workspace.client, node.data.workspace.ctr, postgresdb=None
         )
         if result.exit_code != 0:
-            error_output = result.stderr or result.stdout
+            error_output = f"{result.stdout}\n{result.stderr}"
             return f"Drizzle errors:\n{error_output}"
         return None
 
@@ -627,8 +646,13 @@ class TrpcActor(FileOperationsActor):
         """Run frontend build check."""
         result = await node.data.workspace.exec(["bun", "run", "build"], cwd="client")
         if result.exit_code != 0:
-            error_output = result.stdout or result.stderr
+            error_output = f"{result.stdout}\n{result.stderr}"
             return f"Build errors:\n{error_output}"
+
+        result = await node.data.workspace.exec(["bun", "run", "lint"], cwd="client")
+        if result.exit_code != 0:
+            error_output = f"{result.stdout}\n{result.stderr}"
+            return f"Lint errors:\n{error_output}\n"
         return None
 
     async def run_test_check(
@@ -861,8 +885,71 @@ class TrpcActor(FileOperationsActor):
             return context.split(":", 1)[1]
         return "unknown"
 
+    async def handle_custom_tool(
+        self, tool_use: ToolUse, node: Node[BaseData]
+    ) -> ToolUseResult:
+        """Handle tRPC-specific custom tools."""
+        assert isinstance(tool_use.input, dict), (
+            f"Tool input must be dict, got {type(tool_use.input)}"
+        )
+        match tool_use.name:
+            case "npm_install":
+                packages = tool_use.input["packages"]  # pyright: ignore[reportIndexIssue]
+                target = tool_use.input["target"]  # pyright: ignore[reportIndexIssue]
+
+                match target:
+                    case "server":
+                        cwd = "server"
+                    case "client":
+                        cwd = "client"
+                    case other:
+                        return ToolUseResult.from_tool_use(
+                            tool_use,
+                            f"Invalid target: {other}. Must be 'server' or 'client'",
+                            is_error=True,
+                        )
+
+                node.data.workspace.cwd(cwd)
+                exec_res = await node.data.workspace.exec_mut(
+                    ["bun", "add", " ".join(packages)]
+                )
+                node.data.workspace.cwd("/app")
+                await node.data.workspace.exec_mut(["bun", "install"]) # update root lockfile
+                if exec_res.exit_code != 0:
+                    return ToolUseResult.from_tool_use(
+                        tool_use,
+                        f"Failed to add packages: {exec_res.stderr}",
+                        is_error=True,
+                    )
+                else:
+                    package_path = f"{cwd}/package.json"
+                    node.data.files.update(
+                        {
+                            package_path: await node.data.workspace.read_file(
+                                package_path
+                            ),
+                            "bun.lock": await node.data.workspace.read_file("bun.lock")
+                        }
+                    )
+                    return ToolUseResult.from_tool_use(tool_use, "success")
+            case _:
+                return await super().handle_custom_tool(tool_use, node)
+
     @property
-    def additional_tools(self) -> list[Tool]:
-        """Additional tools specific to tRPC actor."""
-        # Base tools from FileOperationsActor are sufficient
-        return []
+    def conditional_tools(self) -> list[Tool]:
+        """Conditional tools specific to tRPC actor."""
+        tools = [
+            {
+                "name": "npm_install",
+                "description": "Install additional packages",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "packages": {"type": "array", "items": {"type": "string"}},
+                        "target": {"type": "string", "enum": ["server", "client"]},
+                    },
+                    "required": ["packages", "target"],
+                },
+            },
+        ]
+        return tools

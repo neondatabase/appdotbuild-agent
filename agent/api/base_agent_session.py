@@ -45,7 +45,14 @@ class AgentState(TypedDict):
 class BaseAgentSession(AgentInterface, ABC):
     """Base class for agent sessions with common functionality"""
 
-    def __init__(self, client: dagger.Client, fsm_application_class: Type[FSMInterface], application_id: str | None = None, trace_id: str | None = None, settings: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        client: dagger.Client,
+        fsm_application_class: Type[FSMInterface],
+        application_id: str | None = None,
+        trace_id: str | None = None,
+        settings: Optional[Dict[str, Any]] = None,
+    ):
         """Initialize a new agent session"""
         self.application_id = application_id or uuid4().hex
         self.trace_id = trace_id or uuid4().hex
@@ -66,27 +73,21 @@ class BaseAgentSession(AgentInterface, ABC):
         return self.fsm_application_class.template_path()
 
     @staticmethod
-    def convert_agent_messages_to_llm_messages(saved_messages: List[ConversationMessage | InternalMessage]) -> List[InternalMessage]:
+    def convert_agent_messages_to_llm_messages(
+        saved_messages: List[ConversationMessage | InternalMessage],
+    ) -> List[InternalMessage]:
         """Convert ConversationMessage list to LLM InternalMessage format."""
         internal_messages: List[InternalMessage] = []
         for m in saved_messages:
             if isinstance(m, UserMessage):
                 internal_messages.append(
-                    InternalMessage(
-                        role=m.role,
-                        content=[TextRaw(text=m.content)]
-                    )
+                    InternalMessage(role=m.role, content=[TextRaw(text=m.content)])
                 )
             elif isinstance(m, AgentMessage):
                 blocks: List[ContentBlock] = []
                 for block in m.messages or []:
                     blocks.append(TextRaw(text=block.content))
-                internal_messages.append(
-                    InternalMessage(
-                        role=m.role,
-                        content=blocks
-                    )
-                )
+                internal_messages.append(InternalMessage(role=m.role, content=blocks))
             else:
                 raise ValueError(f"Unsupported message type: {type(m)}")
 
@@ -101,7 +102,9 @@ class BaseAgentSession(AgentInterface, ABC):
                 snapshot_files[file_entry.path] = file_entry.content
         return snapshot_files
 
-    async def process(self, request: AgentRequest, event_tx: MemoryObjectSendStream[AgentSseEvent]) -> None:
+    async def process(
+        self, request: AgentRequest, event_tx: MemoryObjectSendStream[AgentSseEvent]
+    ) -> None:
         """
         Process the incoming request and send events to the event stream.
         This is the main method required by the AgentInterface protocol.
@@ -116,11 +119,14 @@ class BaseAgentSession(AgentInterface, ABC):
             # build always valid blank state
             fsm_app = None
             fsm_state: MachineCheckpoint | None = None
-            fsm_message_history = self.convert_agent_messages_to_llm_messages(request.all_messages[-1:])
+            fsm_message_history = self.convert_agent_messages_to_llm_messages(
+                request.all_messages[-1:]
+            )
             metadata: StateMetadata = {
                 "app_name": None,
                 "template_diff_sent": False,
             }
+            snapshot_files = {}
 
             async def emit_intermediate_message(message: str) -> None:
                 logger.info(f"Emitting intermediate message: {message}")
@@ -134,31 +140,50 @@ class BaseAgentSession(AgentInterface, ABC):
                     app_name=metadata["app_name"],
                 )
 
-            fsm_settings = {**self.settings, 'event_callback': emit_intermediate_message}
+            fsm_settings = {
+                **self.settings,
+                "event_callback": emit_intermediate_message,
+            }
 
             if request.agent_state:
                 logger.info(f"Continuing with existing state for trace {self.trace_id}")
-                if (fsm_messages := request.agent_state.get("fsm_messages", [])):
-                    fsm_message_history = [InternalMessage.from_dict(m) for m in fsm_messages] + fsm_message_history
-                if (req_fsm_state := request.agent_state.get("fsm_state")):
+                if fsm_messages := request.agent_state.get("fsm_messages", []):
+                    fsm_message_history = [
+                        InternalMessage.from_dict(m) for m in fsm_messages
+                    ] + fsm_message_history
+                if req_fsm_state := request.agent_state.get("fsm_state"):
                     fsm_state = req_fsm_state
                     if request.all_files:
-                        fsm_state["context"]["files"].update({p.path: p.content for p in request.all_files})  # pyright: ignore
-                    fsm_app = await self.fsm_application_class.load(self.client, req_fsm_state, fsm_settings)
-                    snapshot_saver.save_snapshot(trace_id=self._snapshot_key, key="fsm_enter", data=req_fsm_state)
-                if (req_metadata := request.agent_state.get("metadata")):
+                        fsm_state["context"]["files"].update(
+                            {p.path: p.content for p in request.all_files}
+                        )  # pyright: ignore
+                        snapshot_files.update(
+                            {p.path: p.content for p in request.all_files}
+                        )
+                    fsm_app = await self.fsm_application_class.load(
+                        self.client, req_fsm_state, fsm_settings
+                    )
+                    snapshot_saver.save_snapshot(
+                        trace_id=self._snapshot_key, key="fsm_enter", data=req_fsm_state
+                    )
+                if req_metadata := request.agent_state.get("metadata"):
                     metadata.update(req_metadata)
             else:
                 logger.info(f"Initializing new session for trace {self.trace_id}")
 
             # Unconditional initialization with event callback
-            self.processor_instance = FSMToolProcessor(self.client, self.fsm_application_class, fsm_app=fsm_app, settings=fsm_settings, event_callback=emit_intermediate_message)
+            self.processor_instance = FSMToolProcessor(
+                self.client,
+                self.fsm_application_class,
+                fsm_app=fsm_app,
+                settings=fsm_settings,
+                event_callback=emit_intermediate_message,
+            )
             agent_state: AgentState = {
                 "fsm_messages": fsm_message_history,
                 "fsm_state": fsm_state,
                 "metadata": metadata,
             }
-            snapshot_files = {**fsm_state["context"]["files"]} if fsm_state else {}  # pyright: ignore
 
             # Processing
             logger.info(f"Last user message: {fsm_message_history[-1].content}")
@@ -169,9 +194,7 @@ class BaseAgentSession(AgentInterface, ABC):
             while True:
                 logger.info("Looping into next step")
                 thread, fsm_status, full_thread = await self.processor_instance.step(
-                    agent_state["fsm_messages"],
-                    top_level_agent_llm,
-                    self.model_params
+                    agent_state["fsm_messages"], top_level_agent_llm, self.model_params
                 )
 
                 # Add messages for agentic loop
@@ -179,9 +202,14 @@ class BaseAgentSession(AgentInterface, ABC):
 
                 if self.processor_instance.fsm_app is not None:
                     logger.info("Saving FSM state")
-                    agent_state["fsm_state"] = await self.processor_instance.fsm_app.fsm.dump()
+                    agent_state[
+                        "fsm_state"
+                    ] = await self.processor_instance.fsm_app.fsm.dump()
 
-                if not agent_state["metadata"]["template_diff_sent"] and self.processor_instance.fsm_app is not None:
+                if (
+                    not agent_state["metadata"]["template_diff_sent"]
+                    and self.processor_instance.fsm_app is not None
+                ):
                     prompt = self.processor_instance.fsm_app.fsm.context.user_prompt
                     app_name = await generate_app_name(prompt, lite_client)
                     await self.send_event(
@@ -191,16 +219,22 @@ class BaseAgentSession(AgentInterface, ABC):
                         content="Initializing application...",
                         agent_state=None,
                         unified_diff=None,
-                        app_name=app_name
+                        app_name=app_name,
                     )
 
                     logger.info("Getting initial template diff")
 
                     # Communicate the app name and commit message and template diff to the client
-                    initial_template_diff = await self.processor_instance.fsm_app.get_diff_with({})
+                    initial_template_diff = (
+                        await self.processor_instance.fsm_app.get_diff_with(
+                            snapshot_files
+                        )
+                    )
 
                     logger.info("Sending initial template diff")
-                    agent_state["metadata"].update({"app_name": app_name, "template_diff_sent": True})
+                    agent_state["metadata"].update(
+                        {"app_name": app_name, "template_diff_sent": True}
+                    )
                     await self.send_event(
                         event_tx=event_tx,
                         status=AgentStatus.RUNNING,
@@ -209,21 +243,33 @@ class BaseAgentSession(AgentInterface, ABC):
                         agent_state=None,
                         unified_diff=initial_template_diff,
                         app_name=app_name,
-                        commit_message="Initial commit"
+                        commit_message="Initial commit",
                     )
 
                 # Send event based on FSM status
                 match fsm_status:
                     case FSMStatus.WIP:
-                        logger.info("Got WIP status, skipping sending event due to callback messages were already sent")
+                        logger.info(
+                            "Got WIP status, skipping sending event due to callback messages were already sent"
+                        )
                         continue
                     case FSMStatus.REFINEMENT_REQUEST:
-                        logger.info("Got REFINEMENT_REQUEST status, sending refinement request message")
+                        logger.info(
+                            "Got REFINEMENT_REQUEST status, sending refinement request message"
+                        )
                         # Use the actual LLM response from thread if available
-                        messages_to_send = thread if thread else [InternalMessage(
-                            role="assistant",
-                            content=[TextRaw("Agent is waiting for user input...")]
-                        )]
+                        messages_to_send = (
+                            thread
+                            if thread
+                            else [
+                                InternalMessage(
+                                    role="assistant",
+                                    content=[
+                                        TextRaw("Agent is waiting for user input...")
+                                    ],
+                                )
+                            ]
+                        )
                         await self.send_event(
                             event_tx=event_tx,
                             status=AgentStatus.IDLE,
@@ -239,8 +285,14 @@ class BaseAgentSession(AgentInterface, ABC):
                         is_agent_search_failed = False
 
                         if self.processor_instance.fsm_app:
-                            error_details = self.processor_instance.fsm_app.maybe_error() or "Unknown error"
-                            if hasattr(self.processor_instance.fsm_app, 'is_agent_search_failed_error'):
+                            error_details = (
+                                self.processor_instance.fsm_app.maybe_error()
+                                or "Unknown error"
+                            )
+                            if hasattr(
+                                self.processor_instance.fsm_app,
+                                "is_agent_search_failed_error",
+                            ):
                                 is_agent_search_failed = self.processor_instance.fsm_app.is_agent_search_failed_error()
 
                         logger.error(f"FSM failed with error: {error_details}")
@@ -250,12 +302,13 @@ class BaseAgentSession(AgentInterface, ABC):
                             error_message = error_details
                         else:
                             # Other errors - show with context
-                            error_message = f"An error occurred during processing: {error_details}"
+                            error_message = (
+                                f"An error occurred during processing: {error_details}"
+                            )
 
                         runtime_error_message = InternalMessage(
-                                    role="assistant",
-                                    content=[TextRaw(error_message)]
-                                )
+                            role="assistant", content=[TextRaw(error_message)]
+                        )
                         await self.send_event(
                             event_tx=event_tx,
                             status=AgentStatus.IDLE,
@@ -267,7 +320,11 @@ class BaseAgentSession(AgentInterface, ABC):
                             assert self.processor_instance.fsm_app is not None
                             logger.info("FSM is completed")
 
-                            final_diff = await self.processor_instance.fsm_app.get_diff_with(snapshot_files)
+                            final_diff = (
+                                await self.processor_instance.fsm_app.get_diff_with(
+                                    snapshot_files
+                                )
+                            )
 
                             logger.info(
                                 "Sending completion event with diff (length: %d) for state %s",
@@ -279,11 +336,17 @@ class BaseAgentSession(AgentInterface, ABC):
 
                             # Check if diff is ready
                             if not is_diff_meaningful:
-                                logger.info("No meaningful changes detected, sending work successful without diff")
+                                logger.info(
+                                    "No meaningful changes detected, sending work successful without diff"
+                                )
 
                                 no_changes_message = InternalMessage(
                                     role="assistant",
-                                    content=[TextRaw("No changes were generated by the agent. Please refine your request.")]
+                                    content=[
+                                        TextRaw(
+                                            "No changes were generated by the agent. Please refine your request."
+                                        )
+                                    ],
                                 )
 
                                 await self.send_event(
@@ -304,7 +367,9 @@ class BaseAgentSession(AgentInterface, ABC):
                                 else:
                                     user_request = self.processor_instance.fsm_app.fsm.context.user_prompt
 
-                                commit_message = await generate_commit_message(user_request, lite_client)
+                                commit_message = await generate_commit_message(
+                                    user_request, lite_client
+                                )
 
                                 # Send actual diff in a separate event
                                 await self.send_event(
@@ -315,7 +380,7 @@ class BaseAgentSession(AgentInterface, ABC):
                                     agent_state=agent_state,
                                     unified_diff=final_diff,
                                     app_name=agent_state["metadata"]["app_name"],
-                                    commit_message=commit_message
+                                    commit_message=commit_message,
                                 )
                         except Exception as e:
                             logger.exception(f"Error sending final diff: {e}")
@@ -330,7 +395,7 @@ class BaseAgentSession(AgentInterface, ABC):
                 event_tx=event_tx,
                 status=AgentStatus.IDLE,
                 kind=MessageKind.RUNTIME_ERROR,
-                content=f"Error processing request: {str(e)}"
+                content=f"Error processing request: {str(e)}",
             )
         finally:
             if self.processor_instance.fsm_app is not None:
@@ -361,7 +426,7 @@ class BaseAgentSession(AgentInterface, ABC):
             structured_blocks = [
                 ExternalContentBlock(
                     content=format_internal_message_for_display(x),
-                    #timestamp=datetime.datetime.now(datetime.UTC)
+                    # timestamp=datetime.datetime.now(datetime.UTC)
                 )
                 for x in content
             ]
@@ -369,10 +434,9 @@ class BaseAgentSession(AgentInterface, ABC):
             structured_blocks = [
                 ExternalContentBlock(
                     content=content,
-                    #timestamp=datetime.datetime.now(datetime.UTC)
+                    # timestamp=datetime.datetime.now(datetime.UTC)
                 )
             ]
-
 
         event = AgentSseEvent(
             status=status,
@@ -385,13 +449,19 @@ class BaseAgentSession(AgentInterface, ABC):
                     "fsm_state": agent_state["fsm_state"],
                     "fsm_messages": [x.to_dict() for x in agent_state["fsm_messages"]],
                     "metadata": agent_state["metadata"],
-                } if agent_state else None,
+                }
+                if agent_state
+                else None,
                 unifiedDiff=unified_diff,
-                complete_diff_hash=md5((unified_diff.encode() if unified_diff else b"")).hexdigest() if unified_diff else None,
+                complete_diff_hash=md5(
+                    (unified_diff.encode() if unified_diff else b"")
+                ).hexdigest()
+                if unified_diff
+                else None,
                 diff_stat=None,
                 app_name=app_name,
-                commit_message=commit_message
-            )
+                commit_message=commit_message,
+            ),
         )
         await event_tx.send(event)
         snapshot_saver.save_snapshot(

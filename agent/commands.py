@@ -47,8 +47,22 @@ def run_lint():
     sys.exit(code.returncode)
 
 
-def _run_format(dest="."):
+def _run_format(dest=None):
     os.chdir(_current_dir())
+    
+    if dest is None:
+        # format only files changed in PR by default
+        result = subprocess.run(
+            "git diff --name-only main...HEAD | grep '\\.py$' | grep '^agent/' | sed 's|^agent/||'",
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            dest = result.stdout.strip().replace('\n', ' ')
+        else:
+            dest = "."
+    
     code = subprocess.run(f"uv run ruff format {dest}".split())
     sys.exit(code.returncode)
 
