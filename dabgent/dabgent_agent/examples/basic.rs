@@ -4,7 +4,7 @@ use dabgent_agent::thread::{self};
 use dabgent_agent::toolbox::{self, basic::toolset};
 use dabgent_mq::EventStore;
 use dabgent_mq::db::{Query, sqlite::SqliteStore};
-use dabgent_sandbox::dagger::Sandbox as DaggerSandbox;
+use dabgent_sandbox::dagger::{ConnectOpts, Sandbox as DaggerSandbox};
 use dabgent_sandbox::{Sandbox, SandboxDyn};
 use eyre::Result;
 use rig::client::ProviderClient;
@@ -16,7 +16,8 @@ async fn main() {
 }
 
 async fn run() {
-    dagger_sdk::connect(|client| async move {
+    let opts = ConnectOpts::default();
+    opts.connect(|client| async move {
         let llm = rig::providers::anthropic::Client::from_env();
         let sandbox = sandbox(&client).await?;
         let store = store().await;
