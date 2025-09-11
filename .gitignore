@@ -174,3 +174,9 @@ agent/app_dumps/*.*
 agent/bin/*.*
 agent/laravel_agent/template_backup_*/**
 agent/benchmark_results*/*
+
+# Planning and development files
+.plan
+plan.md
+**/plan.md
+**/.plan

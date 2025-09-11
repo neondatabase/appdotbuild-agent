@@ -24,18 +24,27 @@ impl<T: LLMClient, E: EventStore> Worker<T, E> {
     }
 
     pub async fn run(&self, stream_id: &str, aggregate_id: &str) -> Result<()> {
+        tracing::info!("Worker run() started - stream: {}, aggregate: {}", stream_id, aggregate_id);
         let query = dabgent_mq::db::Query {
             stream_id: stream_id.to_owned(),
             event_type: None,
             aggregate_id: Some(aggregate_id.to_owned()),
         };
         let mut receiver = self.event_store.subscribe::<Event>(&query)?;
+        tracing::info!("Worker subscribed to events");
         while let Some(event) = receiver.next().await {
             if let Err(error) = event {
-                tracing::error!(?error, "llm worker");
+                tracing::error!(?error, "llm worker error receiving event");
                 continue;
             }
-            match event.unwrap() {
+            let event = event.unwrap();
+            tracing::info!("Worker received event: {:?}", match &event {
+                Event::Prompted(msg) => format!("Prompted: {}", &msg[..50.min(msg.len())]),
+                Event::LlmCompleted(_) => "LlmCompleted".to_string(),
+                Event::ToolCompleted(_) => "ToolCompleted".to_string(),
+                Event::UserResponded(_) => "UserResponded".to_string(),
+            });
+            match event {
                 Event::Prompted(..) | Event::ToolCompleted(..) => {
                     let events = self.event_store.load_events::<Event>(&query, None).await?;
                     let mut thread = Thread::fold(&events);

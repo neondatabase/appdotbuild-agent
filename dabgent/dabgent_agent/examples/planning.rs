@@ -1,11 +1,8 @@
-use dabgent_agent::agent::{self};
-use dabgent_agent::handler::Handler;
-use dabgent_agent::thread::{self};
-use dabgent_agent::toolbox::{self, basic::toolset};
-use dabgent_mq::EventStore;
-use dabgent_mq::db::{Query, sqlite::SqliteStore};
+use dabgent_agent::orchestrator::PlanningOrchestrator;
+use dabgent_agent::validator::PythonUvValidator;
+use dabgent_mq::db::sqlite::SqliteStore;
 use dabgent_sandbox::dagger::Sandbox as DaggerSandbox;
-use dabgent_sandbox::{Sandbox, SandboxDyn};
+use dabgent_sandbox::Sandbox;
 use eyre::Result;
 
 #[tokio::main]
@@ -22,109 +19,39 @@ async fn run() {
         let llm = rig::providers::anthropic::Client::new(api_key.as_str());
         let sandbox = sandbox(&client).await?;
         let store = store().await;
-
-        let tools = toolset(Validator);
-        let planning_worker = agent::Worker::new(llm, store.clone(), SYSTEM_PROMPT.to_owned(), tools);
-
-        let tools = toolset(Validator);
-        let mut sandbox_worker = agent::ToolWorker::new(sandbox.boxed(), store.clone(), tools);
-
-        tokio::spawn(async move {
-            let _ = planning_worker.run("planning", "thread").await;
-        });
-        tokio::spawn(async move {
-            let _ = sandbox_worker.run("planning", "thread").await;
-        });
-
-        let event = thread::Event::Prompted(
-            "Implement a service that takes CSV file as input and produces Hypermedia API as output. Make sure to run it in such a way it does not block the agent while running (it will be run by uv run main.py command)".to_owned(),
+        
+        let orchestrator = PlanningOrchestrator::new(
+            store.clone(),
+            "example".to_string(),
+            "demo".to_string()
         );
-        store
-            .push_event("planning", "thread", &event, &Default::default())
-            .await?;
-
-        let query = Query {
-            stream_id: "planning".to_owned(),
-            event_type: None,
-            aggregate_id: Some("thread".to_owned()),
-        };
-
-        let mut receiver = store.subscribe::<thread::Event>(&query)?;
-        let mut events = store.load_events(&query, None).await?;
-        let idle_timeout = std::time::Duration::from_secs(60);
-        loop {
-            match tokio::time::timeout(idle_timeout, receiver.next()).await {
-                Ok(Some(Ok(event))) => {
-                    events.push(event.clone());
-                    let thread = thread::Thread::fold(&events);
-                    tracing::info!(?thread.state, ?event, "event");
-                    if let thread::State::Done = thread.state {
-                        break;
-                    }
-                }
-                Ok(Some(Err(e))) => {
-                    tracing::error!(error = ?e, "event stream error");
-                    continue;
-                }
-                Ok(None) => {
-                    tracing::warn!("event stream closed");
-                    break;
-                }
-                Err(_) => {
-                    tracing::warn!("no events for 60s, exiting");
-                    break;
-                }
-            }
-        }
-
+        
+        orchestrator.setup_workers(sandbox.boxed(), llm, PythonUvValidator).await?;
+        
+        let task = "Implement a service that takes CSV file as input and produces Hypermedia API as output. Make sure to run it in such a way it does not block the agent while running (it will be run by uv run main.py command)";
+        orchestrator.process_message(task.to_string()).await?;
+        
+        orchestrator.monitor_progress(|status| Box::pin(async move {
+            tracing::info!("Status: {}", status);
+            Ok(())
+        })).await?;
         Ok(())
-    })
-    .await
-    .unwrap();
+    }).await.unwrap();
 }
 
 async fn sandbox(client: &dagger_sdk::DaggerConn) -> Result<DaggerSandbox> {
     let opts = dagger_sdk::ContainerBuildOptsBuilder::default()
         .dockerfile("Dockerfile")
         .build()?;
-    let ctr = client
-        .container()
-        .build_opts(client.host().directory("./examples"), opts);
+    let ctr = client.container().build_opts(client.host().directory("./examples"), opts);
     ctr.sync().await?;
-    let sandbox = DaggerSandbox::from_container(ctr);
-    Ok(sandbox)
+    Ok(DaggerSandbox::from_container(ctr))
 }
 
 async fn store() -> SqliteStore {
-    let pool = sqlx::SqlitePool::connect(":memory:")
-        .await
+    let pool = sqlx::SqlitePool::connect(":memory:").await
         .expect("Failed to create in-memory SQLite pool");
     let store = SqliteStore::new(pool);
     store.migrate().await;
     store
-}
-
-const SYSTEM_PROMPT: &str = "
-You are a python software engineer.
-Workspace is already set up using uv init.
-Use uv package manager if you need to add extra libraries.
-Program will be run using uv run main.py command.
-You are also a planning expert who breaks down complex tasks to planning.md file and updates them there after each step.
-";
-
-pub struct Validator;
-
-impl toolbox::Validator for Validator {
-    async fn run(&self, sandbox: &mut Box<dyn SandboxDyn>) -> Result<Result<(), String>> {
-        // Delegate timeout to Dagger via DAGGER_EXEC_TIMEOUT_SECS
-        // Here we just run the command and interpret exit codes
-        let result = sandbox.exec("uv run main.py").await?;
-        Ok(match result.exit_code {
-            0 | 124 => Ok(()),
-            code => Err(format!(
-                "code: {}\nstdout: {}\nstderr: {}",
-                code, result.stdout, result.stderr
-            )),
-        })
-    }
 }

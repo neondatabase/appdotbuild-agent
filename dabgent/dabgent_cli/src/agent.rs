@@ -1,57 +1,130 @@
 use crate::session::{ChatCommand, ChatEvent, ChatSession};
 use dabgent_agent::handler::Handler;
+use dabgent_agent::orchestrator::PlanningOrchestrator;
+use dabgent_agent::validator::PythonUvValidator;
 use dabgent_mq::db::{EventStore, Metadata, Query};
+use dabgent_sandbox::dagger::Sandbox as DaggerSandbox;
+use dabgent_sandbox::Sandbox;
+use std::env;
 
-pub struct MockAgent<S: EventStore> {
+pub struct Agent<S: EventStore> {
     store: S,
     stream_id: String,
     aggregate_id: String,
 }
 
-impl<S: EventStore> MockAgent<S> {
+impl<S: EventStore> Agent<S> {
     pub fn new(store: S, stream_id: String, aggregate_id: String) -> Self {
-        Self {
-            store,
-            stream_id,
-            aggregate_id,
-        }
+        Self { store, stream_id, aggregate_id }
     }
 
     pub async fn run(self) -> color_eyre::Result<()> {
-        let query = Query {
-            stream_id: self.stream_id.clone(),
-            event_type: Some("user_message".to_string()),
-            aggregate_id: Some(self.aggregate_id.clone()),
-        };
-        let mut event_stream = self.store.subscribe::<ChatEvent>(&query)?;
-        while let Some(result) = event_stream.next().await {
-            match result {
-                Ok(ChatEvent::UserMessage { content, .. }) => {
-                    let all_query = Query {
-                        stream_id: self.stream_id.clone(),
-                        event_type: None,
-                        aggregate_id: Some(self.aggregate_id.clone()),
-                    };
-                    let events = self
-                        .store
-                        .load_events::<ChatEvent>(&all_query, None)
-                        .await?;
-                    let mut session = ChatSession::fold(&events);
-                    let command = ChatCommand::AgentRespond(format!("I received: {}", content));
-                    let new_events = session.process(command)?;
-                    let metadata = Metadata::default();
-                    for event in new_events {
-                        self.store
-                            .push_event(&self.stream_id, &self.aggregate_id, &event, &metadata)
-                            .await?;
+        dagger_sdk::connect(|client| async move {
+            let sandbox = create_sandbox(&client).await?;
+            let llm = create_llm()?;
+            
+            let orchestrator = PlanningOrchestrator::new(
+                self.store.clone(),
+                self.stream_id.clone(),
+                self.aggregate_id.clone()
+            );
+            
+            orchestrator.setup_workers(sandbox.boxed(), llm, PythonUvValidator).await?;
+            
+            let mut event_stream = self.store.subscribe::<ChatEvent>(&Query {
+                stream_id: self.stream_id.clone(),
+                event_type: Some("user_message".to_string()),
+                aggregate_id: Some(self.aggregate_id.clone()),
+            })?;
+            
+            while let Some(Ok(ChatEvent::UserMessage { content, .. })) = event_stream.next().await {
+                tracing::info!("CLI Agent received user message: {}", content);           
+                orchestrator.process_message(content.clone()).await?;
+                tracing::info!("Message forwarded to Orchestrator");
+                
+                let store = self.store.clone();
+                let stream_id = self.stream_id.clone();
+                let aggregate_id = self.aggregate_id.clone();
+                
+                let monitor_orchestrator = PlanningOrchestrator::new(
+                    store.clone(),
+                    stream_id.clone(),
+                    aggregate_id.clone()
+                );
+                
+                tokio::spawn(async move {
+                    let result = monitor_orchestrator.monitor_progress(move |status| {
+                        let store = store.clone();
+                        let stream_id = stream_id.clone();
+                        let aggregate_id = aggregate_id.clone();
+                        Box::pin(async move {
+                            tracing::info!("Forwarding status to CLI: {}", status);
+                            send_agent_message(&store, &stream_id, &aggregate_id, status).await
+                                .map_err(|e| eyre::eyre!(e))
+                        })
+                    }).await;
+                    
+                    if let Err(e) = result {
+                        tracing::error!("Error monitoring progress: {}", e);
                     }
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::error!("Error receiving event: {}", e);
-                }
+                });
             }
-        }
+            Ok(())
+        }).await?;
         Ok(())
     }
+}
+
+async fn send_agent_message<S: EventStore>(
+    store: &S,
+    stream_id: &str,
+    aggregate_id: &str,
+    content: String,
+) -> color_eyre::Result<()> {
+    tracing::info!("Sending agent message to stream: {}, aggregate: {}", stream_id, aggregate_id);
+    let events = store.load_events::<ChatEvent>(&Query {
+        stream_id: stream_id.to_string(),
+        event_type: None,
+        aggregate_id: Some(aggregate_id.to_string()),
+    }, None).await?;
+    
+    let mut session = ChatSession::fold(&events);
+    let new_events = session.process(ChatCommand::AgentRespond(content.clone()))?;
+    
+    tracing::info!("Publishing {} ChatEvent(s) for agent response", new_events.len());
+    for event in new_events {
+        store.push_event(stream_id, aggregate_id, &event, &Metadata::default()).await?;
+    }
+    tracing::info!("Agent message published: {}", content);
+    Ok(())
+}
+
+fn create_llm() -> color_eyre::Result<rig::providers::anthropic::Client> {
+    Ok(rig::providers::anthropic::Client::new(
+        &env::var("ANTHROPIC_API_KEY")
+            .or_else(|_| env::var("OPENAI_API_KEY"))
+            .map_err(|_| eyre::eyre!("Please set ANTHROPIC_API_KEY or OPENAI_API_KEY"))?
+    ))
+}
+
+async fn create_sandbox(client: &dagger_sdk::DaggerConn) -> color_eyre::Result<DaggerSandbox> {
+    let dockerfile = env::var("SANDBOX_DOCKERFILE").unwrap_or_else(|_| "Dockerfile".to_owned());
+    let context_dir = env::var("SANDBOX_CONTEXT_DIR")
+        .unwrap_or_else(|_| {
+            let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            path.push("../dabgent_agent/examples");
+            path.canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from("./dabgent_agent/examples"))
+                .to_string_lossy()
+                .to_string()
+        });
+    
+    let ctr = client.container().build_opts(
+        client.host().directory(&context_dir),
+        dagger_sdk::ContainerBuildOptsBuilder::default()
+            .dockerfile(dockerfile.as_str())
+            .build()?
+    );
+    ctr.sync().await?;
+    Ok(DaggerSandbox::from_container(ctr))
 }

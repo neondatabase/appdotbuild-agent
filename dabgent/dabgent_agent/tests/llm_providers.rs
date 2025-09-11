@@ -6,6 +6,7 @@ const GEMINI_MODEL: &str = "gemini-2.5-flash";
 
 #[tokio::test]
 async fn test_anthropic_text() {
+    dotenvy::dotenv().ok();
     let client = rig::providers::anthropic::Client::from_env();
     let completion = Completion::new(
         ANTHROPIC_MODEL.to_string(),
@@ -18,6 +19,7 @@ async fn test_anthropic_text() {
 
 #[tokio::test]
 async fn test_gemini_text() {
+    dotenvy::dotenv().ok();
     let client = rig::providers::gemini::Client::from_env();
     let completion = Completion::new(
         GEMINI_MODEL.to_string(),

@@ -19,7 +19,7 @@ pub trait Sandbox {
 
     fn boxed(self) -> Box<dyn SandboxDyn>
     where
-        Self: Sized + Send + Sync + 'static,
+        Self: Sized + Clone + Send + Sync + 'static,
     {
         Box::new(self)
     }
@@ -47,9 +47,11 @@ pub trait SandboxDyn: Send + Sync {
         &'a self,
         path: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + 'a>>;
+    
+    fn clone_box(&self) -> Box<dyn SandboxDyn>;
 }
 
-impl<T: Sandbox + Send + Sync> SandboxDyn for T {
+impl<T: Sandbox + Clone + Send + Sync + 'static> SandboxDyn for T {
     fn exec<'a>(
         &'a mut self,
         command: &'a str,
@@ -84,6 +86,10 @@ impl<T: Sandbox + Send + Sync> SandboxDyn for T {
         path: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + 'a>> {
         Box::pin(self.list_directory(path))
+    }
+    
+    fn clone_box(&self) -> Box<dyn SandboxDyn> {
+        Box::new(self.clone())
     }
 }
 

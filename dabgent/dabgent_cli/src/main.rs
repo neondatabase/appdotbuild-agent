@@ -1,4 +1,4 @@
-use dabgent_cli::{App, agent::MockAgent};
+use dabgent_cli::{App, agent::Agent};
 use dabgent_mq::db::sqlite::SqliteStore;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -15,7 +15,7 @@ async fn main() -> color_eyre::Result<()> {
     let stream_id = format!("{session_id}_session");
     let aggregate_id = format!("{session_id}_cli");
 
-    let agent = MockAgent::new(store.clone(), stream_id.clone(), aggregate_id.clone());
+    let agent = Agent::new(store.clone(), stream_id.clone(), aggregate_id.clone());
     tokio::spawn(agent.run());
 
     let terminal = ratatui::init();
