@@ -10,7 +10,7 @@ use uuid::Uuid;
 struct Args {
     #[arg(long, default_value = ":memory:")]
     database: String,
-    
+
     /// Load environment from .env file
     #[arg(long, default_value = "true")]
     dotenv: bool,
@@ -18,11 +18,13 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
+    // dabgent_cli::agent_ui::demo().await?;
     color_eyre::install()?;
-    tracing_subscriber::fmt::init();
-    
+
     let args = Args::parse();
-    if args.dotenv { let _ = dotenvy::dotenv(); }
+    if args.dotenv {
+        let _ = dotenvy::dotenv();
+    }
     let pool = SqlitePool::connect(&args.database).await?;
     let store = SqliteStore::new(pool);
     store.migrate().await;
@@ -34,7 +36,7 @@ async fn main() -> color_eyre::Result<()> {
     println!("🚀 Starting Dabgent with Planning Agent");
     println!("📝 Make sure to set ANTHROPIC_API_KEY in your environment");
     println!("🐳 Dagger will be used for sandboxed execution\n");
-    
+
     let agent = Agent::new(store.clone(), stream_id.clone(), aggregate_id.clone());
     tokio::spawn(agent.run());
 

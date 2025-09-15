@@ -1,5 +1,7 @@
 pub mod agent;
+pub mod agent_ui;
 pub mod app;
+pub mod event_widget;
 pub mod events;
 pub mod session;
 pub mod ui;
