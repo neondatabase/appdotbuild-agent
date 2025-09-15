@@ -1,4 +1,4 @@
-use crate::agent::{Worker, ToolWorker};
+use crate::agent::{ToolWorker, Worker};
 use crate::handler::Handler;
 use crate::thread::{self, Thread};
 use crate::toolbox::{self, basic::toolset};
@@ -8,7 +8,6 @@ use eyre;
 use std::env;
 use std::future::Future;
 use std::pin::Pin;
-use tokio_stream::StreamExt;
 
 const DEFAULT_SYSTEM_PROMPT: &str = "
 You are a python software engineer.
@@ -21,11 +20,17 @@ You are also a planning expert who breaks down complex tasks to planning.md file
 pub struct PlannerValidator;
 
 impl toolbox::Validator for PlannerValidator {
-    async fn run(&self, sandbox: &mut Box<dyn SandboxDyn>) -> Result<Result<(), String>, eyre::Report> {
+    async fn run(
+        &self,
+        sandbox: &mut Box<dyn SandboxDyn>,
+    ) -> Result<Result<(), String>, eyre::Report> {
         let result = sandbox.exec("uv run main.py").await?;
         Ok(match result.exit_code {
             0 | 124 => Ok(()),
-            code => Err(format!("code: {}\nstdout: {}\nstderr: {}", code, result.stdout, result.stderr)),
+            code => Err(format!(
+                "code: {}\nstdout: {}\nstderr: {}",
+                code, result.stdout, result.stderr
+            )),
         })
     }
 }
@@ -38,39 +43,50 @@ pub struct PlanningAgent<S: EventStore> {
 
 impl<S: EventStore> PlanningAgent<S> {
     pub fn new(store: S, base_stream_id: String, _base_aggregate_id: String) -> Self {
-        Self { 
-            store, 
+        Self {
+            store,
             planning_stream_id: format!("{}_planning", base_stream_id),
             planning_aggregate_id: "thread".to_string(),
         }
     }
 
     pub async fn process_message(&self, content: String) -> eyre::Result<()> {
-        self.store.push_event(
-            &self.planning_stream_id,
-            &self.planning_aggregate_id,
-            &thread::Event::Prompted(content),
-            &Metadata::default()
-        ).await?;
+        self.store
+            .push_event(
+                &self.planning_stream_id,
+                &self.planning_aggregate_id,
+                &thread::Event::Prompted(content),
+                &Metadata::default(),
+            )
+            .await?;
         Ok(())
     }
 
-    pub async fn setup_workers(self, sandbox: Box<dyn SandboxDyn>, llm: rig::providers::anthropic::Client) -> eyre::Result<()> {
+    pub async fn setup_workers(
+        self,
+        sandbox: Box<dyn SandboxDyn>,
+        llm: rig::providers::anthropic::Client,
+    ) -> eyre::Result<()> {
         let tools = toolset(PlannerValidator);
         let planning_worker = Worker::new(
-            llm.clone(), 
-            self.store.clone(), 
+            llm.clone(),
+            self.store.clone(),
+            "claude-sonnet-4-20250514".to_owned(),
             env::var("SYSTEM_PROMPT").unwrap_or_else(|_| DEFAULT_SYSTEM_PROMPT.to_owned()),
-            tools
+            tools.iter().map(|tool| tool.definition()).collect(),
         );
         let tools = toolset(PlannerValidator);
         let mut sandbox_worker = ToolWorker::new(sandbox, self.store.clone(), tools);
         let stream = self.planning_stream_id.clone();
         let aggregate = self.planning_aggregate_id.clone();
-        tokio::spawn(async move { let _ = planning_worker.run(&stream, &aggregate).await; });
+        tokio::spawn(async move {
+            let _ = planning_worker.run(&stream, &aggregate).await;
+        });
         let stream = self.planning_stream_id.clone();
         let aggregate = self.planning_aggregate_id.clone();
-        tokio::spawn(async move { let _ = sandbox_worker.run(&stream, &aggregate).await; });
+        tokio::spawn(async move {
+            let _ = sandbox_worker.run(&stream, &aggregate).await;
+        });
         Ok(())
     }
 
@@ -83,11 +99,17 @@ impl<S: EventStore> PlanningAgent<S> {
             event_type: None,
             aggregate_id: Some(self.planning_aggregate_id.clone()),
         })?;
-        let mut events = self.store.load_events(&Query {
-            stream_id: self.planning_stream_id.clone(),
-            event_type: None,
-            aggregate_id: Some(self.planning_aggregate_id.clone()),
-        }, None).await?;
+        let mut events = self
+            .store
+            .load_events(
+                &Query {
+                    stream_id: self.planning_stream_id.clone(),
+                    event_type: None,
+                    aggregate_id: Some(self.planning_aggregate_id.clone()),
+                },
+                None,
+            )
+            .await?;
         let timeout = std::time::Duration::from_secs(300);
         loop {
             match tokio::time::timeout(timeout, receiver.next()).await {

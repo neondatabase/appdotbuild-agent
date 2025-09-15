@@ -5,20 +5,33 @@ use crate::toolbox::{ToolCallExt, ToolDyn};
 use dabgent_mq::EventStore;
 use dabgent_sandbox::SandboxDyn;
 use eyre::Result;
+use rig::completion::ToolDefinition;
 
 pub struct Worker<T: LLMClient, E: EventStore> {
     llm: T,
     event_store: E,
+    model: String,
     preamble: String,
-    tools: Vec<Box<dyn ToolDyn>>,
+    temperature: f64,
+    max_tokens: u64,
+    tools: Vec<ToolDefinition>,
 }
 
 impl<T: LLMClient, E: EventStore> Worker<T, E> {
-    pub fn new(llm: T, event_store: E, preamble: String, tools: Vec<Box<dyn ToolDyn>>) -> Self {
+    pub fn new(
+        llm: T,
+        event_store: E,
+        model: String,
+        preamble: String,
+        tools: Vec<ToolDefinition>,
+    ) -> Self {
         Worker {
             llm,
             event_store,
+            model,
             preamble,
+            temperature: 1.0,
+            max_tokens: 8192,
             tools,
         }
     }
@@ -54,16 +67,25 @@ impl<T: LLMClient, E: EventStore> Worker<T, E> {
     }
 
     pub async fn completion(&self, thread: &Thread) -> Result<CompletionResponse> {
-        const MODEL: &str = "claude-sonnet-4-20250514";
         let mut history = thread.messages.clone();
         let message = history.pop().expect("No messages");
-        let completion = Completion::new(MODEL.to_owned(), message)
+        let completion = Completion::new(self.model.clone(), message)
             .history(history)
             .preamble(self.preamble.clone())
-            .tools(self.tools.iter().map(|tool| tool.definition()).collect())
-            .temperature(1.0)
-            .max_tokens(8192);
+            .tools(self.tools.clone())
+            .temperature(self.temperature)
+            .max_tokens(self.max_tokens);
         self.llm.completion(completion).await
+    }
+
+    pub fn temperature(mut self, temperature: f64) -> Self {
+        self.temperature = temperature;
+        self
+    }
+
+    pub fn max_tokens(mut self, max_tokens: u64) -> Self {
+        self.max_tokens = max_tokens;
+        self
     }
 }
 

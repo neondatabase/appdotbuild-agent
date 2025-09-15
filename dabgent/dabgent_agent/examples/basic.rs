@@ -23,7 +23,13 @@ async fn run() {
         let store = store().await;
 
         let tools = toolset(Validator);
-        let llm_worker = agent::Worker::new(llm, store.clone(), SYSTEM_PROMPT.to_owned(), tools);
+        let llm_worker = agent::Worker::new(
+            llm,
+            store.clone(),
+            "claude-sonnet-4-20250514".to_owned(),
+            SYSTEM_PROMPT.to_owned(),
+            tools.iter().map(|tool| tool.definition()).collect(),
+        );
 
         let tools = toolset(Validator);
         let mut sandbox_worker = agent::ToolWorker::new(sandbox.boxed(), store.clone(), tools);
