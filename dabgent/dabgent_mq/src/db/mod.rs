@@ -11,13 +11,13 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Event {
+pub struct Event<T> {
     pub stream_id: String,
     pub event_type: String,
     pub aggregate_id: String,
     pub sequence: i64,
     pub event_version: String,
-    pub data: JsonValue,
+    pub data: T,
     pub metadata: JsonValue,
     pub created_at: DateTime<Utc>,
 }
@@ -94,9 +94,9 @@ pub trait EventStore: Clone + Send + Sync + 'static {
         &self,
         query: &Query,
         sequence: Option<i64>,
-    ) -> impl Future<Output = Result<Vec<Event>, Error>> + Send;
+    ) -> impl Future<Output = Result<Vec<Event<JsonValue>>, Error>> + Send;
 
-    fn get_watchers(&self) -> &Arc<Mutex<SubscriberMap<Event>>>;
+    fn get_watchers(&self) -> &Arc<Mutex<SubscriberMap<Event<JsonValue>>>>;
 
     fn subscribe<T: models::Event + 'static>(
         &self,
@@ -148,13 +148,29 @@ pub trait EventStore: Clone + Send + Sync + 'static {
     }
 }
 
+impl Event<JsonValue> {
+    pub fn from_value<T: serde::de::DeserializeOwned>(self) -> Result<Event<T>, Error> {
+        let data = serde_json::from_value::<T>(self.data).map_err(Error::Serialization)?;
+        Ok(Event {
+            stream_id: self.stream_id,
+            event_type: self.event_type,
+            aggregate_id: self.aggregate_id,
+            sequence: self.sequence,
+            event_version: self.event_version,
+            metadata: self.metadata,
+            created_at: self.created_at,
+            data,
+        })
+    }
+}
+
 pub struct EventStream<T: models::Event> {
-    rx: mpsc::UnboundedReceiver<Event>,
+    rx: mpsc::UnboundedReceiver<Event<JsonValue>>,
     _marker: std::marker::PhantomData<T>,
 }
 
 impl<T: models::Event> EventStream<T> {
-    pub fn new(rx: mpsc::UnboundedReceiver<Event>) -> Self {
+    pub fn new(rx: mpsc::UnboundedReceiver<Event<JsonValue>>) -> Self {
         Self {
             rx,
             _marker: std::marker::PhantomData,
@@ -162,13 +178,11 @@ impl<T: models::Event> EventStream<T> {
     }
 
     pub async fn next(&mut self) -> Option<Result<T, Error>> {
-        match self.rx.recv().await {
-            Some(event) => match serde_json::from_value::<T>(event.data) {
-                Ok(typed_event) => Some(Ok(typed_event)),
-                Err(err) => Some(Err(Error::Serialization(err))),
-            },
-            None => None,
-        }
+        self.next_full().await.map(|r| r.map(|e| e.data))
+    }
+
+    pub async fn next_full(&mut self) -> Option<Result<Event<T>, Error>> {
+        self.rx.recv().await.map(Event::from_value)
     }
 }
 

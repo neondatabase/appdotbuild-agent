@@ -1,6 +1,6 @@
 use crate::db::*;
 use chrono::Utc;
-use serde_json;
+use serde_json::Value as JsonValue;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -11,7 +11,7 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/sqlite")
 #[derive(Clone)]
 pub struct SqliteStore {
     pool: SqlitePool,
-    watchers: Arc<Mutex<HashMap<Query, Vec<mpsc::UnboundedSender<Event>>>>>,
+    watchers: Arc<Mutex<HashMap<Query, Vec<mpsc::UnboundedSender<Event<JsonValue>>>>>>,
     write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -102,9 +102,9 @@ impl EventStore for SqliteStore {
         &self,
         query: &Query,
         sequence: Option<i64>,
-    ) -> Result<Vec<Event>, Error> {
+    ) -> Result<Vec<Event<JsonValue>>, Error> {
         let (sql, params) = Self::build_query(query, sequence);
-        let mut sqlx_query = sqlx::query_as::<_, Event>(&sql);
+        let mut sqlx_query = sqlx::query_as::<_, Event<JsonValue>>(&sql);
         for param in params.iter() {
             sqlx_query = sqlx_query.bind(param);
         }
@@ -115,7 +115,9 @@ impl EventStore for SqliteStore {
         Ok(events)
     }
 
-    fn get_watchers(&self) -> &Arc<Mutex<HashMap<Query, Vec<mpsc::UnboundedSender<Event>>>>> {
+    fn get_watchers(
+        &self,
+    ) -> &Arc<Mutex<HashMap<Query, Vec<mpsc::UnboundedSender<Event<JsonValue>>>>>> {
         &self.watchers
     }
 }
