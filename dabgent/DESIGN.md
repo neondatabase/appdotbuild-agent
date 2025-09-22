@@ -16,40 +16,127 @@ Dabgent is a modular AI agent orchestration system built in Rust that enables au
 
 ### 2.1 High-Level Architecture
 
+![System Architecture](docs/images/architecture.png)
+
+<details>
+<summary>View Mermaid Source</summary>
+
+```mermaid
+graph TB
+    subgraph "User Interface Layer"
+        CLI[dabgent_cli<br/>Terminal UI]
+        API[dabgent_fastapi<br/>REST API]
+    end
+
+    subgraph "Core Agent Layer"
+        AGENT[dabgent_agent]
+        PIPELINE[Pipeline System]
+        PROCESSOR[Event Processor]
+        LLM[LLM Integration]
+    end
+
+    subgraph "Service Layer"
+        MQ[dabgent_mq<br/>Message Queue]
+        SANDBOX[dabgent_sandbox<br/>Dagger Integration]
+    end
+
+    subgraph "Infrastructure"
+        TOKIO[Tokio Runtime]
+        DB[(PostgreSQL)]
+        FS[File System]
+    end
+
+    CLI --> AGENT
+    API --> AGENT
+    AGENT --> PIPELINE
+    PIPELINE --> PROCESSOR
+    PROCESSOR --> LLM
+    AGENT --> MQ
+    AGENT --> SANDBOX
+    MQ --> DB
+    SANDBOX --> FS
+
+    style AGENT fill:#f9f,stroke:#333,stroke-width:4px
+    style CLI fill:#bbf,stroke:#333,stroke-width:2px
+    style SANDBOX fill:#fbf,stroke:#333,stroke-width:2px
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         User Layer                          │
-├─────────────────────────────────────────────────────────────┤
-│                    dabgent_cli (TUI)                        │
-│                    dabgent_fastapi (REST API)               │
-├─────────────────────────────────────────────────────────────┤
-│                      Core Engine Layer                       │
-├──────────────┬───────────────┬──────────────────────────────┤
-│              │               │                              │
-│  Planning    │   Pipeline    │        Agent                 │
-│  Module      │   System      │        Workers               │
-│              │               │                              │
-├──────────────┴───────────────┴──────────────────────────────┤
-│                    Integration Layer                         │
-├──────────────┬───────────────┬──────────────┬──────────────┤
-│     LLM      │    Toolbox    │   Sandbox    │   Message    │
-│   Providers  │    System     │  Environment │    Queue     │
-├──────────────┴───────────────┴──────────────┴──────────────┤
-│                    Infrastructure Layer                      │
-├─────────────────────────────────────────────────────────────┤
-│         Tokio Runtime | Database | File System              │
-└─────────────────────────────────────────────────────────────┘
-```
+</details>
 
 ### 2.2 Component Overview
 
-| Component | Responsibility | Key Interfaces |
-|-----------|---------------|----------------|
-| **dabgent_agent** | Core agent logic, LLM integration, task execution | Worker, Pipeline, Planning |
-| **dabgent_cli** | Terminal UI, user interaction, command parsing | Agent, App, Args |
-| **dabgent_mq** | Message queue for inter-component communication | Publisher, Subscriber |
-| **dabgent_sandbox** | Isolated execution environment for tools | Sandbox trait, FileOps |
-| **dabgent_fastapi** | REST API endpoints for external integration | HTTP handlers |
+| Component | Responsibility | Key Interfaces | Internal Modules |
+|-----------|---------------|----------------|------------------|
+| **dabgent_agent** | Core agent logic, LLM integration, task execution | `Processor`, `Pipeline`, `Completion` | `event.rs`, `llm.rs`, `processor.rs` |
+| **dabgent_cli** | Terminal UI, user interaction, command parsing | `App`, `Agent`, `Session` | `main.rs`, `app.rs`, `ui.rs`, `widgets.rs`, `events.rs` |
+| **dabgent_mq** | Message queue for inter-component communication | `Publisher`, `Subscriber` | `models.rs`, database integration |
+| **dabgent_sandbox** | Isolated execution environment for tools | `Sandbox`, `DaggerClient` | `dagger.rs`, container orchestration |
+| **dabgent_fastapi** | REST API endpoints for external integration | `Toolset`, `Validator` | `toolset.rs`, `validator.rs` |
+
+### 2.3 Dependency Graph
+
+![Dependency Graph](docs/images/dependencies.png)
+
+<details>
+<summary>View Mermaid Source</summary>
+
+```mermaid
+graph LR
+    CLI[dabgent_cli] --> AGENT[dabgent_agent]
+    AGENT --> MQ[dabgent_mq]
+    AGENT --> SANDBOX[dabgent_sandbox]
+
+    AGENT --> RIG[rig-core]
+    AGENT --> TOKIO[tokio]
+    MQ --> SQLX[sqlx]
+    SANDBOX --> DAGGER[dagger-sdk]
+    CLI --> RATATUI[ratatui]
+
+    style AGENT fill:#f9f,stroke:#333,stroke-width:4px
+    style CLI fill:#bbf,stroke:#333,stroke-width:2px
+```
+</details>
+
+## 3. Core Components Design
+
+### 3.0 Module-Level Architecture (Graph Analysis)
+
+#### Function Call Hierarchy
+
+![Call Hierarchy](docs/images/call-hierarchy.png)
+
+<details>
+<summary>View Mermaid Source</summary>
+
+```mermaid
+graph TD
+    subgraph "Entry Points"
+        MAIN[main<br/>dabgent_cli]
+        MQ_MAIN[main<br/>dabgent_mq]
+        SANDBOX_MAIN[main<br/>dabgent_sandbox]
+    end
+
+    subgraph "CLI Layer"
+        APP_NEW[App::new]
+        APP_RUN[App::run]
+        HANDLE_EVENTS[handle_key_events]
+        RUN_PIPELINE[agent::run_pipeline]
+    end
+
+    subgraph "Agent Core"
+        PIPELINE_NEW[Pipeline::new]
+        PROCESSOR_RUN[Processor::run]
+        COMPLETION_NEW[Completion::new]
+        EVENT_TYPE[Event::event_type]
+    end
+
+    MAIN --> APP_NEW
+    MAIN --> RUN_PIPELINE
+    APP_RUN --> HANDLE_EVENTS
+    RUN_PIPELINE --> PIPELINE_NEW
+    PIPELINE_NEW --> PROCESSOR_RUN
+    PROCESSOR_RUN --> COMPLETION_NEW
+```
+</details>
 
 ## 3. Core Components Design
 
@@ -246,44 +333,79 @@ pub trait Tool: Send + Sync {
 
 ### 4.1 Main Execution Flow
 
+![Sequence Flow](docs/images/sequence-flow.png)
+
+<details>
+<summary>View Mermaid Source</summary>
+
 ```mermaid
 sequenceDiagram
     participant User
     participant CLI
     participant Agent
     participant Pipeline
-    participant Worker
+    participant Processor
     participant LLM
-    participant ToolWorker
     participant Sandbox
+    participant MQ
 
     User->>CLI: Input request
-    CLI->>Agent: Create agent
-    Agent->>Pipeline: Initialize pipeline
-    Pipeline->>Worker: Setup worker
-    Pipeline->>ToolWorker: Setup tool worker
+    CLI->>CLI: Parse arguments
+    CLI->>CLI: Initialize UI (ratatui)
+    CLI->>Agent: Create pipeline
+    Agent->>Pipeline: Initialize with LLM + tools
+    Agent->>MQ: Setup message queue
 
-    loop Process Messages
-        Worker->>LLM: Request completion
-        LLM-->>Worker: Response with tool calls
-        Worker->>Pipeline: Emit events
-        Pipeline->>ToolWorker: Execute tools
-        ToolWorker->>Sandbox: Run in isolation
-        Sandbox-->>ToolWorker: Results
-        ToolWorker->>Pipeline: Emit results
+    loop Event Processing
+        Pipeline->>Processor: Run processor
+        Processor->>LLM: Request completion
+        LLM-->>Processor: Response + tool calls
+        Processor->>Sandbox: Execute tools (Dagger)
+        Sandbox-->>Processor: Tool results
+        Processor->>MQ: Queue events
+        MQ-->>Pipeline: Event updates
     end
 
-    Pipeline-->>CLI: Final response
+    Pipeline-->>Agent: Completion
+    Agent-->>CLI: Final response
     CLI-->>User: Display output
 ```
+</details>
 
 ### 4.2 Event Processing Flow
 
+![Event State Machine](docs/images/event-state.png)
+
+<details>
+<summary>View Mermaid Source</summary>
+
+```mermaid
+stateDiagram-v2
+    [*] --> UserMessage: User input
+    UserMessage --> Processing: Agent receives
+    Processing --> LLMCompletion: Generate response
+    LLMCompletion --> ToolCalls: Has tool calls
+    LLMCompletion --> AssistantMessage: No tools needed
+    ToolCalls --> SandboxExecution: Execute in Dagger
+    SandboxExecution --> ToolResponses: Collect results
+    ToolResponses --> Processing: Continue
+    AssistantMessage --> Done: Task complete
+    Done --> [*]
 ```
-Events Stream:
-[UserMessage] → [Processing] → [AssistantMessage + ToolCalls] →
-[ToolExecution] → [ToolResponses] → [Processing] → [AssistantMessage] →
-[Done]
+</details>
+
+### 4.3 Inter-Module Communication
+
+```mermaid
+graph LR
+    subgraph "Function Calls Discovered"
+        CLI_MAIN["CLI::main()<br/>Calls: Args::parse, App::new, agent::run_pipeline"]
+        AGENT_PIPELINE["Pipeline::new()<br/>Calls: Processor::run"]
+        PROCESSOR["Processor::run()<br/>Calls: Completion::new, LLM providers"]
+    end
+
+    CLI_MAIN --> AGENT_PIPELINE
+    AGENT_PIPELINE --> PROCESSOR
 ```
 
 ## 5. API Specifications
@@ -474,22 +596,24 @@ pub enum DabgentError {
 - Request validation
 - Secure storage of credentials
 
-## 10. Performance Considerations
+## 10. Performance Characteristics
 
-### 10.1 Optimization Strategies
+### 10.1 Concurrency Model
 
-1. **Async Processing**: Tokio runtime for concurrent operations
-2. **Connection Pooling**: Database connection reuse
-3. **Caching**: LRU cache for frequently accessed data
-4. **Lazy Loading**: Load resources on demand
-5. **Batch Processing**: Group similar operations
+- **Async Runtime**: Tokio-based async execution
+- **Message Queue**: SQLx-backed persistent queue
+- **Parallel Tool Execution**: Sandboxed parallel tool runs
+- **Event-Driven**: Non-blocking event processing
 
-### 10.2 Scalability
+### 10.2 Scalability Considerations
 
-- Horizontal scaling via multiple workers
-- Message queue for load distribution
-- Stateless design for easy scaling
-- Database sharding for large datasets
+| Component | Scalability Factor | Bottleneck |
+|-----------|-------------------|------------|
+| dabgent_cli | Single-user TUI | Terminal I/O |
+| dabgent_agent | Multi-threaded | LLM API rate limits |
+| dabgent_mq | Database-backed | PostgreSQL capacity |
+| dabgent_sandbox | Container-based | Docker daemon |
+| dabgent_fastapi | Async handlers | Network I/O |
 
 ## 11. Testing Strategy
 
@@ -535,43 +659,6 @@ COPY --from=builder /app/target/release/dabgent /usr/local/bin/
 CMD ["dabgent"]
 ```
 
-### 12.2 Kubernetes Deployment
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: dabgent
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: dabgent
-  template:
-    metadata:
-      labels:
-        app: dabgent
-    spec:
-      containers:
-      - name: dabgent
-        image: dabgent:latest
-        env:
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: dabgent-secrets
-              key: database-url
-```
-
-## 13. Monitoring and Observability
-
-### 13.1 Metrics
-
-- Request latency
-- Tool execution time
-- LLM API response time
-- Error rates
-- Resource utilization
 
 ### 13.2 Logging
 
@@ -589,24 +676,6 @@ error!("Tool execution failed", error = %err);
 - Request correlation IDs
 - Performance profiling
 
-## 14. Future Enhancements
-
-### 14.1 Planned Features
-
-1. **Multi-Agent Coordination**: Multiple agents working together
-2. **Plugin System**: Dynamic tool loading
-3. **Web UI**: Browser-based interface
-4. **Cloud Storage**: S3/GCS artifact storage
-5. **Workflow Templates**: Predefined task workflows
-6. **RAG Integration**: Retrieval-augmented generation
-7. **Fine-tuning Support**: Custom model training
-
-### 14.2 Architecture Evolution
-
-- Microservices decomposition
-- Event sourcing for full audit trail
-- CQRS for read/write optimization
-- GraphQL API for flexible queries
 
 ## 15. Conclusion
 

@@ -69,7 +69,6 @@ impl<E: EventStore> ToolProcessor<E> {
         aggregate_id: &str,
     ) -> Result<Vec<rig::message::ToolResult>> {
         let mut results = Vec::new();
-
         for content in response.choice.iter() {
             if let rig::message::AssistantContent::ToolCall(call) = content {
                 let tool = self.tools.iter().find(|t| t.name() == call.function.name);

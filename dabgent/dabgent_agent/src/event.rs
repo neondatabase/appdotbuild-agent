@@ -34,7 +34,7 @@ impl dabgent_mq::Event for Event {
             Event::UserMessage(..) => "user_message",
             Event::ArtifactsCollected(..) => "artifacts_collected",
             Event::TaskCompleted { .. } => "task_completed",
-            Event::PipelineShutdown { .. } => "pipeline_shutdown",
+            Event::PipelineShutdown => "pipeline_shutdown",
         }
     }
 }
