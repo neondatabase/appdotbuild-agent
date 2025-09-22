@@ -14,6 +14,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rig-core = "0.19.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+dotenvy = "0.15"
 
 [dev-dependencies]
 dagger-sdk = "0.18.16"

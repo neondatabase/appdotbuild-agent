@@ -674,6 +674,7 @@ dependencies = [
  "dabgent_mq",
  "dabgent_sandbox",
  "dagger-sdk",
+ "dotenvy",
  "eyre",
  "rig-core",
  "serde",
@@ -699,6 +700,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

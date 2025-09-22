@@ -1,9 +1,11 @@
+pub mod finish;
 pub mod sandbox;
 pub mod thread;
 use dabgent_mq::{EventDb, EventStore, Query};
 use std::pin::Pin;
 use tokio::sync::mpsc;
 
+pub use finish::FinishProcessor;
 pub use sandbox::ToolProcessor;
 pub use thread::ThreadProcessor;
 
@@ -80,15 +82,24 @@ where
             senders.push(tx);
         }
 
-        let query = Query::stream(stream_id);
+        let query = Query::stream(stream_id.clone());
         let mut stream = store.subscribe::<T>(&query)?;
         set.spawn(async move {
             while let Some(event) = stream.next_full().await {
                 match event {
                     Ok(event) => {
                         tracing::info!(?event.data, "pipeline");
+
+                        // Check for shutdown event
+                        // FixMe: it should be routed by type system, not by string comparison
+                        let should_shutdown = event.data.event_type() == "pipeline_shutdown";
                         for sender in senders.iter_mut() {
                             let _ = sender.send(event.clone());
+                        }
+
+                        if should_shutdown {
+                            tracing::info!("PipelineShutdown event received, terminating pipeline");
+                            break;
                         }
                     }
                     Err(err) => {
@@ -96,8 +107,9 @@ where
                     }
                 }
             }
+            tracing::info!("Pipeline event loop terminated");
         });
-        set.join_all().await; // TODO: select against cancellation token
+        set.join_all().await;
         Ok(())
     }
 }

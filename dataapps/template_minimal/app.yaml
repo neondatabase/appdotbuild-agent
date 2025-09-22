@@ -31,7 +31,7 @@ env:
 
 # Command to start your application
 # Databricks will run: uv sync, npm install, then this command
-command: "npm run start"
+command: "npm run build && npm run start"
 
 # Resource allocation for your app
 resources:

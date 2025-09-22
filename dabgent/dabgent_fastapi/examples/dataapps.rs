@@ -1,14 +1,16 @@
-use dabgent_agent::processor::{Pipeline, Processor, ThreadProcessor, ToolProcessor};
+use dabgent_agent::processor::{FinishProcessor, Pipeline, Processor, ThreadProcessor, ToolProcessor};
+use dabgent_agent::toolbox::ToolDyn;
 use dabgent_fastapi::{toolset::dataapps_toolset, validator::DataAppsValidator};
-use dabgent_mq::{EventStore, db::sqlite::SqliteStore};
+use dabgent_mq::{EventStore, create_store, StoreConfig};
 use dabgent_sandbox::dagger::{ConnectOpts, Sandbox as DaggerSandbox};
-use dabgent_sandbox::Sandbox;
+use dabgent_sandbox::{Sandbox, SandboxFork};
 use eyre::Result;
 use rig::client::ProviderClient;
 use std::path::Path;
 
 #[tokio::main]
 async fn main() {
+    dotenvy::dotenv().ok();
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
@@ -16,25 +18,47 @@ async fn main() {
     const STREAM_ID: &str = "dataapps";
     const AGGREGATE_ID: &str = "thread";
 
-    println!("🔧 Setting up Dagger connection...");
     let opts = ConnectOpts::default();
     opts.connect(|client| async move {
         let llm = rig::providers::anthropic::Client::from_env();
+        let store = create_store(Some(StoreConfig::from_env())).await?;
+        tracing::info!("Event store initialized successfully");
         let sandbox = sandbox(&client).await?;
-        let store = store().await;
         let tools = dataapps_toolset(DataAppsValidator::new());
 
-        push_llm_config(&store, STREAM_ID, AGGREGATE_ID).await?;
+        push_llm_config(&store, STREAM_ID, AGGREGATE_ID, &tools).await?;
         push_prompt(&store, STREAM_ID, AGGREGATE_ID, USER_PROMPT).await?;
 
         tracing::info!("Starting DataApps pipeline with model: {}", MODEL);
 
         let thread_processor = ThreadProcessor::new(llm.clone(), store.clone());
-        let tool_processor = ToolProcessor::new(sandbox.boxed(), store.clone(), tools, None);
+
+        // Create export directory path with timestamp
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let export_path = format!("/tmp/dataapps_output_{}", timestamp);
+
+        // Fork sandbox for completion processor
+        let completion_sandbox = sandbox.fork().await?;
+        let tool_processor = ToolProcessor::new(dabgent_sandbox::Sandbox::boxed(sandbox), store.clone(), tools, None);
+        let finish_processor = FinishProcessor::new(
+            dabgent_sandbox::Sandbox::boxed(completion_sandbox),
+            store.clone(),
+            export_path.clone(),
+        );
+
         let pipeline = Pipeline::new(
             store.clone(),
-            vec![thread_processor.boxed(), tool_processor.boxed()],
+            vec![
+                thread_processor.boxed(),
+                tool_processor.boxed(),
+                finish_processor.boxed(),
+            ],
         );
+
+        tracing::info!("Artifacts will be exported to: {}", export_path);
 
         tracing::info!("Pipeline configured, starting execution...");
 
@@ -74,6 +98,7 @@ Quality Requirements:
 - Run all linters and tests before completion
 
 Start by exploring the current project structure, then implement the required features.
+Use the tools available to you as needed.
 ";
 
 const USER_PROMPT: &str = "
@@ -84,7 +109,7 @@ Create a simple DataApp with:
 3. Include debug logging in both backend and frontend
 4. Make sure the React Admin data provider can fetch and display the items
 
-The app should be functional with proper error handling and logging.
+The app should be functional.
 ";
 
 const MODEL: &str = "claude-sonnet-4-20250514";
@@ -112,29 +137,27 @@ async fn sandbox(client: &dagger_sdk::DaggerConn) -> Result<DaggerSandbox> {
     Ok(sandbox)
 }
 
-async fn store() -> SqliteStore {
-    tracing::info!("Initializing SQLite event store...");
-    let pool = sqlx::SqlitePool::connect(":memory:")
-        .await
-        .expect("Failed to create in-memory SQLite pool");
-    let store = SqliteStore::new(pool);
-    store.migrate().await;
-    tracing::info!("Event store initialized");
-    store
-}
 
 async fn push_llm_config<S: EventStore>(
     store: &S,
     stream_id: &str,
     aggregate_id: &str,
+    tools: &[Box<dyn ToolDyn>],
 ) -> Result<()> {
     tracing::info!("Pushing LLM configuration to event store...");
+
+    // Extract tool definitions from the tools
+    let tool_definitions: Vec<rig::completion::ToolDefinition> = tools
+        .iter()
+        .map(|tool| tool.definition())
+        .collect();
+
     let event = dabgent_agent::event::Event::LLMConfig {
         model: MODEL.to_owned(),
         temperature: 0.0,
         max_tokens: 8192,
         preamble: Some(SYSTEM_PROMPT.to_owned()),
-        tools: None, // Will be configured later
+        tools: Some(tool_definitions),
         recipient: None,
     };
     store
@@ -150,7 +173,8 @@ async fn push_prompt<S: EventStore>(
     prompt: &str,
 ) -> Result<()> {
     tracing::info!("Pushing initial prompt to event store...");
-    let event = dabgent_agent::event::Event::UserMessage(rig::OneOrMany::one(rig::message::UserContent::Text(rig::message::Text { text: prompt.to_owned() })));
+    let content = rig::message::UserContent::Text(rig::message::Text { text: prompt.to_owned() });
+    let event = dabgent_agent::event::Event::UserMessage(rig::OneOrMany::one(content));
     store
         .push_event(stream_id, aggregate_id, &event, &Default::default())
         .await
@@ -174,6 +198,7 @@ async fn seed_dataapps_template(sandbox: &mut DaggerSandbox) -> Result<()> {
 
     Ok(())
 }
+
 
 fn collect_files_recursive(template_path: &Path, base_sandbox_path: &str) -> Result<Vec<(String, String)>> {
     use std::fs;
@@ -217,4 +242,3 @@ fn collect_files_recursive(template_path: &Path, base_sandbox_path: &str) -> Res
     collect_dir(template_path, template_path, base_sandbox_path, &mut files, &skip_dirs)?;
     Ok(files)
 }
-

@@ -18,6 +18,10 @@ pub enum Event {
     },
     UserMessage(rig::OneOrMany<rig::message::UserContent>),
     ArtifactsCollected(HashMap<String, String>),
+    TaskCompleted {
+        success: bool,
+    },
+    PipelineShutdown,
 }
 
 impl dabgent_mq::Event for Event {
@@ -29,6 +33,8 @@ impl dabgent_mq::Event for Event {
             Event::AgentMessage { .. } => "agent_message",
             Event::UserMessage(..) => "user_message",
             Event::ArtifactsCollected(..) => "artifacts_collected",
+            Event::TaskCompleted { .. } => "task_completed",
+            Event::PipelineShutdown { .. } => "pipeline_shutdown",
         }
     }
 }

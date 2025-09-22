@@ -26,7 +26,7 @@ impl<E: EventStore> Processor<Event> for ToolProcessor<E> {
             {
                 let events = self.event_store.load_events::<Event>(&query, None).await?;
                 let mut thread = thread::Thread::fold(&events);
-                let tools = self.run_tools(&response).await?;
+                let tools = self.run_tools(&response, &event.stream_id, &event.aggregate_id).await?;
                 let tools = tools.into_iter().map(rig::message::UserContent::ToolResult);
                 let content = rig::OneOrMany::many(tools)?;
                 let new_events = thread.process(thread::Command::User(content))?;
@@ -65,15 +65,36 @@ impl<E: EventStore> ToolProcessor<E> {
     async fn run_tools(
         &mut self,
         response: &CompletionResponse,
+        stream_id: &str,
+        aggregate_id: &str,
     ) -> Result<Vec<rig::message::ToolResult>> {
         let mut results = Vec::new();
+
         for content in response.choice.iter() {
             if let rig::message::AssistantContent::ToolCall(call) = content {
                 let tool = self.tools.iter().find(|t| t.name() == call.function.name);
                 let result = match tool {
                     Some(tool) => {
                         let args = call.function.arguments.clone();
-                        tool.call(args, &mut self.sandbox).await?
+                        let tool_result = tool.call(args, &mut self.sandbox).await?;
+
+                        // Check if this is a successful DoneTool call
+                        match tool {
+                            _ if call.function.name == "done" && tool_result.is_ok() => {
+                                tracing::info!("Task completed successfully, emitting TaskCompleted event");
+                                let task_completed_event = Event::TaskCompleted { success: true };
+                                self.event_store
+                                    .push_event(
+                                        stream_id,
+                                        aggregate_id,
+                                        &task_completed_event,
+                                        &Default::default(),
+                                    )
+                                    .await?;
+                            }
+                            _ => {}
+                        }
+                        tool_result
                     }
                     None => {
                         let error = format!("{} not found", call.function.name);
@@ -83,6 +104,7 @@ impl<E: EventStore> ToolProcessor<E> {
                 results.push(call.to_result(result));
             }
         }
+
         Ok(results)
     }
 }

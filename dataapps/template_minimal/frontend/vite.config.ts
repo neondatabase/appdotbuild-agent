@@ -20,5 +20,5 @@ export default defineConfig(({ mode }) => ({
     outDir: "dist",
     assetsDir: "assets",
   },
-  base: "/",
+  base: "/static/",
 }));
