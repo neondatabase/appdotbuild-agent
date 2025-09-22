@@ -1,6 +1,8 @@
 use super::Processor;
 use crate::event::Event;
-use dabgent_mq::{EventDb, EventStore};
+use crate::llm::{CompletionResponse, FinishReason};
+use crate::toolbox::ToolDyn;
+use dabgent_mq::{EventDb, EventStore, Query};
 use dabgent_sandbox::SandboxDyn;
 use eyre::Result;
 use std::path::Path;
@@ -10,6 +12,7 @@ pub struct FinishProcessor<E: EventStore> {
     event_store: E,
     export_path: String,
     cleanup_patterns: Vec<String>,
+    tools: Vec<Box<dyn ToolDyn>>,
 }
 
 impl<E: EventStore> FinishProcessor<E> {
@@ -17,6 +20,7 @@ impl<E: EventStore> FinishProcessor<E> {
         sandbox: Box<dyn SandboxDyn>,
         event_store: E,
         export_path: String,
+        tools: Vec<Box<dyn ToolDyn>>,
     ) -> Self {
         let cleanup_patterns = vec![
             "node_modules".to_string(),
@@ -43,6 +47,7 @@ impl<E: EventStore> FinishProcessor<E> {
             event_store,
             export_path,
             cleanup_patterns,
+            tools,
         }
     }
 
@@ -77,6 +82,46 @@ impl<E: EventStore> FinishProcessor<E> {
         Ok(())
     }
 
+    async fn replay_tool_calls(&mut self, stream_id: &str, aggregate_id: &str) -> Result<()> {
+        tracing::info!("Replaying tool calls to rebuild sandbox state");
+
+        let query = Query::stream(stream_id).aggregate(aggregate_id);
+        let events = self.event_store.load_events::<Event>(&query, None).await?;
+
+        for event in events {
+            if let Event::AgentMessage { response, .. } = &event {
+                if response.finish_reason == FinishReason::ToolUse {
+                    tracing::debug!("Replaying tool calls from agent message");
+                    self.execute_tool_calls(response).await?;
+                }
+            }
+        }
+
+        tracing::info!("Tool call replay completed");
+        Ok(())
+    }
+
+    async fn execute_tool_calls(&mut self, response: &CompletionResponse) -> Result<()> {
+
+        for content in response.choice.iter() {
+            if let rig::message::AssistantContent::ToolCall(call) = content {
+                let tool = self.tools.iter().find(|t| t.name() == call.function.name);
+                if let Some(tool) = tool {
+                    let args = call.function.arguments.clone();
+                    match tool.call(args, &mut self.sandbox).await {
+                        Ok(_) => {
+                            tracing::debug!("Successfully replayed tool call: {}", call.function.name);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to replay tool call {}: {:?}", call.function.name, e);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn export_artifacts(&self) -> Result<String> {
         tracing::info!("Exporting artifacts from /app to {}", self.export_path);
 
@@ -98,6 +143,11 @@ impl<E: EventStore> Processor<Event> for FinishProcessor<E> {
         match &event.data {
             Event::TaskCompleted { success: true } => {
                 tracing::info!("Task completed successfully, starting artifact export");
+
+                // Replay tool calls to rebuild complete sandbox state
+                if let Err(e) = self.replay_tool_calls(&event.stream_id, &event.aggregate_id).await {
+                    tracing::warn!("Failed to replay some tool calls: {}", e);
+                }
 
                 // First cleanup temporary files
                 if let Err(e) = self.cleanup_temp_files().await {

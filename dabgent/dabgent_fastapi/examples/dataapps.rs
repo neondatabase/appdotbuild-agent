@@ -23,10 +23,14 @@ async fn main() {
         let llm = rig::providers::anthropic::Client::from_env();
         let store = create_store(Some(StoreConfig::from_env())).await?;
         tracing::info!("Event store initialized successfully");
-        let sandbox = sandbox(&client).await?;
-        let tools = dataapps_toolset(DataAppsValidator::new());
+        let sandbox = create_sandbox(&client).await?;
+        // Create tools for ToolProcessor
+        let tool_processor_tools = dataapps_toolset(DataAppsValidator::new());
 
-        push_llm_config(&store, STREAM_ID, AGGREGATE_ID, &tools).await?;
+        // Create tools for FinishProcessor
+        let finish_processor_tools = dataapps_toolset(DataAppsValidator::new());
+
+        push_llm_config(&store, STREAM_ID, AGGREGATE_ID, &tool_processor_tools).await?;
         push_prompt(&store, STREAM_ID, AGGREGATE_ID, USER_PROMPT).await?;
 
         tracing::info!("Starting DataApps pipeline with model: {}", MODEL);
@@ -42,11 +46,12 @@ async fn main() {
 
         // Fork sandbox for completion processor
         let completion_sandbox = sandbox.fork().await?;
-        let tool_processor = ToolProcessor::new(dabgent_sandbox::Sandbox::boxed(sandbox), store.clone(), tools, None);
+        let tool_processor = ToolProcessor::new(dabgent_sandbox::Sandbox::boxed(sandbox), store.clone(), tool_processor_tools, None);
         let finish_processor = FinishProcessor::new(
             dabgent_sandbox::Sandbox::boxed(completion_sandbox),
             store.clone(),
             export_path.clone(),
+            finish_processor_tools,
         );
 
         let pipeline = Pipeline::new(
@@ -114,7 +119,7 @@ The app should be functional.
 
 const MODEL: &str = "claude-sonnet-4-20250514";
 
-async fn sandbox(client: &dagger_sdk::DaggerConn) -> Result<DaggerSandbox> {
+async fn create_sandbox(client: &dagger_sdk::DaggerConn) -> Result<DaggerSandbox> {
     tracing::info!("Setting up sandbox with DataApps template...");
 
     // Build container from fastapi.Dockerfile
@@ -131,10 +136,76 @@ async fn sandbox(client: &dagger_sdk::DaggerConn) -> Result<DaggerSandbox> {
 
     // Seed template files
     tracing::info!("Seeding template_minimal files to sandbox...");
-    seed_dataapps_template(&mut sandbox).await?;
+    seed_template(&mut sandbox, "../dataapps/template_minimal", "/app").await?;
 
     tracing::info!("Sandbox ready for DataApps development");
     Ok(sandbox)
+}
+
+/// Seed template files into the sandbox
+async fn seed_template(
+    sandbox: &mut DaggerSandbox,
+    template_path: &str,
+    base_sandbox_path: &str,
+) -> Result<()> {
+    let template_path = Path::new(template_path);
+
+    if !template_path.exists() {
+        return Err(eyre::eyre!("Template path does not exist: {:?}", template_path));
+    }
+
+    tracing::info!("Collecting template files from {:?}", template_path);
+    let files = collect_template_files(template_path, base_sandbox_path)?;
+
+    tracing::info!("Writing {} files to sandbox", files.len());
+    let files_refs: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+    sandbox.write_files(files_refs).await?;
+
+    Ok(())
+}
+
+/// Recursively collect all template files from a directory
+fn collect_template_files(template_path: &Path, base_sandbox_path: &str) -> Result<Vec<(String, String)>> {
+    use std::fs;
+
+    let mut files = Vec::new();
+    let skip_dirs = ["node_modules", ".git", ".venv", "target", "dist", "build"];
+
+    fn collect_dir(
+        dir_path: &Path,
+        template_root: &Path,
+        base_sandbox_path: &str,
+        files: &mut Vec<(String, String)>,
+        skip_dirs: &[&str],
+    ) -> Result<()> {
+        for entry in fs::read_dir(dir_path)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                let dir_name = path.file_name().unwrap().to_string_lossy();
+                if skip_dirs.contains(&dir_name.as_ref()) {
+                    continue;
+                }
+                collect_dir(&path, template_root, base_sandbox_path, files, skip_dirs)?;
+            } else if path.is_file() {
+                // Get relative path from template root
+                let rel_path = path.strip_prefix(template_root)?;
+                let sandbox_path = format!("{}/{}", base_sandbox_path, rel_path.to_string_lossy());
+
+                // Read file content if it's a text file
+                if let Ok(content) = fs::read_to_string(&path) {
+                    files.push((sandbox_path, content));
+                } else {
+                    tracing::warn!("Skipping binary file: {:?}", path);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    collect_dir(template_path, template_path, base_sandbox_path, &mut files, &skip_dirs)?;
+    Ok(files)
 }
 
 
@@ -181,64 +252,3 @@ async fn push_prompt<S: EventStore>(
         .map_err(Into::into)
 }
 
-async fn seed_dataapps_template(sandbox: &mut DaggerSandbox) -> Result<()> {
-    // Path to template_minimal relative to dabgent directory
-    let template_path = Path::new("../dataapps/template_minimal");
-
-    if !template_path.exists() {
-        return Err(eyre::eyre!("Template path does not exist: {:?}", template_path));
-    }
-
-    tracing::info!("Collecting template files from {:?}", template_path);
-    let files = collect_files_recursive(template_path, "/app")?;
-
-    tracing::info!("Writing {} files to sandbox", files.len());
-    let files_refs: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
-    sandbox.write_files(files_refs).await?;
-
-    Ok(())
-}
-
-
-fn collect_files_recursive(template_path: &Path, base_sandbox_path: &str) -> Result<Vec<(String, String)>> {
-    use std::fs;
-
-    let mut files = Vec::new();
-    let skip_dirs = ["node_modules", ".git", ".venv", "target", "dist", "build"];
-
-    fn collect_dir(
-        dir_path: &Path,
-        template_root: &Path,
-        base_sandbox_path: &str,
-        files: &mut Vec<(String, String)>,
-        skip_dirs: &[&str],
-    ) -> Result<()> {
-        for entry in fs::read_dir(dir_path)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                let dir_name = path.file_name().unwrap().to_string_lossy();
-                if skip_dirs.contains(&dir_name.as_ref()) {
-                    continue;
-                }
-                collect_dir(&path, template_root, base_sandbox_path, files, skip_dirs)?;
-            } else if path.is_file() {
-                // Get relative path from template root
-                let rel_path = path.strip_prefix(template_root)?;
-                let sandbox_path = format!("{}/{}", base_sandbox_path, rel_path.to_string_lossy());
-
-                // Read file content if it's a text file
-                if let Ok(content) = fs::read_to_string(&path) {
-                    files.push((sandbox_path, content));
-                } else {
-                    tracing::warn!("Skipping binary file: {:?}", path);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    collect_dir(template_path, template_path, base_sandbox_path, &mut files, &skip_dirs)?;
-    Ok(files)
-}
