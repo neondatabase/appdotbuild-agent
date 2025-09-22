@@ -1,4 +1,4 @@
-use dabgent_agent::pipeline::PipelineBuilder;
+use dabgent_agent::processor::{Pipeline, Processor, ThreadProcessor, ToolProcessor};
 use dabgent_fastapi::{toolset::dataapps_toolset, validator::DataAppsValidator};
 use dabgent_mq::{EventStore, db::sqlite::SqliteStore};
 use dabgent_sandbox::dagger::{ConnectOpts, Sandbox as DaggerSandbox};
@@ -24,24 +24,22 @@ async fn main() {
         let store = store().await;
         let tools = dataapps_toolset(DataAppsValidator::new());
 
+        push_llm_config(&store, STREAM_ID, AGGREGATE_ID).await?;
         push_prompt(&store, STREAM_ID, AGGREGATE_ID, USER_PROMPT).await?;
 
         tracing::info!("Starting DataApps pipeline with model: {}", MODEL);
 
-        let pipeline = PipelineBuilder::new()
-            .llm(llm)
-            .store(store)
-            .sandbox(sandbox.boxed())
-            .model(MODEL.to_owned())
-            .preamble(SYSTEM_PROMPT.to_owned())
-            .tools(tools)
-            .build()?;
+        let thread_processor = ThreadProcessor::new(llm.clone(), store.clone());
+        let tool_processor = ToolProcessor::new(sandbox.boxed(), store.clone(), tools, None);
+        let pipeline = Pipeline::new(
+            store.clone(),
+            vec![thread_processor.boxed(), tool_processor.boxed()],
+        );
 
         tracing::info!("Pipeline configured, starting execution...");
 
-        pipeline
-            .run(STREAM_ID.to_owned(), AGGREGATE_ID.to_owned())
-            .await
+        pipeline.run(STREAM_ID.to_owned()).await?;
+        Ok(())
     })
     .await
     .unwrap();
@@ -125,6 +123,26 @@ async fn store() -> SqliteStore {
     store
 }
 
+async fn push_llm_config<S: EventStore>(
+    store: &S,
+    stream_id: &str,
+    aggregate_id: &str,
+) -> Result<()> {
+    tracing::info!("Pushing LLM configuration to event store...");
+    let event = dabgent_agent::event::Event::LLMConfig {
+        model: MODEL.to_owned(),
+        temperature: 0.0,
+        max_tokens: 8192,
+        preamble: Some(SYSTEM_PROMPT.to_owned()),
+        tools: None, // Will be configured later
+        recipient: None,
+    };
+    store
+        .push_event(stream_id, aggregate_id, &event, &Default::default())
+        .await
+        .map_err(Into::into)
+}
+
 async fn push_prompt<S: EventStore>(
     store: &S,
     stream_id: &str,
@@ -132,7 +150,7 @@ async fn push_prompt<S: EventStore>(
     prompt: &str,
 ) -> Result<()> {
     tracing::info!("Pushing initial prompt to event store...");
-    let event = dabgent_agent::thread::Event::Prompted(prompt.to_owned());
+    let event = dabgent_agent::event::Event::UserMessage(rig::OneOrMany::one(rig::message::UserContent::Text(rig::message::Text { text: prompt.to_owned() })));
     store
         .push_event(stream_id, aggregate_id, &event, &Default::default())
         .await
