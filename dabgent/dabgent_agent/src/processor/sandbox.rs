@@ -113,20 +113,17 @@ impl<E: EventStore> ToolProcessor<E> {
                         let tool_result = tool.call(args, &mut self.sandbox).await?;
 
                         // Check if this is a successful DoneTool call
-                        match tool {
-                            _ if call.function.name == "done" && tool_result.is_ok() => {
-                                tracing::info!("Task completed successfully, emitting TaskCompleted event");
-                                let task_completed_event = Event::TaskCompleted { success: true };
-                                self.event_store
-                                    .push_event(
-                                        stream_id,
-                                        aggregate_id,
-                                        &task_completed_event,
-                                        &Default::default(),
-                                    )
-                                    .await?;
-                            }
-                            _ => {}
+                        if call.function.name == "done" && tool_result.is_ok() {
+                            tracing::info!("Task completed successfully, emitting TaskCompleted event");
+                            let task_completed_event = Event::TaskCompleted { success: true };
+                            self.event_store
+                                .push_event(
+                                    stream_id,
+                                    aggregate_id,
+                                    &task_completed_event,
+                                    &Default::default(),
+                                )
+                                .await?;
                         }
                         tool_result
                     }
