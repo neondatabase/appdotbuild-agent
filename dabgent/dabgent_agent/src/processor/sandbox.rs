@@ -9,21 +9,6 @@ use eyre::Result;
 use std::path::Path;
 use crate::sandbox_seed::{collect_template_files, write_template_files};
 
-// Template collection and hashing moved to sandbox_seed module
-
-fn find_last_seed_hash(events: &[Event], template_path: &str, base_path: &str) -> Option<String> {
-    events.iter().rev().find_map(|e| {
-        if let Event::SandboxSeeded { template_path: tp, base_path: bp, template_hash: Some(h), .. } = e {
-            if tp == template_path && bp == base_path {
-                Some(h.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    })
-}
 
 pub struct ToolProcessor<E: EventStore> {
     sandbox: Box<dyn SandboxDyn>,
@@ -50,27 +35,19 @@ impl<E: EventStore> Processor<Event> for ToolProcessor<E> {
                             let template_hash = tf.hash.clone();
                             let template_path_str = template_path.display().to_string();
 
-                            // Check last seeded hash for same template/base to skip if unchanged
-                            let events = self.event_store.load_events::<Event>(&query, None).await?;
-                            let last_hash = find_last_seed_hash(&events, &template_path_str, base_path);
-
-                            if last_hash.as_deref() == Some(template_hash.as_str()) {
-                                tracing::info!("Sandbox already seeded with identical template (hash {}), skipping", template_hash);
+                            let file_count = tf.files.len();
+                            if let Err(err) = write_template_files(&mut self.sandbox, &tf.files).await {
+                                tracing::error!("Failed to write template files to sandbox: {:?}", err);
                             } else {
-                                let file_count = tf.files.len();
-                                if let Err(err) = write_template_files(&mut self.sandbox, &tf.files).await {
-                                    tracing::error!("Failed to write template files to sandbox: {:?}", err);
-                                } else {
-                                    let seeded = Event::SandboxSeeded {
-                                        template_path: template_path_str,
-                                        base_path: base_path.clone(),
-                                        file_count,
-                                        template_hash: Some(template_hash),
-                                    };
-                                    self.event_store
-                                        .push_event(&event.stream_id, &event.aggregate_id, &seeded, &Default::default())
-                                        .await?;
-                                }
+                                let seeded = Event::SandboxSeeded {
+                                    template_path: template_path_str,
+                                    base_path: base_path.clone(),
+                                    file_count,
+                                    template_hash: Some(template_hash),
+                                };
+                                self.event_store
+                                    .push_event(&event.stream_id, &event.aggregate_id, &seeded, &Default::default())
+                                    .await?;
                             }
                         }
                     }
