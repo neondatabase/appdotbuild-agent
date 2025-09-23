@@ -19,6 +19,8 @@ dabgent_sandbox = { path = "../dabgent_sandbox" }
 clap = { version = "4.5.47", features = ["derive"] }
 tokio-stream = "0.1"
 tempfile = "3.0"
+sha2 = "0.10"
+hex = "0.4"
 
 [dev-dependencies]
 dagger-sdk = "0.18.16"

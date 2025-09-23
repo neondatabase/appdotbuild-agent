@@ -6,6 +6,70 @@ use crate::toolbox::{ToolCallExt, ToolDyn};
 use dabgent_mq::{EventDb, EventStore, Query};
 use dabgent_sandbox::SandboxDyn;
 use eyre::Result;
+use std::path::Path;
+use sha2::{Digest, Sha256};
+
+fn collect_dir(
+    dir_path: &std::path::Path,
+    template_root: &std::path::Path,
+    base_sandbox_path: &str,
+    files: &mut Vec<(String, String)>,
+    skip_dirs: &[&str],
+) -> eyre::Result<()> {
+    for entry in std::fs::read_dir(dir_path)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            let dir_name = path.file_name().unwrap().to_string_lossy();
+            if skip_dirs.contains(&dir_name.as_ref()) {
+                continue;
+            }
+            collect_dir(&path, template_root, base_sandbox_path, files, skip_dirs)?;
+        } else if path.is_file() {
+            let rel_path = path.strip_prefix(template_root)?;
+            let sandbox_path = format!("{}/{}", base_sandbox_path, rel_path.to_string_lossy());
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                files.push((sandbox_path, content));
+            } else {
+                tracing::warn!("Skipping binary file: {:?}", path);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_template_files(template_path: &Path, base_sandbox_path: &str) -> eyre::Result<Vec<(String, String)>> {
+    let mut files: Vec<(String, String)> = Vec::new();
+    let skip_dirs = ["node_modules", ".git", ".venv", "target", "dist", "build"];
+    collect_dir(template_path, template_path, base_sandbox_path, &mut files, &skip_dirs)?;
+    Ok(files)
+}
+
+fn compute_template_hash(files: &[(String, String)]) -> String {
+    let mut hasher = Sha256::new();
+    for (p, c) in files {
+        hasher.update(p.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(c.as_bytes());
+        hasher.update(b"\n");
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn find_last_seed_hash(events: &[Event], template_path: &str, base_path: &str) -> Option<String> {
+    events.iter().rev().find_map(|e| {
+        if let Event::SandboxSeeded { template_path: tp, base_path: bp, template_hash: Some(h), .. } = e {
+            if tp == template_path && bp == base_path {
+                Some(h.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    })
+}
 
 pub struct ToolProcessor<E: EventStore> {
     sandbox: Box<dyn SandboxDyn>,
@@ -18,6 +82,51 @@ impl<E: EventStore> Processor<Event> for ToolProcessor<E> {
     async fn run(&mut self, event: &EventDb<Event>) -> eyre::Result<()> {
         let query = Query::stream(&event.stream_id).aggregate(&event.aggregate_id);
         match &event.data {
+            Event::SeedSandboxFromTemplate { template_path, base_path } => {
+                // Seed sandbox from template on host filesystem
+                let template_path = Path::new(template_path);
+                if !template_path.exists() {
+                    tracing::warn!("Template path does not exist: {:?}", template_path);
+                } else {
+                    let files_result = collect_template_files(template_path, base_path);
+                    match files_result {
+                        Err(err) => {
+                            tracing::error!("Failed to collect template files: {:?}", err);
+                        }
+                        Ok(files) => {
+                            let mut files = files;
+                            files.sort_by(|a, b| a.0.cmp(&b.0));
+                                    // Compute template hash over (path + content) pairs for idempotency
+                                    let template_hash = compute_template_hash(&files);
+                                    let template_path_str = template_path.display().to_string();
+
+                                    // Check last seeded hash for same template/base to skip if unchanged
+                                    let events = self.event_store.load_events::<Event>(&query, None).await?;
+                                    let last_hash = find_last_seed_hash(&events, &template_path_str, base_path);
+
+                                    if last_hash.as_deref() == Some(template_hash.as_str()) {
+                                        tracing::info!("Sandbox already seeded with identical template (hash {}), skipping", template_hash);
+                                    } else {
+                                        let file_count = files.len();
+                                        let files_refs: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+                                        if let Err(err) = self.sandbox.write_files(files_refs).await {
+                                            tracing::error!("Failed to write template files to sandbox: {:?}", err);
+                                        } else {
+                                            let seeded = Event::SandboxSeeded {
+                                                template_path: template_path_str,
+                                                base_path: base_path.clone(),
+                                                file_count,
+                                                template_hash: Some(template_hash),
+                                            };
+                                            self.event_store
+                                                .push_event(&event.stream_id, &event.aggregate_id, &seeded, &Default::default())
+                                                .await?;
+                                        }
+                                    }
+                                }
+                    }
+                }
+            }
             Event::AgentMessage {
                 response,
                 recipient,

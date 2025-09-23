@@ -3,10 +3,10 @@ use dabgent_agent::toolbox::ToolDyn;
 use dabgent_fastapi::{toolset::dataapps_toolset, validator::DataAppsValidator};
 use dabgent_mq::{EventStore, create_store, StoreConfig};
 use dabgent_sandbox::dagger::{ConnectOpts, Sandbox as DaggerSandbox};
-use dabgent_sandbox::{Sandbox, SandboxFork};
+use dabgent_sandbox::SandboxFork;
 use eyre::Result;
 use rig::client::ProviderClient;
-use std::path::Path;
+
 
 #[tokio::main]
 async fn main() {
@@ -31,6 +31,7 @@ async fn main() {
         let finish_processor_tools = dataapps_toolset(DataAppsValidator::new());
 
         push_llm_config(&store, STREAM_ID, AGGREGATE_ID, &tool_processor_tools).await?;
+        push_seed_sandbox_from_template(&store, STREAM_ID, AGGREGATE_ID, "../dataapps/template_minimal", "/app").await?;
         push_prompt(&store, STREAM_ID, AGGREGATE_ID, USER_PROMPT).await?;
 
         tracing::info!("Starting DataApps pipeline with model: {}", MODEL);
@@ -132,81 +133,20 @@ async fn create_sandbox(client: &dagger_sdk::DaggerConn) -> Result<DaggerSandbox
         .build_opts(client.host().directory("./dabgent_fastapi"), opts);
 
     ctr.sync().await?;
-    let mut sandbox = DaggerSandbox::from_container(ctr, client.clone());
+    let sandbox = DaggerSandbox::from_container(ctr, client.clone());
 
-    // Seed template files
-    tracing::info!("Seeding template_minimal files to sandbox...");
-    seed_template(&mut sandbox, "../dataapps/template_minimal", "/app").await?;
+    // Seeding is now triggered by SeedSandboxFromTemplate event in the pipeline
+
 
     tracing::info!("Sandbox ready for DataApps development");
     Ok(sandbox)
 }
 
 /// Seed template files into the sandbox
-async fn seed_template(
-    sandbox: &mut DaggerSandbox,
-    template_path: &str,
-    base_sandbox_path: &str,
-) -> Result<()> {
-    let template_path = Path::new(template_path);
 
-    if !template_path.exists() {
-        return Err(eyre::eyre!("Template path does not exist: {:?}", template_path));
-    }
-
-    tracing::info!("Collecting template files from {:?}", template_path);
-    let files = collect_template_files(template_path, base_sandbox_path)?;
-
-    tracing::info!("Writing {} files to sandbox", files.len());
-    let files_refs: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
-    sandbox.write_files(files_refs).await?;
-
-    Ok(())
-}
 
 /// Recursively collect all template files from a directory
-fn collect_template_files(template_path: &Path, base_sandbox_path: &str) -> Result<Vec<(String, String)>> {
-    use std::fs;
 
-    let mut files = Vec::new();
-    let skip_dirs = ["node_modules", ".git", ".venv", "target", "dist", "build"];
-
-    fn collect_dir(
-        dir_path: &Path,
-        template_root: &Path,
-        base_sandbox_path: &str,
-        files: &mut Vec<(String, String)>,
-        skip_dirs: &[&str],
-    ) -> Result<()> {
-        for entry in fs::read_dir(dir_path)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                let dir_name = path.file_name().unwrap().to_string_lossy();
-                if skip_dirs.contains(&dir_name.as_ref()) {
-                    continue;
-                }
-                collect_dir(&path, template_root, base_sandbox_path, files, skip_dirs)?;
-            } else if path.is_file() {
-                // Get relative path from template root
-                let rel_path = path.strip_prefix(template_root)?;
-                let sandbox_path = format!("{}/{}", base_sandbox_path, rel_path.to_string_lossy());
-
-                // Read file content if it's a text file
-                if let Ok(content) = fs::read_to_string(&path) {
-                    files.push((sandbox_path, content));
-                } else {
-                    tracing::warn!("Skipping binary file: {:?}", path);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    collect_dir(template_path, template_path, base_sandbox_path, &mut files, &skip_dirs)?;
-    Ok(files)
-}
 
 
 async fn push_llm_config<S: EventStore>(
@@ -230,6 +170,24 @@ async fn push_llm_config<S: EventStore>(
         preamble: Some(SYSTEM_PROMPT.to_owned()),
         tools: Some(tool_definitions),
         recipient: None,
+    };
+    store
+        .push_event(stream_id, aggregate_id, &event, &Default::default())
+        .await
+        .map_err(Into::into)
+}
+
+async fn push_seed_sandbox_from_template<S: EventStore>(
+    store: &S,
+    stream_id: &str,
+    aggregate_id: &str,
+    template_path: &str,
+    base_path: &str,
+) -> Result<()> {
+    tracing::info!("Pushing seed sandbox event to event store...");
+    let event = dabgent_agent::event::Event::SeedSandboxFromTemplate {
+        template_path: template_path.to_owned(),
+        base_path: base_path.to_owned(),
     };
     store
         .push_event(stream_id, aggregate_id, &event, &Default::default())
