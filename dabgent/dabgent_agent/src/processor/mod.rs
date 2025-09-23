@@ -1,6 +1,7 @@
 pub mod finish;
 pub mod sandbox;
 pub mod thread;
+pub mod replay;
 use dabgent_mq::{EventDb, EventStore, Query};
 use std::pin::Pin;
 use tokio::sync::mpsc;

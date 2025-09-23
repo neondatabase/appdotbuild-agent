@@ -1,11 +1,12 @@
 use super::Processor;
 use crate::event::Event;
-use crate::llm::{CompletionResponse, FinishReason};
+
 use crate::toolbox::ToolDyn;
 use dabgent_mq::{EventDb, EventStore, Query};
 use dabgent_sandbox::SandboxDyn;
 use eyre::Result;
 use std::path::Path;
+use crate::processor::replay::SandboxReplayer;
 
 pub struct FinishProcessor<E: EventStore> {
     sandbox: Box<dyn SandboxDyn>,
@@ -14,6 +15,8 @@ pub struct FinishProcessor<E: EventStore> {
     cleanup_patterns: Vec<String>,
     tools: Vec<Box<dyn ToolDyn>>,
 }
+
+
 
 impl<E: EventStore> FinishProcessor<E> {
     pub fn new(
@@ -88,39 +91,14 @@ impl<E: EventStore> FinishProcessor<E> {
         let query = Query::stream(stream_id).aggregate(aggregate_id);
         let events = self.event_store.load_events::<Event>(&query, None).await?;
 
-        for event in events {
-            if let Event::AgentMessage { response, .. } = &event {
-                if response.finish_reason == FinishReason::ToolUse {
-                    tracing::debug!("Replaying tool calls from agent message");
-                    self.execute_tool_calls(response).await?;
-                }
-            }
-        }
+        let mut replayer = SandboxReplayer::new(&mut self.sandbox, &self.tools);
+        replayer.apply_all(&events).await?;
 
         tracing::info!("Tool call replay completed");
         Ok(())
     }
 
-    async fn execute_tool_calls(&mut self, response: &CompletionResponse) -> Result<()> {
 
-        for content in response.choice.iter() {
-            if let rig::message::AssistantContent::ToolCall(call) = content {
-                let tool = self.tools.iter().find(|t| t.name() == call.function.name);
-                if let Some(tool) = tool {
-                    let args = call.function.arguments.clone();
-                    match tool.call(args, &mut self.sandbox).await {
-                        Ok(_) => {
-                            tracing::debug!("Successfully replayed tool call: {}", call.function.name);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to replay tool call {}: {:?}", call.function.name, e);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 
     async fn export_artifacts(&self) -> Result<String> {
         tracing::info!("Exporting artifacts from /app to {}", self.export_path);

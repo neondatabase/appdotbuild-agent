@@ -20,7 +20,7 @@ async fn main() {
 
     let opts = ConnectOpts::default();
     opts.connect(|client| async move {
-        let llm = rig::providers::anthropic::Client::from_env();
+        let llm = rig::providers::gemini::Client::from_env();
         let store = create_store(Some(StoreConfig::from_env())).await?;
         tracing::info!("Event store initialized successfully");
         let sandbox = create_sandbox(&client).await?;
@@ -118,7 +118,7 @@ Create a simple DataApp with:
 The app should be functional.
 ";
 
-const MODEL: &str = "claude-sonnet-4-20250514";
+const MODEL: &str = "gemini-2.5-flash";
 
 async fn create_sandbox(client: &dagger_sdk::DaggerConn) -> Result<DaggerSandbox> {
     tracing::info!("Setting up sandbox with DataApps template...");
@@ -209,4 +209,3 @@ async fn push_prompt<S: EventStore>(
         .await
         .map_err(Into::into)
 }
-

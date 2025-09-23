@@ -10,6 +10,7 @@ pub trait Tool: Send + Sync {
     type Error: Serialize + Send + Sync;
     fn name(&self) -> String;
     fn definition(&self) -> rig::completion::ToolDefinition;
+    fn needs_replay(&self) -> bool { true }
     fn call(
         &self,
         args: Self::Args,
@@ -22,6 +23,7 @@ type ToolDynResult = Result<Result<serde_json::Value, serde_json::Value>>;
 pub trait ToolDyn: Send + Sync {
     fn name(&self) -> String;
     fn definition(&self) -> rig::completion::ToolDefinition;
+    fn needs_replay(&self) -> bool;
     fn call<'a>(
         &'a self,
         args: serde_json::Value,
@@ -36,6 +38,10 @@ impl<T: Tool> ToolDyn for T {
 
     fn definition(&self) -> rig::completion::ToolDefinition {
         self.definition()
+    }
+
+    fn needs_replay(&self) -> bool {
+        Tool::needs_replay(self)
     }
 
     fn call<'a>(

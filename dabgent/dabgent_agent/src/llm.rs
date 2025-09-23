@@ -179,11 +179,19 @@ impl LLMClient for rig::providers::gemini::Client {
         };
         let result = model.completion(completion.into()).await.map(|response| {
             let finish_reason = response.raw_response.candidates[0].finish_reason.as_ref();
-            let finish_reason = finish_reason.map_or(FinishReason::None, |reason| match reason {
+            let mut finish_reason = finish_reason.map_or(FinishReason::None, |reason| match reason {
                 gemini_api_types::FinishReason::Stop => FinishReason::Stop,
                 gemini_api_types::FinishReason::MaxTokens => FinishReason::MaxTokens,
                 _ => FinishReason::Other(format!("{reason:?}")),
             });
+            // If the model emitted tool calls, treat finish as ToolUse to drive the tool executor
+            if response
+                .choice
+                .iter()
+                .any(|c| matches!(c, &rig::message::AssistantContent::ToolCall(..)))
+            {
+                finish_reason = FinishReason::ToolUse;
+            }
             let output_tokens = response
                 .raw_response
                 .usage_metadata

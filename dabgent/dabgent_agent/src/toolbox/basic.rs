@@ -87,7 +87,7 @@ impl Tool for WriteFile {
                         "description": "Content to write to the file",
                     }
                 },
-                "required": ["path", "content"],
+                "required": ["path", "contents"],
             }),
         }
     }
@@ -119,19 +119,19 @@ impl Tool for ReadFile {
     type Error = String;
 
     fn name(&self) -> String {
-        "read_file".to_string()
+        "read_file".to_owned()
     }
 
     fn definition(&self) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: self.name(),
-            description: "Read content from a file".to_string(),
+            description: "Read a file from the sandbox".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the file",
+                        "description": "Path to the file to read",
                     }
                 },
                 "required": ["path"],
@@ -139,14 +139,16 @@ impl Tool for ReadFile {
         }
     }
 
+    fn needs_replay(&self) -> bool { false }
+
     async fn call(
         &self,
         args: Self::Args,
         sandbox: &mut Box<dyn SandboxDyn>,
-    ) -> eyre::Result<Result<Self::Output, Self::Error>> {
+    ) -> Result<Result<Self::Output, Self::Error>> {
         match sandbox.read_file(&args.path).await {
             Ok(content) => Ok(Ok(content)),
-            Err(e) => Ok(Err(format!("Failed to read file '{}': {}", args.path, e))),
+            Err(e) => Ok(Err(format!("Failed to read file: {}", e))),
         }
     }
 }
@@ -165,19 +167,19 @@ impl Tool for LsDir {
     type Error = String;
 
     fn name(&self) -> String {
-        "ls_dir".to_string()
+        "ls_dir".to_owned()
     }
 
     fn definition(&self) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: self.name(),
-            description: "List files in a directory".to_string(),
+            description: "List directory contents".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the directory",
+                        "description": "Directory path to list",
                     }
                 },
                 "required": ["path"],
@@ -185,14 +187,16 @@ impl Tool for LsDir {
         }
     }
 
+    fn needs_replay(&self) -> bool { false }
+
     async fn call(
         &self,
         args: Self::Args,
         sandbox: &mut Box<dyn SandboxDyn>,
-    ) -> eyre::Result<Result<Self::Output, Self::Error>> {
+    ) -> Result<Result<Self::Output, Self::Error>> {
         match sandbox.list_directory(&args.path).await {
-            Ok(result) => Ok(Ok(result)),
-            Err(e) => Ok(Err(format!("Failed to list directory '{}': {}", args.path, e))),
+            Ok(entries) => Ok(Ok(entries)),
+            Err(e) => Ok(Err(format!("Failed to list directory: {}", e))),
         }
     }
 }
