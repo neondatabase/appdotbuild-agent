@@ -24,10 +24,7 @@ async fn main() {
         let store = create_store(Some(StoreConfig::from_env())).await?;
         tracing::info!("Event store initialized successfully");
         let sandbox = create_sandbox(&client).await?;
-        // Create tools for ToolProcessor
         let tool_processor_tools = dataapps_toolset(DataAppsValidator::new());
-
-        // Create tools for FinishProcessor
         let finish_processor_tools = dataapps_toolset(DataAppsValidator::new());
 
         push_llm_config(&store, STREAM_ID, AGGREGATE_ID, &tool_processor_tools).await?;
@@ -48,6 +45,8 @@ async fn main() {
         // Fork sandbox for completion processor
         let completion_sandbox = sandbox.fork().await?;
         let tool_processor = ToolProcessor::new(dabgent_sandbox::Sandbox::boxed(sandbox), store.clone(), tool_processor_tools, None);
+
+        // FixMe: FinishProcessor should have no state, including export path
         let finish_processor = FinishProcessor::new(
             dabgent_sandbox::Sandbox::boxed(completion_sandbox),
             store.clone(),
@@ -134,20 +133,9 @@ async fn create_sandbox(client: &dagger_sdk::DaggerConn) -> Result<DaggerSandbox
 
     ctr.sync().await?;
     let sandbox = DaggerSandbox::from_container(ctr, client.clone());
-
-    // Seeding is now triggered by SeedSandboxFromTemplate event in the pipeline
-
-
     tracing::info!("Sandbox ready for DataApps development");
     Ok(sandbox)
 }
-
-/// Seed template files into the sandbox
-
-
-/// Recursively collect all template files from a directory
-
-
 
 async fn push_llm_config<S: EventStore>(
     store: &S,

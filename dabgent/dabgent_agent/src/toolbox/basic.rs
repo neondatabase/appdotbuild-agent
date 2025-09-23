@@ -339,6 +339,8 @@ impl Tool for DoneTool {
         "done".to_string()
     }
 
+    fn needs_replay(&self) -> bool { false }
+
     fn definition(&self) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: self.name(),

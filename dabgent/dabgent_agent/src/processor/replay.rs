@@ -47,19 +47,7 @@ impl<'a> SandboxReplayer<'a> {
     }
 
     async fn replay_template_seed(&mut self, template_path: &str, base_path: &str) -> Result<()> {
-        let template_path = Path::new(template_path);
-        if !template_path.exists() {
-            tracing::warn!("Template path does not exist during replay: {:?}", template_path);
-            return Ok(());
-        }
-
-        tracing::debug!(
-            "Replaying template seed into sandbox: {:?} -> {}",
-            template_path,
-            base_path
-        );
-
-        match collect_template_files(template_path, base_path) {
+        match collect_template_files( Path::new(template_path), base_path) {
             Ok(tf) => {
                 let count = write_template_files(self.sandbox, &tf.files).await?;
                 tracing::debug!("Seeded {} files from template during replay", count);
@@ -85,7 +73,10 @@ impl<'a> SandboxReplayer<'a> {
                         } else {
                             match tool.call(args, self.sandbox).await {
                                 Ok(_) => tracing::debug!("Replayed tool call: {}", tool_name),
-                                Err(e) => tracing::warn!("Failed tool call during replay {}: {:?}", tool_name, e),
+                                Err(e) => {
+                                    tracing::warn!("Failed tool call during replay {}: {:?}", tool_name, e);
+                                    return Err(eyre::eyre!("Tool call failed during replay: {}: {:?}", tool_name, e));
+                                }
                             }
                         }
                     }

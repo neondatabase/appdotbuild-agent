@@ -108,26 +108,8 @@ impl EventStore for PostgresStore {
         let (sql, params) = Self::build_query(query, sequence);
         let mut sqlx_query = sqlx::query_as::<_, Event<JsonValue>>(&sql);
 
-        let mut param_index = 0;
-        // Bind stream_id
-        sqlx_query = sqlx_query.bind(&params[param_index]);
-        param_index += 1;
-
-        // Bind event_type if present
-        if query.event_type.is_some() {
-            sqlx_query = sqlx_query.bind(&params[param_index]);
-            param_index += 1;
-        }
-
-        // Bind aggregate_id if present
-        if query.aggregate_id.is_some() {
-            sqlx_query = sqlx_query.bind(&params[param_index]);
-        }
-
-        // Bind sequence as i64 if present
-        if let Some(seq) = sequence {
-            sqlx_query = sqlx_query.bind(seq);
-        }
+        for param in params.iter() {
+            sqlx_query = sqlx_query.bind(param);
 
         let events = sqlx_query
             .fetch_all(&self.pool)

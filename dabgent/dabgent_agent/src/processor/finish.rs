@@ -32,10 +32,6 @@ impl<E: EventStore> FinishProcessor<E> {
         }
     }
 
-
-
-
-
     async fn replay_tool_calls(&mut self, stream_id: &str, aggregate_id: &str) -> Result<()> {
         tracing::info!("Replaying tool calls to rebuild sandbox state");
 

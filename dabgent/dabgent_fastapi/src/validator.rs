@@ -182,11 +182,13 @@ impl Validator for DataAppsValidator {
         }
         tracing::info!("Sandbox is ready. Starting validation steps...");
 
-        // Run all validation checks sequentially and collect results
+        // Run all validation checks and collect results
+        // FixMe: how to parallelize these?
         let deps_result = self.check_python_dependencies(sandbox).await;
         let tests_result = self.check_tests(sandbox).await;
         let linting_result = self.check_linting(sandbox).await;
         let frontend_result = self.check_frontend_build(sandbox).await;
+        // FixMe: requirements export modifies the state, although Done tool is expected to be idempotent, so it should be extracted somewhere else
         let requirements_result = self.export_requirements(sandbox).await;
 
         // Collect all errors
