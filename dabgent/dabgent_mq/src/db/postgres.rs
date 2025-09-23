@@ -40,7 +40,7 @@ impl PostgresStore {
         }
 
         if let Some(last_seq) = last_sequence {
-            conditions.push(format!("sequence > ${param_counter}"));
+            conditions.push(format!("sequence > ${param_counter}::bigint"));
             params.push(last_seq.to_string());
         }
 
@@ -110,6 +110,7 @@ impl EventStore for PostgresStore {
 
         for param in params.iter() {
             sqlx_query = sqlx_query.bind(param);
+        }
 
         let events = sqlx_query
             .fetch_all(&self.pool)

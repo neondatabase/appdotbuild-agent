@@ -1,6 +1,6 @@
 use dabgent_agent::processor::{FinishProcessor, Pipeline, Processor, ThreadProcessor, ToolProcessor};
 use dabgent_agent::toolbox::ToolDyn;
-use dabgent_fastapi::{toolset::dataapps_toolset, validator::DataAppsValidator};
+use dabgent_fastapi::{toolset::dataapps_toolset, validator::DataAppsValidator, artifact_preparer::DataAppsArtifactPreparer};
 use dabgent_mq::{EventStore, create_store, StoreConfig};
 use dabgent_sandbox::dagger::{ConnectOpts, Sandbox as DaggerSandbox};
 use dabgent_sandbox::SandboxFork;
@@ -47,11 +47,12 @@ async fn main() {
         let tool_processor = ToolProcessor::new(dabgent_sandbox::Sandbox::boxed(sandbox), store.clone(), tool_processor_tools, None);
 
         // FixMe: FinishProcessor should have no state, including export path
-        let finish_processor = FinishProcessor::new(
+        let finish_processor = FinishProcessor::new_with_preparer(
             dabgent_sandbox::Sandbox::boxed(completion_sandbox),
             store.clone(),
             export_path.clone(),
             finish_processor_tools,
+            DataAppsArtifactPreparer,
         );
 
         let pipeline = Pipeline::new(

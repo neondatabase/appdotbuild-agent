@@ -8,16 +8,32 @@ use eyre::Result;
 use std::path::Path;
 use crate::processor::replay::SandboxReplayer;
 
-pub struct FinishProcessor<E: EventStore> {
+// trait for preparing artifacts before export
+pub trait ArtifactPreparer: Send + Sync {
+    fn prepare(&self, sandbox: &mut Box<dyn SandboxDyn>) -> impl std::future::Future<Output = Result<()>> + Send;
+}
+
+// default no-op implementation
+#[derive(Default)]
+pub struct NoOpPreparer;
+
+impl ArtifactPreparer for NoOpPreparer {
+    fn prepare(&self, _sandbox: &mut Box<dyn SandboxDyn>) -> impl std::future::Future<Output = Result<()>> + Send {
+        async { Ok(()) }
+    }
+}
+
+pub struct FinishProcessor<E: EventStore, P: ArtifactPreparer = NoOpPreparer> {
     sandbox: Box<dyn SandboxDyn>,
     event_store: E,
     export_path: String,
     tools: Vec<Box<dyn ToolDyn>>,
+    preparer: P,
 }
 
 
 
-impl<E: EventStore> FinishProcessor<E> {
+impl<E: EventStore> FinishProcessor<E, NoOpPreparer> {
     pub fn new(
         sandbox: Box<dyn SandboxDyn>,
         event_store: E,
@@ -29,6 +45,25 @@ impl<E: EventStore> FinishProcessor<E> {
             event_store,
             export_path,
             tools,
+            preparer: NoOpPreparer,
+        }
+    }
+}
+
+impl<E: EventStore, P: ArtifactPreparer> FinishProcessor<E, P> {
+    pub fn new_with_preparer(
+        sandbox: Box<dyn SandboxDyn>,
+        event_store: E,
+        export_path: String,
+        tools: Vec<Box<dyn ToolDyn>>,
+        preparer: P,
+    ) -> Self {
+        Self {
+            sandbox,
+            event_store,
+            export_path,
+            tools,
+            preparer,
         }
     }
 
@@ -89,7 +124,7 @@ impl<E: EventStore> FinishProcessor<E> {
     }
 }
 
-impl<E: EventStore> Processor<Event> for FinishProcessor<E> {
+impl<E: EventStore, P: ArtifactPreparer> Processor<Event> for FinishProcessor<E, P> {
     async fn run(&mut self, event: &EventDb<Event>) -> eyre::Result<()> {
         match &event.data {
             Event::TaskCompleted { success: true } => {
@@ -107,7 +142,8 @@ impl<E: EventStore> Processor<Event> for FinishProcessor<E> {
                     tracing::warn!("Failed to replay some tool calls: {}", e);
                 }
 
-                // Skipping cleanup; using git-aware export to include only non-ignored files
+                // Prepare artifacts (e.g., export requirements for FastAPI apps)
+                self.preparer.prepare(&mut self.sandbox).await?;
 
                 // Export artifacts
                 match self.export_artifacts().await {

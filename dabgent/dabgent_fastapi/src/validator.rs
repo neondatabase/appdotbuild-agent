@@ -147,30 +147,6 @@ impl DataAppsValidator {
         Ok(())
     }
 
-    async fn export_requirements(&self, sandbox: &mut Box<dyn SandboxDyn>) -> Result<(), String> {
-        tracing::info!("Starting requirements export...");
-
-        let result = sandbox.exec("cd /app/backend && uv export --no-hashes --format requirements-txt --output-file requirements.txt --no-dev")
-            .await.map_err(|e| {
-                let error = format!("Failed to run uv export: {}", e);
-                tracing::error!("{}", error);
-                error
-            })?;
-
-        if result.exit_code != 0 {
-            let error_msg = format!(
-                "uv export command failed (exit code {}): stderr: {} stdout: {}",
-                result.exit_code,
-                result.stderr,
-                result.stdout
-            );
-            tracing::info!("Requirements export failed: {}", error_msg);
-            return Err(error_msg);
-        }
-
-        tracing::info!("Requirements export passed");
-        Ok(())
-    }
 }
 
 impl Validator for DataAppsValidator {
@@ -188,8 +164,6 @@ impl Validator for DataAppsValidator {
         let tests_result = self.check_tests(sandbox).await;
         let linting_result = self.check_linting(sandbox).await;
         let frontend_result = self.check_frontend_build(sandbox).await;
-        // FixMe: requirements export modifies the state, although Done tool is expected to be idempotent, so it should be extracted somewhere else
-        let requirements_result = self.export_requirements(sandbox).await;
 
         // Collect all errors
         let mut errors = Vec::new();
@@ -208,10 +182,6 @@ impl Validator for DataAppsValidator {
 
         if let Err(e) = frontend_result {
             errors.push(format!("Frontend: {}", e));
-        }
-
-        if let Err(e) = requirements_result {
-            errors.push(format!("Requirements export: {}", e));
         }
 
         if errors.is_empty() {
