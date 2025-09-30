@@ -1,3 +1,4 @@
+use dabgent_agent::llm::LLMClient;
 use dabgent_agent::processor::{Pipeline, Processor, ThreadProcessor, ToolProcessor};
 use dabgent_agent::toolbox::{self, basic::toolset};
 use dabgent_mq::{EventStore, db::sqlite::SqliteStore};
@@ -44,35 +45,35 @@ async fn main() {
 
     push_llm_config(&store, STREAM_ID, "", model, tool_definitions).await.unwrap();
     push_prompt(&store, STREAM_ID, "", prompt).await.unwrap();
-    pipeline_fn(STREAM_ID, store, use_anthropic).await.unwrap();
+
+    // Run pipeline with appropriate LLM client
+    if use_anthropic {
+        let llm = rig::providers::anthropic::Client::from_env();
+        pipeline_fn(STREAM_ID, store, llm).await.unwrap();
+    } else {
+        let llm = rig::providers::openrouter::Client::from_env();
+        pipeline_fn(STREAM_ID, store, llm).await.unwrap();
+    }
 }
 
-pub async fn pipeline_fn(stream_id: &str, store: impl EventStore, use_anthropic: bool) -> Result<()> {
+pub async fn pipeline_fn<T: LLMClient + Clone + 'static>(
+    stream_id: &str,
+    store: impl EventStore,
+    llm: T,
+) -> Result<()> {
     let stream_id = stream_id.to_owned();
     let opts = ConnectOpts::default();
     opts.connect(move |client| async move {
         let sandbox = sandbox(&client).await?;
         let tools = toolset(Validator);
 
-        if use_anthropic {
-            let llm = rig::providers::anthropic::Client::from_env();
-            let thread_processor = ThreadProcessor::new(llm.clone(), store.clone());
-            let tool_processor = ToolProcessor::new(sandbox.boxed(), store.clone(), tools, None);
-            let pipeline = Pipeline::new(
-                store.clone(),
-                vec![thread_processor.boxed(), tool_processor.boxed()],
-            );
-            pipeline.run(stream_id.clone()).await?;
-        } else {
-            let llm = rig::providers::openrouter::Client::from_env();
-            let thread_processor = ThreadProcessor::new(llm.clone(), store.clone());
-            let tool_processor = ToolProcessor::new(sandbox.boxed(), store.clone(), tools, None);
-            let pipeline = Pipeline::new(
-                store.clone(),
-                vec![thread_processor.boxed(), tool_processor.boxed()],
-            );
-            pipeline.run(stream_id.clone()).await?;
-        }
+        let thread_processor = ThreadProcessor::new(llm.clone(), store.clone());
+        let tool_processor = ToolProcessor::new(sandbox.boxed(), store.clone(), tools, None);
+        let pipeline = Pipeline::new(
+            store.clone(),
+            vec![thread_processor.boxed(), tool_processor.boxed()],
+        );
+        pipeline.run(stream_id.clone()).await?;
         Ok(())
     })
     .await
