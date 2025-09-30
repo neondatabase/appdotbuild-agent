@@ -151,7 +151,7 @@ impl<T: LLMClient, E: EventStore> Processor<Event> for ThreadProcessor<T, E> {
     async fn run(&mut self, event: &EventDb<Event>) -> eyre::Result<()> {
         let query = Query::stream(&event.stream_id).aggregate(&event.aggregate_id);
         match &event.data {
-            Event::UserMessage(..) => {
+            Event::UserMessage(..) | Event::ToolResult(..) => {
                 let events = self.event_store.load_events::<Event>(&query, None).await?;
                 let mut thread = Thread::fold(&events);
                 let completion = self.completion(&thread).await?;
