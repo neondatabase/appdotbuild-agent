@@ -24,6 +24,7 @@ Create a `.env` file at the repository root (or export the variables in your she
 # LLM Providers
 ANTHROPIC_API_KEY=your_key
 GEMINI_API_KEY=your_key
+OPENROUTER_API_KEY=your_key
 OPENAI_API_KEY=your_key                # Optional, if you plan to target OpenAI-compatible endpoints
 DEFAULT_MODEL=claude-3-opus            # See DESIGN.md for architecture context
 

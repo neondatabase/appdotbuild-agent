@@ -297,3 +297,47 @@ impl LLMClient for rig::providers::gemini::Client {
         result.map_err(Into::into)
     }
 }
+
+impl LLMClient for rig::providers::openrouter::Client {
+    async fn completion(&self, completion: Completion) -> eyre::Result<CompletionResponse> {
+        let model = self.completion_model(&completion.model);
+        let result = model.completion(completion.into()).await.map(|response| {
+            let finish_reason = response.raw_response.choices[0].finish_reason.as_ref();
+            // If the model emitted tool calls, treat finish as ToolUse to drive the tool executor
+            let finish_reason = if response
+                .choice
+                .iter()
+                .any(|c| matches!(c, &rig::message::AssistantContent::ToolCall(..)))
+            {
+                FinishReason::ToolUse
+            } else {
+                finish_reason.map_or(FinishReason::None, |reason| match reason.as_ref() {
+                    "stop" => FinishReason::Stop,
+                    "length" => FinishReason::MaxTokens,
+                    "tool_calls" => FinishReason::ToolUse,
+                    // Rest cases: actually either "content_filter" or "error" according to docs
+                    _ => FinishReason::Other(reason.clone()),
+                })
+            };
+            let output_tokens = response
+                .raw_response
+                .usage
+                .map_or(0, |x| usize_to_u64(x.completion_tokens));
+            CompletionResponse {
+                choice: response.choice,
+                finish_reason,
+                output_tokens,
+            }
+        });
+        result.map_err(Into::into)
+    }
+}
+
+// TODO: consider placing in a common utils module
+fn usize_to_u64(value: usize) -> u64 {
+    // NOTE: Actually nope when optimized
+    // NOTE: The raw cast "as" could be used instead but it might be more prone to errors in a common case
+    value
+        .try_into()
+        .expect("usize to u64 conversion unexpectedly failed")
+}

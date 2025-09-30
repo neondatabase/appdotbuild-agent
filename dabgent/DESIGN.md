@@ -506,6 +506,7 @@ CREATE TABLE artifacts (
 # LLM Configuration
 ANTHROPIC_API_KEY=your_key
 GEMINI_API_KEY=your_key
+OPENROUTER_API_KEY=your_key
 DEFAULT_MODEL=claude-3-opus
 
 # Database
