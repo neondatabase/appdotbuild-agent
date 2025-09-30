@@ -638,6 +638,7 @@ dependencies = [
 name = "dabgent_agent"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "clap",
  "dabgent_integrations",

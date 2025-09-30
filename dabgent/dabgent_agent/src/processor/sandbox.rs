@@ -1,8 +1,8 @@
-use super::Processor;
+use super::{Aggregate, Processor, thread};
 use crate::event::{Event, TypedToolResult, ToolKind};
 use crate::llm::{CompletionResponse, FinishReason};
 use crate::toolbox::{ToolCallExt, ToolDyn};
-use dabgent_mq::{EventDb, EventStore};
+use dabgent_mq::{EventDb, EventStore, Query};
 use dabgent_sandbox::SandboxDyn;
 use eyre::Result;
 use std::path::Path;
@@ -59,15 +59,42 @@ impl<E: EventStore> Processor<Event> for ToolProcessor<E> {
             } if response.finish_reason == FinishReason::ToolUse
                 && recipient.eq(&self.recipient) =>
             {
-                let tool_results = self.run_tools(&response, &event.stream_id, &event.aggregate_id).await?;
-                let tool_result_event = Event::ToolResult(tool_results);
+                let tool_results = self.run_tools(&response).await?;
 
-                self.event_store.push_event(
-                    &event.stream_id,
-                    &event.aggregate_id,
-                    &tool_result_event,
-                    &Default::default(),
-                ).await?;
+                if !tool_results.is_empty() {
+                    // Emit tool results as-is
+                    let tool_result_event = Event::ToolResult(tool_results.clone());
+                    self.event_store.push_event(
+                        &event.stream_id,
+                        &event.aggregate_id,
+                        &tool_result_event,
+                        &Default::default(),
+                    ).await?;
+
+                    // Convert to UserMessage for normal processing
+                    let tools = tool_results.iter().map(|t|
+                        rig::message::UserContent::ToolResult(t.result.clone())
+                    );
+                    let user_content = rig::OneOrMany::many(tools)?;
+
+                    // Load thread state and process the UserMessage
+                    let query = Query::stream(&event.stream_id).aggregate(&event.aggregate_id);
+                    let events = self.event_store.load_events::<Event>(&query, None).await?;
+                    let mut thread = thread::Thread::fold(&events);
+                    let new_events = thread.process(thread::Command::User(user_content))?;
+
+                    // Push the new events (including UserMessage and any LLM responses)
+                    for new_event in new_events.iter() {
+                        self.event_store
+                            .push_event(
+                                &event.stream_id,
+                                &event.aggregate_id,
+                                new_event,
+                                &Default::default(),
+                            )
+                            .await?;
+                    }
+                }
             }
 
             _ => {}
@@ -94,8 +121,6 @@ impl<E: EventStore> ToolProcessor<E> {
     async fn run_tools(
         &mut self,
         response: &CompletionResponse,
-        stream_id: &str,
-        aggregate_id: &str,
     ) -> Result<Vec<TypedToolResult>> {
         let mut results = Vec::new();
         for content in response.choice.iter() {
@@ -106,27 +131,30 @@ impl<E: EventStore> ToolProcessor<E> {
                         let args = call.function.arguments.clone();
                         let tool_result = tool.call(args, &mut self.sandbox).await?;
 
-                        // Check if this is a successful DoneTool call
-                        if call.function.name == "done" && tool_result.is_ok() {
-                            tracing::info!("Task completed successfully, emitting TaskCompleted event");
-                            let task_completed_event = Event::TaskCompleted { success: true };
-                            self.event_store
-                                .push_event(
-                                    stream_id,
-                                    aggregate_id,
-                                    &task_completed_event,
-                                    &Default::default(),
-                                )
-                                .await?;
-                        }
                         tool_result
                     }
                     None => {
-                        let error = format!("{} not found", call.function.name);
+                        let available_tools: Vec<String> = self.tools.iter()
+                            .map(|tool| tool.name())
+                            .collect();
+                        let error = format!(
+                            "Tool '{}' does not exist. Available tools: [{}]",
+                            call.function.name,
+                            available_tools.join(", ")
+                        );
                         Err(serde_json::json!(error))
                     }
                 };
-                results.push(TypedToolResult { tool_name: match call.function.name.as_str() { "done" => ToolKind::Done, other => ToolKind::Other(other.to_string()) }, result: call.to_result(result) });
+                results.push(TypedToolResult {
+                    tool_name: match call.function.name.as_str() {
+                        "done" => ToolKind::Done,
+                        "explore_databricks_catalog" => ToolKind::ExploreDatabricksCatalog,
+                        "finish_delegation" => ToolKind::FinishDelegation,
+                        "compact_error" => ToolKind::CompactError,
+                        other => ToolKind::Regular(other.to_string())
+                    },
+                    result: call.to_result(result)
+                });
             }
         }
 

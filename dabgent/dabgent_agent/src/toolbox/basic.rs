@@ -3,6 +3,59 @@ use dabgent_sandbox::SandboxDyn;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize)]
+pub struct DoneToolArgs {
+    pub summary: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct FinishDelegationArgs {
+    pub result: String,
+}
+
+#[derive(Clone)]
+pub struct FinishDelegationTool;
+
+impl Tool for FinishDelegationTool {
+    type Args = FinishDelegationArgs;
+    type Output = String;
+    type Error = String;
+
+    fn name(&self) -> String {
+        "finish_delegation".to_string()
+    }
+
+    fn definition(&self) -> rig::completion::ToolDefinition {
+        rig::completion::ToolDefinition {
+            name: self.name(),
+            description: "Complete delegated work and return summary to main thread".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "result": {
+                        "type": "string",
+                        "description": "Comprehensive summary of delegated work results"
+                    }
+                },
+                "required": ["result"]
+            }),
+        }
+    }
+
+    fn is_terminal(&self) -> bool {
+        true
+    }
+
+    async fn call(
+        &self,
+        args: Self::Args,
+        _sandbox: &mut Box<dyn SandboxDyn>,
+    ) -> eyre::Result<eyre::Result<Self::Output, Self::Error>> {
+        // This tool just returns the result - the actual event emission will be handled by ToolProcessor
+        Ok(Ok(args.result))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BashArgs {
     pub command: String,
@@ -331,7 +384,7 @@ impl DoneTool {
 }
 
 impl Tool for DoneTool {
-    type Args = serde_json::Value;
+    type Args = DoneToolArgs;
     type Output = String;
     type Error = String;
 
@@ -347,19 +400,25 @@ impl Tool for DoneTool {
             description: "Run checks, if successful mark task as finished".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Summary of completed work or validation results"
+                    }
+                },
+                "required": ["summary"]
             }),
         }
     }
 
     async fn call(
         &self,
-        _args: Self::Args,
+        args: Self::Args,
         sandbox: &mut Box<dyn SandboxDyn>,
     ) -> eyre::Result<eyre::Result<Self::Output, Self::Error>> {
         match self.validator.run(sandbox).await {
             Ok(result) => Ok(match result {
-                Ok(_) => Ok("success".to_string()),
+                Ok(_) => Ok(args.summary),
                 Err(err) => Err(format!("validation error: {}", err)),
             }),
             Err(e) => Ok(Err(format!("validator failed: {}", e))),

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
+async-trait = "0.1"
 eyre = "0.6"
 chrono = { version = "0.4", features = ["serde"] }
 serde_json = "1"

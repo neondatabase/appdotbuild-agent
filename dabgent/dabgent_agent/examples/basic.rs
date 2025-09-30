@@ -69,9 +69,10 @@ pub async fn pipeline_fn<T: LLMClient + Clone + 'static>(
 
         let thread_processor = ThreadProcessor::new(llm.clone(), store.clone());
         let tool_processor = ToolProcessor::new(sandbox.boxed(), store.clone(), tools, None);
+        let completion_processor = dabgent_agent::processor::CompletionProcessor::new(store.clone());
         let pipeline = Pipeline::new(
             store.clone(),
-            vec![thread_processor.boxed(), tool_processor.boxed()],
+            vec![thread_processor.boxed(), tool_processor.boxed(), completion_processor.boxed()],
         );
         pipeline.run(stream_id.clone()).await?;
         Ok(())

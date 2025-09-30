@@ -1,4 +1,4 @@
-use dabgent_agent::processor::{CompactProcessor, FinishProcessor, Pipeline, Processor, ThreadProcessor, ToolProcessor};
+use dabgent_agent::processor::{CompletionProcessor, DelegationProcessor, FinishProcessor, Pipeline, Processor, ThreadProcessor, ToolProcessor};
 use dabgent_agent::toolbox::ToolDyn;
 use dabgent_fastapi::{toolset::dataapps_toolset, validator::DataAppsValidator, artifact_preparer::DataAppsArtifactPreparer};
 use dabgent_fastapi::templates::{EMBEDDED_TEMPLATES, DEFAULT_TEMPLATE_PATH};
@@ -20,7 +20,7 @@ async fn main() {
 
     let opts = ConnectOpts::default();
     opts.connect(|client| async move {
-        let llm = rig::providers::gemini::Client::from_env();
+        let claude_llm = rig::providers::anthropic::Client::from_env();
         let store = create_store(Some(StoreConfig::from_env())).await?;
         tracing::info!("Event store initialized successfully");
         let sandbox = create_sandbox(&client).await?;
@@ -39,9 +39,9 @@ async fn main() {
         push_seed_sandbox(&store, STREAM_ID, AGGREGATE_ID, template_path, "/app").await?;
         push_prompt(&store, STREAM_ID, AGGREGATE_ID, USER_PROMPT).await?;
 
-        tracing::info!("Starting DataApps pipeline with model: {}", MODEL);
+        tracing::info!("Starting DataApps pipeline with main model: {} and delegation model: {}", MAIN_MODEL, DELEGATION_MODEL);
 
-        let thread_processor = ThreadProcessor::new(llm.clone(), store.clone());
+        let thread_processor = ThreadProcessor::new(claude_llm.clone(), store.clone());
 
         // Create export directory path with timestamp
         let timestamp = std::time::SystemTime::now()
@@ -54,11 +54,13 @@ async fn main() {
         let completion_sandbox = sandbox.fork().await?;
         let tool_processor = ToolProcessor::new(dabgent_sandbox::Sandbox::boxed(sandbox), store.clone(), tool_processor_tools, None);
 
-        // Create CompactProcessor with small threshold for testing
-        let compact_processor = CompactProcessor::new(
+        let delegation_processor = DelegationProcessor::new(
             store.clone(),
-            2048,
-            "gemini-2.5-flash".to_string(),  // Use same model as main pipeline
+            DELEGATION_MODEL.to_string(),
+            vec![
+                Box::new(dabgent_agent::processor::delegation::databricks::DatabricksHandler::new()?),
+                Box::new(dabgent_agent::processor::delegation::compaction::CompactionHandler::new(2048)?),
+            ],
         );
 
         // FixMe: FinishProcessor should have no state, including export path
@@ -70,12 +72,14 @@ async fn main() {
             DataAppsArtifactPreparer,
         );
 
+        let completion_processor = CompletionProcessor::new(store.clone());
         let pipeline = Pipeline::new(
             store.clone(),
             vec![
                 thread_processor.boxed(),
-                tool_processor.boxed(),
-                compact_processor.boxed(),
+                tool_processor.boxed(),           // Handles main thread tools (recipient: None)
+                completion_processor.boxed(),     // Handles Done and FinishDelegation completions
+                delegation_processor.boxed(),     // Handles delegation AND delegated tool execution (including compaction)
                 finish_processor.boxed(),
             ],
         );
@@ -97,43 +101,42 @@ Workspace Setup:
 - You have a pre-configured DataApps project structure in /app with backend and frontend directories
 - Backend is in /app/backend with Python, FastAPI, and uv package management
 - Frontend is in /app/frontend with React Admin and TypeScript
-- Use 'uv run' for all Python commands (e.g., 'uv run python main.py')
+
+Data Sources:
+- You have access to Databricks Unity Catalog with bakery business data
+- Use the 'explore_databricks_catalog' tool to discover available tables and schemas
+- The catalog contains real business data about products, sales, customers, and orders
+- Once you explore the data, use the actual schema and sample data for your API design
 
 Your Task:
-1. Create a simple data API with one endpoint that returns sample data
-2. Configure React Admin UI to display this data in a table
-3. Add proper logging and debugging throughout
+1. First, explore the Databricks catalog to understand the data
+2. Create a data API that serves real data from Databricks tables
+3. Configure React Admin UI to display this data in tables
 4. Ensure CORS is properly configured for React Admin
+5. When the app is ready, you need to use tool Done to run the tests and linters. If there are any errors, fix them; otherwise, the tool will confirm completion.
 
 Implementation Details:
-- Add /api/items endpoint in backend/main.py that returns a list of sample items
-- Each item should have: id, name, description, category, created_at fields
-- Update frontend/src/App.tsx to add a Resource for items with ListGuesser
+- Start by exploring the Databricks catalog to find relevant tables
+- Design API endpoints based on the actual data structure you discover
+- Each endpoint should return data with fields matching the Databricks schema
+- Update frontend/src/App.tsx to add Resources for the discovered data
 - Include X-Total-Count header for React Admin pagination
-- Add debug logging in both backend (print/logging) and frontend (console.log)
 
-Quality Requirements:
-- Follow React Admin patterns for data providers
-- Use proper REST API conventions (/api/resource)
-- Handle errors gracefully with clear messages
-- Run all linters and tests before completion
-
-Start by exploring the current project structure, then implement the required features.
-Use the tools available to you as needed.
 ";
 
 const USER_PROMPT: &str = "
-Create a simple DataApp with:
+Create a data app to show the core sales data for a bakery.
 
-1. Backend API endpoint `/api/items` that returns a list of sample items (each item should have id, name, description, category, created_at fields)
-2. React Admin frontend that displays these items in a table with proper columns
-3. Include debug logging in both backend and frontend
-4. Make sure the React Admin data provider can fetch and display the items
+1. First, explore the Databricks catalog to discover where bakery sales data is stored, i assume it is under `samples` but you need to confirm;
+2. Based on what you find, create backend API endpoints with some sample data from those tables (real integration will be added later);
+3. Build React Admin frontend that displays the discovered data in tables
 
-The app should be functional.
+Focus on creating a functional DataApp that showcases real bakery business data from Databricks.
 ";
 
-const MODEL: &str = "gemini-2.5-flash";
+
+const MAIN_MODEL: &str = "claude-sonnet-4-5";
+const DELEGATION_MODEL: &str = "claude-sonnet-4-5";
 
 async fn create_sandbox(client: &dagger_sdk::DaggerConn) -> Result<DaggerSandbox> {
     tracing::info!("Setting up sandbox with DataApps template...");
@@ -168,7 +171,7 @@ async fn push_llm_config<S: EventStore>(
         .collect();
 
     let event = dabgent_agent::event::Event::LLMConfig {
-        model: MODEL.to_owned(),
+        model: MAIN_MODEL.to_owned(),
         temperature: 0.0,
         max_tokens: 8192,
         preamble: Some(SYSTEM_PROMPT.to_owned()),

@@ -11,7 +11,10 @@ pub struct ParentAggregate {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ToolKind {
     Done,
-    Other(String),
+    ExploreDatabricksCatalog,
+    FinishDelegation,
+    CompactError,
+    Regular(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +43,7 @@ pub enum Event {
     ArtifactsCollected(HashMap<String, String>),
     TaskCompleted {
         success: bool,
+        summary: String,
     },
     SeedSandboxFromTemplate {
         template_path: String,
@@ -57,6 +61,16 @@ pub enum Event {
     },
     PlanUpdated {
         tasks: Vec<String>,
+    },
+    DelegateWork {
+        agent_type: String,
+        prompt: String,
+        parent_tool_id: String,
+    },
+    WorkComplete {
+        agent_type: String,
+        result: String,
+        parent: ParentAggregate,
     },
 }
 
@@ -76,6 +90,8 @@ impl dabgent_mq::Event for Event {
             Event::PipelineShutdown => "pipeline_shutdown",
             Event::PlanCreated { .. } => "plan_created",
             Event::PlanUpdated { .. } => "plan_updated",
+            Event::DelegateWork { .. } => "delegate_work",
+            Event::WorkComplete { .. } => "work_complete",
         }
     }
 }

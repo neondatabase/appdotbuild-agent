@@ -373,7 +373,10 @@ impl<S: EventStore + Send + Sync> NoSandboxTool for CompleteTaskTool<S> {
         let task = tasks[args.task_index].clone();
 
         // Create TaskCompleted event for the specific task
-        let event = crate::event::Event::TaskCompleted { success: true };
+        let event = crate::event::Event::TaskCompleted {
+            success: true,
+            summary: "Planning task completed".to_string()
+        };
 
         // Push event to store with the appropriate thread_id
         let thread_id = format!("task-{}", args.task_index);

@@ -15,6 +15,7 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> String;
     fn definition(&self) -> rig::completion::ToolDefinition;
     fn needs_replay(&self) -> bool { true }
+    fn is_terminal(&self) -> bool { false }
     fn call(
         &self,
         args: Self::Args,
@@ -28,6 +29,7 @@ pub trait ToolDyn: Send + Sync {
     fn name(&self) -> String;
     fn definition(&self) -> rig::completion::ToolDefinition;
     fn needs_replay(&self) -> bool;
+    fn is_terminal(&self) -> bool;
     fn call<'a>(
         &'a self,
         args: serde_json::Value,
@@ -46,6 +48,10 @@ impl<T: Tool> ToolDyn for T {
 
     fn needs_replay(&self) -> bool {
         Tool::needs_replay(self)
+    }
+
+    fn is_terminal(&self) -> bool {
+        Tool::is_terminal(self)
     }
 
     fn call<'a>(

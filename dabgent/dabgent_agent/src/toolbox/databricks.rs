@@ -1,4 +1,4 @@
-use crate::toolbox::{ClientTool, ClientToolAdapter, ToolDyn};
+use crate::toolbox::{ClientTool, ClientToolAdapter, ToolDyn, basic::FinishDelegationTool};
 use dabgent_integrations::databricks::DatabricksRestClient;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
@@ -6,6 +6,30 @@ use serde_json::Value;
 use std::sync::Arc;
 
 // Args structs matching the Python implementation
+
+fn default_limit() -> usize {
+    1000
+}
+
+// Helper functions for pagination and filtering
+fn apply_pagination<T>(items: Vec<T>, limit: usize, offset: usize) -> (Vec<T>, String) {
+    let total = items.len();
+    let paginated: Vec<T> = items.into_iter().skip(offset).take(limit).collect();
+    let shown = paginated.len();
+
+    let pagination_info = if total > limit + offset {
+        format!("Showing {} items (offset {}, limit {}). Total: {}", shown, offset, limit, total)
+    } else if offset > 0 {
+        format!("Showing {} items (offset {}). Total: {}", shown, offset, total)
+    } else if total > limit {
+        format!("Showing {} items (limit {}). Total: {}", shown, limit, total)
+    } else {
+        format!("Showing all {} items", total)
+    };
+
+    (paginated, pagination_info)
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabricksListCatalogsArgs {
@@ -15,6 +39,12 @@ pub struct DatabricksListCatalogsArgs {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabricksListSchemasArgs {
     pub catalog_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,13 +163,27 @@ impl ClientTool<DatabricksRestClient> for DatabricksListSchemas {
     fn definition(&self) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: self.name(),
-            description: "List all schemas in a specific catalog".to_string(),
+            description: "List all schemas in a specific catalog with optional filtering and pagination".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "catalog_name": {
                         "type": "string",
                         "description": "Name of the catalog to list schemas from",
+                    },
+                    "filter": {
+                        "type": "string",
+                        "description": "Optional filter to search for schemas by name (case-insensitive substring match)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of schemas to return (default: 1000)",
+                        "default": 1000,
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Number of schemas to skip (default: 0)",
+                        "default": 0,
                     },
                 },
                 "required": ["catalog_name"],
@@ -152,24 +196,36 @@ impl ClientTool<DatabricksRestClient> for DatabricksListSchemas {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Result<Self::Output, Self::Error>> {
-        match self.client.list_schemas(&args.catalog_name).await {
+        tracing::debug!("DatabricksListSchemas::call starting with catalog: {}", args.catalog_name);
+        match self.client.list_schemas(&args.catalog_name, args.filter.as_deref()).await {
             Ok(schemas) => {
-                if schemas.is_empty() {
-                    Ok(Ok(format!("No schemas found in catalog '{}'.", args.catalog_name)))
-                } else {
-                    let mut result_lines = vec![
-                        format!("Found {} schemas in catalog '{}':", schemas.len(), args.catalog_name),
-                        "".to_string(),
-                    ];
+                tracing::debug!("DatabricksListSchemas::call succeeded, found {} schemas", schemas.len());
 
-                    for schema in &schemas {
-                        result_lines.push(format!("• {}.{}", args.catalog_name, schema));
+                if schemas.is_empty() {
+                    let message = if args.filter.is_some() {
+                        format!("No schemas found in catalog '{}' matching filter.", args.catalog_name)
+                    } else {
+                        format!("No schemas found in catalog '{}'.", args.catalog_name)
+                    };
+                    Ok(Ok(message))
+                } else {
+                    // Apply pagination
+                    let (paginated_schemas, pagination_info) = apply_pagination(schemas, args.limit, args.offset);
+
+                    let mut result_lines = vec![pagination_info, "".to_string()];
+
+                    for schema in &paginated_schemas {
+                        // Remove redundant catalog name from output
+                        result_lines.push(format!("• {}", schema));
                     }
 
                     Ok(Ok(result_lines.join("\n")))
                 }
             }
-            Err(e) => Ok(Err(format!("Failed to list schemas in catalog '{}': {}", args.catalog_name, e))),
+            Err(e) => {
+                tracing::debug!("DatabricksListSchemas::call failed with error: {}", e);
+                Ok(Err(format!("Failed to list schemas in catalog '{}': {}", args.catalog_name, e)))
+            }
         }
     }
 }
@@ -468,7 +524,12 @@ fn format_value(value: &Value) -> String {
 
 // Public function to create a databricks toolset
 pub fn databricks_toolset() -> Result<Vec<Box<dyn ToolDyn>>> {
-    let client = Arc::new(DatabricksRestClient::new().map_err(|e| eyre::eyre!("{}", e))?);
+    tracing::info!("Creating Databricks toolset...");
+    let client = Arc::new(DatabricksRestClient::new().map_err(|e| {
+        tracing::error!("Failed to create DatabricksRestClient: {}", e);
+        eyre::eyre!("{}", e)
+    })?);
+    tracing::info!("DatabricksRestClient created successfully");
 
     Ok(vec![
         Box::new(ClientToolAdapter::new(DatabricksListCatalogs::new(client.clone()))),
@@ -476,5 +537,6 @@ pub fn databricks_toolset() -> Result<Vec<Box<dyn ToolDyn>>> {
         Box::new(ClientToolAdapter::new(DatabricksListTables::new(client.clone()))),
         Box::new(ClientToolAdapter::new(DatabricksDescribeTable::new(client.clone()))),
         Box::new(ClientToolAdapter::new(DatabricksExecuteQuery::new(client.clone()))),
+        Box::new(FinishDelegationTool),
     ])
 }

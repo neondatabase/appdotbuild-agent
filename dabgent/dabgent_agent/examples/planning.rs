@@ -100,9 +100,10 @@ pub async fn planning_pipeline(
             Some("planner".to_string()),
         );
 
+        let planning_completion_processor = dabgent_agent::processor::CompletionProcessor::new(store.clone());
         let planning_pipeline = Pipeline::new(
             store.clone(),
-            vec![planning_thread.boxed(), planning_tool_processor.boxed()],
+            vec![planning_thread.boxed(), planning_tool_processor.boxed(), planning_completion_processor.boxed()],
         );
 
         let pipeline_handle = tokio::spawn({
@@ -160,9 +161,10 @@ pub async fn planning_pipeline(
                 None,
             );
 
+            let execution_completion_processor = dabgent_agent::processor::CompletionProcessor::new(store.clone());
             let execution_pipeline = Pipeline::new(
                 store.clone(),
-                vec![execution_thread.boxed(), execution_tool_processor.boxed()],
+                vec![execution_thread.boxed(), execution_tool_processor.boxed(), execution_completion_processor.boxed()],
             );
 
             let exec_handle = tokio::spawn({

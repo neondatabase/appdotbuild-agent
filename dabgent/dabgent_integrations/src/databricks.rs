@@ -230,20 +230,31 @@ impl DatabricksRestClient {
             request = request.json(body);
         }
 
+        debug!("Sending HTTP request to Databricks API...");
         let response = request
             .send()
             .await
-            .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
+            .map_err(|e| {
+                info!("HTTP request failed: {}", e);
+                anyhow!("HTTP request failed: {}", e)
+            })?;
 
         let status = response.status();
+        debug!("Received HTTP response with status: {}", status);
+
         let response_text = response
             .text()
             .await
-            .map_err(|e| anyhow!("Failed to read response text: {}", e))?;
+            .map_err(|e| {
+                info!("Failed to read response text: {}", e);
+                anyhow!("Failed to read response text: {}", e)
+            })?;
 
-        debug!("Response status: {}, body: {}", status, response_text);
+        debug!("Response body length: {} characters", response_text.len());
+        debug!("Response body: {}", response_text);
 
         if !status.is_success() {
+            info!("API request failed with status {}: {}", status, response_text);
             return Err(anyhow!(
                 "API request failed with status {}: {}",
                 status,
@@ -251,7 +262,9 @@ impl DatabricksRestClient {
             ));
         }
 
+        debug!("Parsing JSON response...");
         serde_json::from_str(&response_text).map_err(|e| {
+            info!("Failed to parse JSON response: {}. Response: {}", e, response_text);
             anyhow!(
                 "Failed to parse JSON response: {}. Response: {}",
                 e,
@@ -461,7 +474,8 @@ impl DatabricksRestClient {
         Ok(all_catalogs)
     }
 
-    pub async fn list_schemas(&self, catalog_name: &str) -> Result<Vec<String>> {
+    pub async fn list_schemas(&self, catalog_name: &str, name_filter: Option<&str>) -> Result<Vec<String>> {
+        info!("Starting list_schemas for catalog: {}", catalog_name);
         let mut all_schemas = Vec::new();
         let mut next_page_token: Option<String> = None;
 
@@ -476,13 +490,22 @@ impl DatabricksRestClient {
             url.push('?');
             url.push_str(&query_params.join("&"));
 
+            debug!("About to make API request for schemas...");
             let response: SchemasListResponse = self
                 .api_request(reqwest::Method::GET, &url, None::<&()>)
                 .await?;
+            debug!("Successfully received schemas response");
 
             if let Some(schemas) = response.schemas {
                 for schema in schemas {
-                    all_schemas.push(schema.name);
+                    // Apply filter if provided
+                    if let Some(filter) = name_filter {
+                        if schema.name.to_lowercase().contains(&filter.to_lowercase()) {
+                            all_schemas.push(schema.name);
+                        }
+                    } else {
+                        all_schemas.push(schema.name);
+                    }
                 }
             }
 
@@ -493,6 +516,7 @@ impl DatabricksRestClient {
             }
         }
 
+        info!("Completed list_schemas, found {} schemas", all_schemas.len());
         Ok(all_schemas)
     }
 
@@ -514,7 +538,7 @@ impl DatabricksRestClient {
         // For each catalog, get schemas and then tables
         for catalog_name in catalog_names {
             let schema_names = if schema == "*" {
-                self.list_schemas(&catalog_name).await?
+                self.list_schemas(&catalog_name, None).await?
             } else {
                 vec![schema.to_string()]
             };

@@ -71,7 +71,7 @@ async fn test_task_list_validator_with_done_tool() {
 
         // DoneTool should fail due to incomplete tasks
         let done_result = done_tool.call(
-            serde_json::json!({}),
+            serde_json::json!({"summary": "Task validation completed"}),
             &mut sandbox
         ).await?;
 
@@ -89,12 +89,12 @@ async fn test_task_list_validator_with_done_tool() {
         ).await?;
 
         let done_result = done_tool.call(
-            serde_json::json!({}),
+            serde_json::json!({"summary": "All tasks completed successfully"}),
             &mut sandbox
         ).await?;
 
         assert!(done_result.is_ok(), "DoneTool should succeed with all tasks completed");
-        assert_eq!(done_result.unwrap(), "success", "Should return success");
+        assert_eq!(done_result.unwrap(), "All tasks completed successfully", "Should return summary");
 
         Ok::<(), eyre::Error>(())
     }).await;

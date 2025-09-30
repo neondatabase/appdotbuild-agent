@@ -61,6 +61,8 @@ pub fn event_as_text(event: &AgentEvent) -> Text<'_> {
         AgentEvent::ToolResult(_) => Text::raw("Tool result"),
         AgentEvent::PlanCreated { tasks } => render_plan_created(tasks),
         AgentEvent::PlanUpdated { tasks } => render_plan_updated(tasks),
+        AgentEvent::DelegateWork { agent_type, .. } => Text::raw(format!("Delegating work to: {}", agent_type)),
+        AgentEvent::WorkComplete { agent_type, .. } => Text::raw(format!("Work completed by: {}", agent_type)),
     }
 }
 

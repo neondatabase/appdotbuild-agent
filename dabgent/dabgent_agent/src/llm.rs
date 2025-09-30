@@ -4,9 +4,9 @@ use std::pin::Pin;
 use std::time::Duration;
 use tokio::time::sleep;
 
-const MAX_COMPLETION_ATTEMPTS: usize = 4;
+const MAX_COMPLETION_ATTEMPTS: usize = 7;
 const BASE_BACKOFF_MS: u64 = 250;
-const MAX_BACKOFF_MS: u64 = 5000;
+const MAX_BACKOFF_MS: u64 = 10000;
 
 fn backoff_delay_ms(attempt: usize) -> u64 {
     let exp = BASE_BACKOFF_MS.saturating_mul(1 << (attempt.saturating_sub(1)));
@@ -178,6 +178,23 @@ impl<C: LLMClient> RetryingLLM<C> {
 
 impl<C: LLMClient> LLMClient for RetryingLLM<C> {
     async fn completion(&self, completion: Completion) -> eyre::Result<CompletionResponse> {
+        // Log payload information before making LLM call
+        let history_size = completion.history.len();
+        let tools_count = completion.tools.len();
+        let prompt_size = serde_json::to_string(&completion.prompt).map(|s| s.len()).unwrap_or(0);
+        let total_history_size = completion.history.iter()
+            .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
+            .sum::<usize>();
+
+        tracing::info!(
+            model = %completion.model,
+            history_messages = history_size,
+            tools_count = tools_count,
+            prompt_size_bytes = prompt_size,
+            total_history_size_bytes = total_history_size,
+            "Starting LLM completion request"
+        );
+
         for attempt in 1..=self.max_attempts {
             match self.inner.completion(completion.clone()).await {
                 Ok(resp) => return Ok(resp),

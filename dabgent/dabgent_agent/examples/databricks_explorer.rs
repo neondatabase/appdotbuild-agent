@@ -1,7 +1,8 @@
-use dabgent_agent::processor::{CompactProcessor, Pipeline, Processor, ThreadProcessor, ToolProcessor};
+use dabgent_agent::processor::{DelegationProcessor, Pipeline, Processor, ThreadProcessor, ToolProcessor};
+use dabgent_agent::processor::delegation::compaction::CompactionHandler;
 use dabgent_agent::toolbox::{databricks::databricks_toolset, ToolDyn};
 use dabgent_mq::{EventStore, create_store, StoreConfig};
-use dabgent_sandbox::Sandbox;
+use dabgent_sandbox::{Sandbox, NoOpSandbox};
 use eyre::Result;
 use rig::client::ProviderClient;
 
@@ -53,23 +54,28 @@ async fn main() -> Result<()> {
     // Set up processors
     let thread_processor = ThreadProcessor::new(llm, store.clone());
     let tool_processor = ToolProcessor::new(
-        DummySandbox::new().boxed(),
+        NoOpSandbox::new().boxed(),
         store.clone(),
         tools,
         None,
     );
-    let compact_processor = CompactProcessor::new(
+
+    // Set up delegation processor with compaction handler
+    let compaction_handler = CompactionHandler::new(2048)?; // Compact threshold
+    let delegation_processor = DelegationProcessor::new(
         store.clone(),
-        2048, // Compact threshold - keep context manageable
         MODEL.to_string(),
+        vec![Box::new(compaction_handler)],
     );
 
+    let completion_processor = dabgent_agent::processor::CompletionProcessor::new(store.clone());
     let pipeline = Pipeline::new(
         store,
         vec![
             thread_processor.boxed(),
             tool_processor.boxed(),
-            compact_processor.boxed(),
+            completion_processor.boxed(),
+            delegation_processor.boxed(),
         ],
     );
 
@@ -91,56 +97,6 @@ Please help me locate tables that contain bakery or food sales information. I'm 
 Can you explore the Unity Catalog and tell me what bakery-related sales data is available?
 "#;
 
-/// Dummy sandbox for Databricks tools that don't need actual file operations
-struct DummySandbox;
-
-impl DummySandbox {
-    fn new() -> Self {
-        Self
-    }
-}
-
-impl Sandbox for DummySandbox {
-    async fn exec(&mut self, _command: &str) -> Result<dabgent_sandbox::ExecResult> {
-        Ok(dabgent_sandbox::ExecResult {
-            exit_code: 0,
-            stdout: String::new(),
-            stderr: String::new(),
-        })
-    }
-
-    async fn write_file(&mut self, _path: &str, _content: &str) -> Result<()> {
-        Ok(())
-    }
-
-    async fn write_files(&mut self, _files: Vec<(&str, &str)>) -> Result<()> {
-        Ok(())
-    }
-
-    async fn read_file(&self, _path: &str) -> Result<String> {
-        Ok(String::new())
-    }
-
-    async fn delete_file(&mut self, _path: &str) -> Result<()> {
-        Ok(())
-    }
-
-    async fn list_directory(&self, _path: &str) -> Result<Vec<String>> {
-        Ok(Vec::new())
-    }
-
-    async fn set_workdir(&mut self, _path: &str) -> Result<()> {
-        Ok(())
-    }
-
-    async fn export_directory(&self, _container_path: &str, _host_path: &str) -> Result<String> {
-        Ok(String::new())
-    }
-
-    async fn fork(&self) -> Result<DummySandbox> {
-        Ok(DummySandbox)
-    }
-}
 
 async fn push_llm_config<S: EventStore>(
     store: &S,
