@@ -68,10 +68,10 @@ jobs:
 
       - name: Run unit tests
         working-directory: ./dabgent
-        run: cargo test --lib --all -- --nocapture
+        run: cargo test --lib --all
         continue-on-error: true
 
       - name: Run integration tests (excluding e2e)
         working-directory: ./dabgent
-        run: cargo test --all --test '*' -- --skip e2e_generation --nocapture
+        run: cargo test --all --test '*' -- --skip e2e_generation
         continue-on-error: true
