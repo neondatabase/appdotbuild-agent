@@ -34,7 +34,15 @@ async fn main() {
     };
 
     let store = store().await;
-    push_llm_config(&store, STREAM_ID, "", model).await.unwrap();
+
+    // Get tool definitions
+    let tools = dabgent_agent::toolbox::basic::toolset(Validator);
+    let tool_definitions: Vec<rig::completion::ToolDefinition> = tools
+        .iter()
+        .map(|tool| tool.definition())
+        .collect();
+
+    push_llm_config(&store, STREAM_ID, "", model, tool_definitions).await.unwrap();
     push_prompt(&store, STREAM_ID, "", prompt).await.unwrap();
     pipeline_fn(STREAM_ID, store, use_anthropic).await.unwrap();
 }
@@ -97,13 +105,14 @@ async fn push_llm_config<S: EventStore>(
     stream_id: &str,
     aggregate_id: &str,
     model: &str,
+    tool_definitions: Vec<rig::completion::ToolDefinition>,
 ) -> Result<()> {
     let event = dabgent_agent::event::Event::LLMConfig {
         model: model.to_owned(),
         temperature: 0.1,
         max_tokens: 8192,
         preamble: Some(SYSTEM_PROMPT.to_owned()),
-        tools: None,
+        tools: Some(tool_definitions),
         recipient: None,
         parent: None,
     };
