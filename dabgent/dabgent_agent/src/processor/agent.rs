@@ -8,31 +8,35 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command<T> {
-    SendRequest(Request),
-    SendResponse(Response),
+    PutUserMessage {
+        content: rig::OneOrMany<rig::message::UserContent>,
+    },
+    PutToolCalls {
+        calls: Vec<ToolCall>,
+    },
+    PutCompletion {
+        response: CompletionResponse,
+    },
+    PutToolResults {
+        results: Vec<ToolResult>,
+    },
     Agent(T),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Request {
-    Completion {
+pub enum Event<T> {
+    UserCompletion {
         content: rig::OneOrMany<rig::message::UserContent>,
     },
     ToolCalls {
         calls: Vec<ToolCall>,
     },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Response {
-    Completion { response: CompletionResponse },
-    ToolResults { results: Vec<ToolResult> },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Event<T> {
-    Request(Request),
-    Response(Response),
+    AgentCompletion {
+        response: CompletionResponse,
+    },
+    ToolResults {
+        results: Vec<ToolResult>,
+    },
     Agent(T),
 }
 
@@ -47,9 +51,11 @@ impl<T: MQEvent> MQEvent for Event<T> {
 
     fn event_type(&self) -> String {
         match self {
-            Event::Request(..) => "request".to_owned(),
-            Event::Response(..) => "response".to_owned(),
-            Event::Agent(inner) => format!("agent.{}", inner.event_type()),
+            Event::UserCompletion { .. } => "user.completion".to_owned(),
+            Event::ToolCalls { .. } => "tool.calls".to_owned(),
+            Event::AgentCompletion { .. } => "agent.completion".to_owned(),
+            Event::ToolResults { .. } => "tool.results".to_owned(),
+            inner => inner.event_type(),
         }
     }
 }
@@ -72,8 +78,7 @@ pub trait Agent: Default + Send + Sync + Clone {
         state: &AgentState<Self>,
         cmd: Self::AgentCommand,
         services: &Self::Services,
-    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, Self::AgentError>> + Send
-    {
+    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, Self::AgentError>> + Send {
         async { Ok(vec![]) }
     }
 
@@ -237,7 +242,10 @@ where
     H: EventHandler<A, ES>,
 {
     pub fn new(handler: Handler<AgentState<A>, ES>, event_handler: H) -> Self {
-        Self { handler, event_handler }
+        Self {
+            handler,
+            event_handler,
+        }
     }
 }
 
