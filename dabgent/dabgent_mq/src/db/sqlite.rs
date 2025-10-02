@@ -144,9 +144,10 @@ impl EventStore for SqliteStore {
 
     async fn load_sequence_nums<A: Aggregate>(&self) -> Result<Vec<(String, i64)>, Error> {
         sqlx::query_as::<_, (String, i64)>(
-            r#"SELECT aggregate_id, MAX(sequence) FROM events WHERE stream_id = ? GROUP BY aggregate_id;"#
+            r#"SELECT aggregate_id, MAX(sequence) FROM events WHERE stream_id = ? AND aggregate_type = ? GROUP BY aggregate_id;"#
         )
         .bind(&self.stream_id)
+        .bind(A::TYPE)
         .fetch_all(&self.pool)
         .await
         .map_err(Error::Database)

@@ -3,15 +3,13 @@ use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{TemplateConfig, ToolHandler};
 use dabgent_agent::processor::utils::LogHandler;
 use dabgent_fastapi::{toolset::dataapps_toolset, validator::DataAppsValidator};
-use dabgent_mq::db::postgres::PostgresStore;
 use dabgent_mq::listener::PollingQueue;
-use dabgent_mq::Event as MQEvent;
+use dabgent_mq::{create_store, Event as MQEvent, StoreConfig};
 use dabgent_sandbox::SandboxHandle;
 use eyre::Result;
 use rig::client::ProviderClient;
 use rig::message::{ToolResult, ToolResultContent, UserContent};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 use std::sync::Arc;
 
 
@@ -25,28 +23,8 @@ async fn main() {
 }
 
 pub async fn run_worker() -> Result<()> {
-    let postgres_url = std::env::var("POSTGRES_URL")
-        .expect("POSTGRES_URL must be set");
-
-    let pool = PgPool::connect(&postgres_url).await?;
-
-    // Wipe database if WIPE_DATABASE=true
-    if std::env::var("WIPE_DATABASE")
-        .map(|v| v.to_lowercase() == "true" || v == "1")
-        .unwrap_or(false)
-    {
-        tracing::warn!("Wiping PostgreSQL database...");
-        sqlx::query("DROP TABLE IF EXISTS events CASCADE")
-            .execute(&pool)
-            .await?;
-        sqlx::query("DROP TABLE IF EXISTS _sqlx_migrations CASCADE")
-            .execute(&pool)
-            .await?;
-    }
-
-    let pg_store = PostgresStore::new(pool, "dataapps");
-    pg_store.migrate().await;
-    let store = PollingQueue::new(pg_store);
+    let store = create_store(Some(StoreConfig::from_env())).await?;
+    let store = PollingQueue::new(store);
 
     let tools = dataapps_toolset(DataAppsValidator::new());
 

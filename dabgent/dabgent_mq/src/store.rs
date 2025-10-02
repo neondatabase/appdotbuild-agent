@@ -1,4 +1,5 @@
-use crate::db::{postgres::PostgresStore, sqlite::SqliteStore, *};
+use crate::db::{postgres::PostgresStore, sqlite::SqliteStore, EventStore};
+use crate::{Aggregate, AggregateContext, Envelope, Metadata};
 use eyre::Result;
 use sqlx::{PgPool, SqlitePool};
 
@@ -9,46 +10,69 @@ pub enum AnyStore {
 }
 
 impl EventStore for AnyStore {
-    async fn push_event<T: crate::models::Event>(
+    async fn commit<A: Aggregate>(
         &self,
-        stream_id: &str,
+        events: Vec<A::Event>,
+        metadata: Metadata,
+        context: AggregateContext<A>,
+    ) -> Result<Vec<Envelope<A>>, crate::db::Error> {
+        match self {
+            AnyStore::Postgres(store) => store.commit(events, metadata, context).await,
+            AnyStore::Sqlite(store) => store.commit(events, metadata, context).await,
+        }
+    }
+
+    async fn load_events<A: Aggregate>(
+        &self,
         aggregate_id: &str,
-        event: &T,
-        metadata: &Metadata,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<Envelope<A>>, crate::db::Error> {
         match self {
-            AnyStore::Postgres(store) => store.push_event(stream_id, aggregate_id, event, metadata).await,
-            AnyStore::Sqlite(store) => store.push_event(stream_id, aggregate_id, event, metadata).await,
+            AnyStore::Postgres(store) => store.load_events(aggregate_id).await,
+            AnyStore::Sqlite(store) => store.load_events(aggregate_id).await,
         }
     }
 
-    async fn load_events_raw(
+    async fn load_latest_events<A: Aggregate>(
         &self,
-        query: &Query,
-        sequence: Option<i64>,
-    ) -> Result<Vec<Event<serde_json::Value>>, Error> {
+        aggregate_id: &str,
+        sequence_from: i64,
+    ) -> Result<Vec<Envelope<A>>, crate::db::Error> {
         match self {
-            AnyStore::Postgres(store) => store.load_events_raw(query, sequence).await,
-            AnyStore::Sqlite(store) => store.load_events_raw(query, sequence).await,
+            AnyStore::Postgres(store) => store.load_latest_events(aggregate_id, sequence_from).await,
+            AnyStore::Sqlite(store) => store.load_latest_events(aggregate_id, sequence_from).await,
         }
     }
 
-    fn get_watchers(&self) -> &std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Query, Vec<tokio::sync::mpsc::UnboundedSender<Event<serde_json::Value>>>>>> {
+    async fn load_aggregate<A: Aggregate>(
+        &self,
+        aggregate_id: &str,
+    ) -> Result<AggregateContext<A>, crate::db::Error> {
         match self {
-            AnyStore::Postgres(store) => store.get_watchers(),
-            AnyStore::Sqlite(store) => store.get_watchers(),
+            AnyStore::Postgres(store) => store.load_aggregate(aggregate_id).await,
+            AnyStore::Sqlite(store) => store.load_aggregate(aggregate_id).await,
+        }
+    }
+
+    async fn load_sequence_nums<A: Aggregate>(
+        &self,
+    ) -> Result<Vec<(String, i64)>, crate::db::Error> {
+        match self {
+            AnyStore::Postgres(store) => store.load_sequence_nums::<A>().await,
+            AnyStore::Sqlite(store) => store.load_sequence_nums::<A>().await,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct StoreConfig {
+    pub stream_id: String,
     pub wipe_on_start: bool,
 }
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
+            stream_id: "default".to_string(),
             wipe_on_start: false,
         }
     }
@@ -60,12 +84,22 @@ impl StoreConfig {
         self
     }
 
+    pub fn with_stream_id(mut self, stream_id: String) -> Self {
+        self.stream_id = stream_id;
+        self
+    }
+
     pub fn from_env() -> Self {
         let wipe_on_start = std::env::var("WIPE_DATABASE")
             .map(|v| v.to_lowercase() == "true" || v == "1")
             .unwrap_or(false);
 
-        Self { wipe_on_start }
+        let stream_id = std::env::var("STREAM_ID").unwrap_or_else(|_| "default".to_string());
+
+        Self {
+            stream_id,
+            wipe_on_start,
+        }
     }
 }
 
@@ -73,25 +107,32 @@ pub async fn create_store(config: Option<StoreConfig>) -> Result<AnyStore> {
     let config = config.unwrap_or_else(StoreConfig::from_env);
 
     if let Ok(postgres_url) = std::env::var("POSTGRES_URL") {
-        tracing::info!("Using PostgreSQL store with URL: {}", mask_password(&postgres_url));
+        tracing::info!(
+            "Using PostgreSQL store with URL: {}, stream_id: {}",
+            mask_password(&postgres_url),
+            config.stream_id
+        );
 
         let pool = PgPool::connect(&postgres_url).await?;
 
         if config.wipe_on_start {
-            tracing::warn!("Wiping PostgreSQL database for debug run...");
+            tracing::warn!("Wiping PostgreSQL database...");
             wipe_postgres_database(&pool).await?;
         }
 
-        let store = PostgresStore::new(pool);
+        let store = PostgresStore::new(pool, &config.stream_id);
         store.migrate().await;
         tracing::info!("PostgreSQL store initialized successfully");
 
         Ok(AnyStore::Postgres(store))
     } else {
-        tracing::info!("No POSTGRES_URL found, using in-memory SQLite store");
+        tracing::info!(
+            "No POSTGRES_URL found, using in-memory SQLite store with stream_id: {}",
+            config.stream_id
+        );
 
         let pool = SqlitePool::connect(":memory:").await?;
-        let store = SqliteStore::new(pool);
+        let store = SqliteStore::new(pool, &config.stream_id);
         store.migrate().await;
         tracing::info!("SQLite store initialized successfully");
 
@@ -100,7 +141,6 @@ pub async fn create_store(config: Option<StoreConfig>) -> Result<AnyStore> {
 }
 
 async fn wipe_postgres_database(pool: &PgPool) -> Result<()> {
-    // Drop events table and migration tracking
     sqlx::query("DROP TABLE IF EXISTS events CASCADE")
         .execute(pool)
         .await?;
@@ -120,7 +160,6 @@ fn mask_password(url: &str) -> String {
         }
         parsed.to_string()
     } else {
-        // fallback for malformed URLs
         url.to_string()
     }
 }
