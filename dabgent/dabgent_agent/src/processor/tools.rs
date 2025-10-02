@@ -1,13 +1,15 @@
 use super::agent::{Agent, AgentState, Command, Event, EventHandler, Request, Response};
 use crate::toolbox::{ToolCallExt, ToolDyn};
 use dabgent_mq::{Envelope, EventStore, Handler};
-use dabgent_sandbox::SandboxHandle;
+use dabgent_sandbox::{Sandbox, SandboxHandle};
 use eyre::Result;
 use rig::message::{ToolCall, ToolResult};
 
 pub struct TemplateConfig {
     pub host_dir: String,
     pub dockerfile: String,
+    pub template_path: Option<String>,
+    pub template_base_path: String,
 }
 
 impl TemplateConfig {
@@ -15,13 +17,27 @@ impl TemplateConfig {
         Self {
             host_dir,
             dockerfile,
+            template_path: None,
+            template_base_path: "/app".to_string(),
         }
+    }
+
+    pub fn with_template(mut self, template_path: String) -> Self {
+        self.template_path = Some(template_path);
+        self
+    }
+
+    pub fn with_template_base_path(mut self, base_path: String) -> Self {
+        self.template_base_path = base_path;
+        self
     }
 
     pub fn default_dir<T: AsRef<str>>(host_dir: T) -> Self {
         Self {
             host_dir: host_dir.as_ref().to_string(),
             dockerfile: "Dockerfile".to_string(),
+            template_path: None,
+            template_base_path: "/app".to_string(),
         }
     }
 }
@@ -47,15 +63,53 @@ impl ToolHandler {
 
     async fn run_tools(&self, aggregate_id: &str, calls: &[ToolCall]) -> Result<Vec<ToolResult>> {
         let mut sandbox = match self.dagger.get(aggregate_id).await? {
-            Some(sandbox) => sandbox,
+            Some(sandbox) => {
+                tracing::info!("Using existing sandbox for aggregate_id: {}", aggregate_id);
+                sandbox
+            }
             None => {
-                self.dagger
+                tracing::info!(
+                    "Creating new sandbox for aggregate_id: {} from directory: {}, dockerfile: {}",
+                    aggregate_id,
+                    self.config.host_dir,
+                    self.config.dockerfile
+                );
+                let mut sandbox = self.dagger
                     .create_from_directory(
                         aggregate_id,
                         &self.config.host_dir,
                         &self.config.dockerfile,
                     )
-                    .await?
+                    .await?;
+
+                // Seed template if configured
+                if let Some(template_path) = &self.config.template_path {
+                    tracing::info!(
+                        "Seeding template from: {} into base path: {}",
+                        template_path,
+                        self.config.template_base_path
+                    );
+
+                    let template_files = crate::sandbox_seed::collect_template_files(
+                        std::path::Path::new(template_path),
+                        &self.config.template_base_path
+                    )?;
+
+                    let hash = crate::sandbox_seed::compute_template_hash(&template_files.files);
+
+                    // Write files directly to sandbox
+                    for (path, content) in &template_files.files {
+                        sandbox.write_file(path, content).await?;
+                    }
+
+                    tracing::info!(
+                        "Template seeded successfully: {} files written, hash: {}",
+                        template_files.files.len(),
+                        hash
+                    );
+                }
+
+                sandbox
             }
         };
         let mut results = Vec::new();
