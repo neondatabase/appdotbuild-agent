@@ -137,17 +137,6 @@ impl Agent for MainAgent {
     type AgentError = MainError;
     type Services = ();
 
-    async fn handle_tool_results(
-        state: &AgentState<Self>,
-        _: &Self::Services,
-        incoming: Vec<ToolResult>,
-    ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(incoming);
-        let content = completed.into_iter().map(UserContent::ToolResult);
-        let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::UserCompletion { content }])
-    }
-
     fn apply_event(_state: &mut AgentState<Self>, _event: Event<Self::AgentEvent>) {}
 }
 
@@ -204,7 +193,7 @@ impl Agent for DatabricksWorker {
         _: &Self::Services,
         incoming: Vec<ToolResult>,
     ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(incoming);
+        let completed = state.merge_tool_results(&incoming);
 
         // Check if finish_delegation was called
         for result in &completed {
@@ -225,10 +214,7 @@ impl Agent for DatabricksWorker {
                 }
             }
         }
-
-        let content = completed.into_iter().map(UserContent::ToolResult);
-        let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::UserCompletion { content }])
+        Ok(vec![state.results_passthrough(&incoming)])
     }
 
     async fn handle_command(

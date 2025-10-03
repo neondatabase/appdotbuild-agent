@@ -2,7 +2,7 @@ use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
 use dabgent_agent::processor::link::{Link, Runtime, link_runtimes};
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{
-    get_dockerfile_dir_from_src_ws, TemplateConfig, ToolHandler,
+    TemplateConfig, ToolHandler, get_dockerfile_dir_from_src_ws,
 };
 use dabgent_agent::processor::utils::LogHandler;
 use dabgent_agent::toolbox::{self, basic::toolset};
@@ -80,7 +80,7 @@ pub async fn run_planner_worker() -> Result<()> {
 
     // Send initial task to planner before starting runtimes
     let command = Command::PutUserMessage {
-        content: rig::OneOrMany::one(rig::message::UserContent::text(USER_PROMPT)),
+        content: rig::OneOrMany::one(UserContent::text(USER_PROMPT)),
     };
     planner_runtime.handler.execute("planner", command).await?;
 
@@ -120,17 +120,6 @@ impl Agent for Planner {
     type AgentEvent = PlannerEvent;
     type AgentError = PlannerError;
     type Services = ();
-
-    async fn handle_tool_results(
-        state: &AgentState<Self>,
-        _: &Self::Services,
-        incoming: Vec<ToolResult>,
-    ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(incoming);
-        let content = completed.into_iter().map(UserContent::ToolResult);
-        let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::UserCompletion { content }])
-    }
 
     fn apply_event(_state: &mut AgentState<Self>, _event: Event<Self::AgentEvent>) {}
 }
@@ -188,7 +177,7 @@ impl Agent for Worker {
         _: &Self::Services,
         incoming: Vec<ToolResult>,
     ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(incoming);
+        let completed = state.merge_tool_results(&incoming);
         if let Some(done_id) = &state.agent.done_call_id {
             if let Some(result) = completed.iter().find(|r| done_id == &r.id) {
                 let is_done = result.content.iter().any(|c| match c {
@@ -204,10 +193,7 @@ impl Agent for Worker {
                 }
             }
         }
-
-        let content = completed.into_iter().map(UserContent::ToolResult);
-        let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::UserCompletion { content }])
+        Ok(vec![state.results_passthrough(&incoming)])
     }
 
     async fn handle_command(

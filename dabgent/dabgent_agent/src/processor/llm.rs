@@ -25,31 +25,20 @@ impl Default for LLMConfig {
     }
 }
 
-pub struct LLMHandler<A: Agent, ES: EventStore> {
+pub struct LLMHandler {
     llm: Arc<dyn LLMClientDyn>,
     config: LLMConfig,
-    _phantom: std::marker::PhantomData<(A, ES)>,
 }
 
-impl<A: Agent, ES: EventStore> LLMHandler<A, ES> {
+impl LLMHandler {
     pub fn new(llm: Arc<dyn LLMClientDyn>, config: LLMConfig) -> Self {
-        Self {
-            llm,
-            config,
-            _phantom: std::marker::PhantomData,
-        }
+        Self { llm, config }
     }
 
     async fn handle_completion(
         &self,
-        handler: &Handler<AgentState<A>, ES>,
-        aggregate_id: &str,
+        mut history: Vec<rig::completion::Message>,
     ) -> Result<CompletionResponse> {
-        let ctx = handler
-            .store()
-            .load_aggregate::<AgentState<A>>(aggregate_id)
-            .await?;
-        let mut history = ctx.aggregate.messages.clone();
         let message = history.pop().ok_or_eyre("No messages")?;
         let mut completion = Completion::new(self.config.model.clone(), message)
             .history(history)
@@ -65,14 +54,15 @@ impl<A: Agent, ES: EventStore> LLMHandler<A, ES> {
     }
 }
 
-impl<A: Agent, ES: EventStore> EventHandler<AgentState<A>, ES> for LLMHandler<A, ES> {
+impl<A: Agent, ES: EventStore> EventHandler<AgentState<A>, ES> for LLMHandler {
     async fn process(
         &mut self,
         handler: &Handler<AgentState<A>, ES>,
         event: &Envelope<AgentState<A>>,
     ) -> Result<()> {
         if let Event::UserCompletion { .. } = &event.data {
-            let response = self.handle_completion(handler, &event.aggregate_id).await?;
+            let aggregate = handler.load_aggregate(&event.aggregate_id).await?;
+            let response = self.handle_completion(aggregate.messages).await?;
             handler
                 .execute_with_metadata(
                     &event.aggregate_id,

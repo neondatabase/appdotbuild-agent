@@ -1,7 +1,8 @@
-use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event, Request, Runtime};
+use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
+use dabgent_agent::processor::link::Runtime;
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{
-    get_dockerfile_dir_from_src_ws, TemplateConfig, ToolHandler,
+    TemplateConfig, ToolHandler, get_dockerfile_dir_from_src_ws,
 };
 use dabgent_agent::processor::utils::LogHandler;
 use dabgent_agent::toolbox::{self, basic::toolset};
@@ -25,7 +26,8 @@ Program will be run using uv run main.py command.
 IMPORTANT: After the script runs successfully, you MUST call the 'done' tool to complete the task.
 ";
 
-const USER_PROMPT: &str = "write a simple python script that prints 'Hello from DeepSeek!' and the result of 2+2";
+const USER_PROMPT: &str =
+    "write a simple python script that prints 'Hello from DeepSeek!' and the result of 2+2";
 
 #[tokio::main]
 async fn main() {
@@ -53,14 +55,14 @@ pub async fn run_worker() -> Result<()> {
         TemplateConfig::default_dir(get_dockerfile_dir_from_src_ws()),
     );
 
-    let runtime = Runtime::<Basic, _>::new(store, ())
+    let runtime = Runtime::<AgentState<Basic>, _>::new(store, ())
         .with_handler(llm)
         .with_handler(tool_handler)
         .with_handler(LogHandler);
 
-    let command = Command::SendRequest(Request::Completion {
+    let command = Command::PutUserMessage {
         content: rig::OneOrMany::one(rig::message::UserContent::text(USER_PROMPT)),
-    });
+    };
     runtime.handler.execute("basic_openrouter", command).await?;
 
     runtime.start().await
@@ -103,7 +105,7 @@ impl Agent for Basic {
         _: &Self::Services,
         incoming: Vec<ToolResult>,
     ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(incoming);
+        let completed = state.merge_tool_results(&incoming);
         if let Some(done_id) = &state.agent.done_call_id {
             if let Some(result) = completed.iter().find(|r| done_id == &r.id) {
                 let is_done = result.content.iter().any(|c| match c {
@@ -117,12 +119,12 @@ impl Agent for Basic {
         }
         let content = completed.into_iter().map(UserContent::ToolResult);
         let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::Request(Request::Completion { content })])
+        Ok(vec![Event::UserCompletion { content }])
     }
 
     fn apply_event(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
         match event {
-            Event::Request(Request::ToolCalls { ref calls }) => {
+            Event::ToolCalls { ref calls } => {
                 for call in calls {
                     if call.function.name == "done" {
                         state.agent.done_call_id = Some(call.id.clone());

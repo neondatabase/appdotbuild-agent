@@ -1,7 +1,7 @@
 use crate::llm::CompletionResponse;
 use dabgent_mq::{Aggregate, Event as MQEvent};
 use eyre::Result;
-use rig::message::{ToolCall, ToolResult};
+use rig::message::{ToolCall, ToolResult, UserContent};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -66,11 +66,14 @@ pub trait Agent: Default + Send + Sync + Clone {
     type AgentError: std::error::Error + Send + Sync + 'static;
     type Services: Send + Sync;
 
+    #[allow(unused)]
     fn handle_tool_results(
         state: &AgentState<Self>,
         services: &Self::Services,
         incoming: Vec<ToolResult>,
-    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, Self::AgentError>> + Send;
+    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, Self::AgentError>> + Send {
+        async move { Ok(vec![state.results_passthrough(&incoming)]) }
+    }
 
     #[allow(unused)]
     fn handle_command(
@@ -105,9 +108,17 @@ impl<A: Agent> AgentState<A> {
         true
     }
 
-    pub fn merge_tool_results(&self, mut incoming: Vec<ToolResult>) -> Vec<ToolResult> {
-        incoming.extend(self.calls.values().filter_map(|r| r.clone()));
-        incoming
+    pub fn merge_tool_results(&self, incoming: &[ToolResult]) -> Vec<ToolResult> {
+        let mut merged = incoming.to_vec();
+        merged.extend(self.calls.values().filter_map(|r| r.clone()));
+        merged
+    }
+
+    pub fn results_passthrough(&self, incoming: &[ToolResult]) -> Event<A::AgentEvent> {
+        let completed = self.merge_tool_results(incoming);
+        let content = completed.into_iter().map(UserContent::ToolResult);
+        let content = rig::OneOrMany::many(content).unwrap();
+        Event::UserCompletion { content }
     }
 }
 

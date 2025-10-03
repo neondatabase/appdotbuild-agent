@@ -2,7 +2,7 @@ use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
 use dabgent_agent::processor::link::Runtime;
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{
-    get_dockerfile_dir_from_src_ws, TemplateConfig, ToolHandler,
+    TemplateConfig, ToolHandler, get_dockerfile_dir_from_src_ws,
 };
 use dabgent_agent::processor::utils::LogHandler;
 use dabgent_agent::toolbox::{self, basic::toolset};
@@ -12,7 +12,7 @@ use dabgent_mq::listener::PollingQueue;
 use dabgent_sandbox::{DaggerSandbox, Sandbox, SandboxHandle};
 use eyre::Result;
 use rig::client::ProviderClient;
-use rig::message::{ToolResult, ToolResultContent, UserContent};
+use rig::message::{ToolResult, ToolResultContent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -103,7 +103,7 @@ impl Agent for Basic {
         _: &Self::Services,
         incoming: Vec<ToolResult>,
     ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(incoming);
+        let completed = state.merge_tool_results(&incoming);
         if let Some(done_id) = &state.agent.done_call_id {
             if let Some(result) = completed.iter().find(|r| done_id == &r.id) {
                 let is_done = result.content.iter().any(|c| match c {
@@ -115,9 +115,7 @@ impl Agent for Basic {
                 }
             }
         }
-        let content = completed.into_iter().map(UserContent::ToolResult);
-        let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::UserCompletion { content }])
+        Ok(vec![state.results_passthrough(&incoming)])
     }
 
     fn apply_event(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {

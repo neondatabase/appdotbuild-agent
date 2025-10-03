@@ -64,6 +64,16 @@ impl<A: Aggregate, ES: EventStore> Handler<A, ES> {
         self.store.commit(events, metadata, ctx).await?;
         Ok(())
     }
+
+    pub async fn load_aggregate(&self, aggregate_id: &str) -> eyre::Result<A> {
+        let ctx = self.store.load_aggregate::<A>(aggregate_id).await?;
+        Ok(ctx.aggregate)
+    }
+
+    pub async fn load_events(&self, aggregate_id: &str) -> eyre::Result<Vec<A::Event>> {
+        let events = self.store.load_events::<A>(aggregate_id).await?;
+        Ok(events.into_iter().map(|event| event.data).collect())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
