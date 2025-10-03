@@ -61,7 +61,7 @@ pub async fn run_worker() -> Result<()> {
         .with_handler(LogHandler);
 
     let command = Command::PutUserMessage {
-        content: rig::OneOrMany::one(rig::message::UserContent::text(USER_PROMPT)),
+        content: rig::OneOrMany::one(UserContent::text(USER_PROMPT)),
     };
     runtime.handler.execute("basic_openrouter", command).await?;
 
@@ -117,9 +117,7 @@ impl Agent for Basic {
                 }
             }
         }
-        let content = completed.into_iter().map(UserContent::ToolResult);
-        let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::UserCompletion { content }])
+        Ok(vec![state.results_passthrough(&incoming)])
     }
 
     fn apply_event(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
