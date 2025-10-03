@@ -1,6 +1,6 @@
-use super::agent::{Agent, AgentState, Command, Event, EventHandler, Request, Response};
+use super::agent::{Agent, AgentState, Command, Event};
 use crate::llm::{Completion, CompletionResponse, LLMClientDyn};
-use dabgent_mq::{Envelope, EventStore, Handler};
+use dabgent_mq::{Envelope, EventHandler, EventStore, Handler};
 use eyre::{OptionExt, Result};
 use rig::completion::ToolDefinition;
 use std::sync::Arc;
@@ -65,18 +65,18 @@ impl<A: Agent, ES: EventStore> LLMHandler<A, ES> {
     }
 }
 
-impl<A: Agent, ES: EventStore> EventHandler<A, ES> for LLMHandler<A, ES> {
+impl<A: Agent, ES: EventStore> EventHandler<AgentState<A>, ES> for LLMHandler<A, ES> {
     async fn process(
         &mut self,
         handler: &Handler<AgentState<A>, ES>,
         event: &Envelope<AgentState<A>>,
     ) -> Result<()> {
-        if let Event::Request(Request::Completion { .. }) = &event.data {
+        if let Event::UserCompletion { .. } = &event.data {
             let response = self.handle_completion(handler, &event.aggregate_id).await?;
             handler
                 .execute_with_metadata(
                     &event.aggregate_id,
-                    Command::SendResponse(Response::Completion { response }),
+                    Command::PutCompletion { response },
                     event.metadata.clone(),
                 )
                 .await?;

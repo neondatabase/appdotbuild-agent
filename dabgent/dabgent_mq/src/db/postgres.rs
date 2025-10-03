@@ -17,6 +17,10 @@ impl PostgresStore {
         }
     }
 
+    pub async fn migrate(&self) {
+        MIGRATOR.run(&self.pool).await.expect("Migration failed")
+    }
+
     fn select_query<T: AsRef<str>>(
         &self,
         aggregate_type: T,
@@ -28,23 +32,21 @@ impl PostgresStore {
             "aggregate_type = $2".to_owned(),
         ];
         let mut params = vec![self.stream_id.clone(), aggregate_type.as_ref().to_string()];
+        let mut param_count = 2;
+
         if let Some(aggregate_id) = aggregate_id {
-            conditions.push("aggregate_id = $3".to_owned());
+            param_count += 1;
+            conditions.push(format!("aggregate_id = ${}", param_count));
             params.push(aggregate_id.as_ref().to_string());
         }
         if let Some(offset) = offset {
-            conditions.push("sequence > $4".to_owned());
+            param_count += 1;
+            conditions.push(format!("sequence > ${}", param_count));
             params.push(offset.to_string());
         }
         let where_clause = conditions.join(" AND ");
         let sql = format!("SELECT * FROM events WHERE {where_clause} ORDER BY sequence ASC");
         (sql, params)
-    }
-}
-
-impl PostgresStore {
-    pub async fn migrate(&self) {
-        MIGRATOR.run(&self.pool).await.expect("Migration failed")
     }
 }
 
@@ -128,12 +130,17 @@ impl EventStore for PostgresStore {
         aggregate_id: &str,
         sequence_from: i64,
     ) -> Result<Vec<Envelope<A>>, Error> {
-        let (sql, params) = self.select_query(A::TYPE, Some(aggregate_id), Some(sequence_from));
-        let mut query = sqlx::query_as::<_, SerializedEvent>(&sql);
-        for param in params {
-            query = query.bind(param);
-        }
-        let serialized = query.fetch_all(&self.pool).await.map_err(Error::Database)?;
+        let serialized = sqlx::query_as::<_, SerializedEvent>(
+            r#"SELECT * FROM events WHERE stream_id = $1 AND aggregate_type = $2 AND aggregate_id = $3 AND sequence > $4 ORDER BY sequence ASC"#
+        )
+        .bind(&self.stream_id)
+        .bind(A::TYPE)
+        .bind(aggregate_id)
+        .bind(sequence_from)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(Error::Database)?;
+
         serialized
             .into_iter()
             .map(Envelope::try_from)
@@ -142,9 +149,10 @@ impl EventStore for PostgresStore {
 
     async fn load_sequence_nums<A: Aggregate>(&self) -> Result<Vec<(String, i64)>, Error> {
         sqlx::query_as::<_, (String, i64)>(
-            r#"SELECT aggregate_id, MAX(sequence) FROM events WHERE stream_id = $1 GROUP BY aggregate_id;"#
+            r#"SELECT aggregate_id, MAX(sequence) FROM events WHERE stream_id = $1 AND aggregate_type = $2 GROUP BY aggregate_id;"#
         )
         .bind(&self.stream_id)
+        .bind(A::TYPE)
         .fetch_all(&self.pool)
         .await
         .map_err(Error::Database)

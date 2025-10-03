@@ -1,8 +1,8 @@
-use dabgent_mq::db::{sqlite::SqliteStore, *};
+use dabgent_mq::db::{postgres::PostgresStore, *};
 use dabgent_mq::listener::PollingQueue;
 use dabgent_mq::*;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 enum TestEvent {
@@ -88,11 +88,12 @@ impl<ES: EventStore> Callback<TestAggregate> for TestCallback<ES> {
     }
 }
 
-async fn setup_test_store() -> SqliteStore {
-    let pool = SqlitePool::connect(":memory:")
+async fn setup_test_store() -> PostgresStore {
+    let dsn = std::env::var("DATABASE_URL").unwrap();
+    let pool = PgPool::connect(&dsn)
         .await
-        .expect("Failed to create in-memory SQLite pool");
-    let store = SqliteStore::new(pool, "test_stream");
+        .expect("Failed to connect to PostgreSQL");
+    let store = PostgresStore::new(pool, "test_stream");
     store.migrate().await;
     store
 }

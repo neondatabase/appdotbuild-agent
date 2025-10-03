@@ -1,14 +1,11 @@
-use dabgent_agent::processor::agent::{
-    Agent, AgentState, Command, Event, Request, Response, Runtime,
-};
+use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
 use dabgent_agent::processor::databricks::{self, DatabricksToolHandler};
-use dabgent_agent::processor::link::{Link, link_runtimes};
+use dabgent_agent::processor::link::{Link, Runtime, link_runtimes};
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::utils::LogHandler;
 use dabgent_integrations::databricks::DatabricksRestClient;
 use dabgent_mq::db::sqlite::SqliteStore;
-use dabgent_mq::listener::PollingQueue;
-use dabgent_mq::{Event as MQEvent, EventStore, Handler};
+use dabgent_mq::{Envelope, Event as MQEvent, EventStore, Handler, PollingQueue};
 use eyre::Result;
 use rig::client::ProviderClient;
 use rig::completion::ToolDefinition;
@@ -16,7 +13,7 @@ use rig::message::{ToolCall, ToolResult, ToolResultContent, UserContent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-const MODEL: &str = "claude-sonnet-4-20250514";
+const MODEL: &str = "claude-sonnet-4-5-20250929";
 
 const MAIN_PROMPT: &str = "
 You are an AI assistant that helps users understand Databricks catalogs.
@@ -72,7 +69,7 @@ pub async fn run_databricks_worker() -> Result<()> {
             ..Default::default()
         },
     );
-    let mut main_runtime = Runtime::<MainAgent, _>::new(store.clone(), ())
+    let mut main_runtime = Runtime::<AgentState<MainAgent>, _>::new(store.clone(), ())
         .with_handler(main_llm)
         .with_handler(LogHandler);
 
@@ -90,7 +87,7 @@ pub async fn run_databricks_worker() -> Result<()> {
         },
     );
     let databricks_tool_handler = DatabricksToolHandler::new(databricks_client, tools);
-    let mut databricks_runtime = Runtime::<DatabricksWorker, _>::new(store.clone(), ())
+    let mut databricks_runtime = Runtime::<AgentState<DatabricksWorker>, _>::new(store.clone(), ())
         .with_handler(databricks_llm)
         .with_handler(databricks_tool_handler)
         .with_handler(LogHandler);
@@ -98,9 +95,9 @@ pub async fn run_databricks_worker() -> Result<()> {
     link_runtimes(&mut main_runtime, &mut databricks_runtime, DatabricksLink);
 
     // Send initial task
-    let command = Command::SendRequest(Request::Completion {
+    let command = Command::PutUserMessage {
         content: rig::OneOrMany::one(UserContent::text(USER_PROMPT)),
-    });
+    };
     main_runtime.handler.execute("main", command).await?;
 
     let main_handle = tokio::spawn(async move { main_runtime.start().await });
@@ -148,7 +145,7 @@ impl Agent for MainAgent {
         let completed = state.merge_tool_results(incoming);
         let content = completed.into_iter().map(UserContent::ToolResult);
         let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::Request(Request::Completion { content })])
+        Ok(vec![Event::UserCompletion { content }])
     }
 
     fn apply_event(_state: &mut AgentState<Self>, _event: Event<Self::AgentEvent>) {}
@@ -231,7 +228,7 @@ impl Agent for DatabricksWorker {
 
         let content = completed.into_iter().map(UserContent::ToolResult);
         let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::Request(Request::Completion { content })])
+        Ok(vec![Event::UserCompletion { content }])
     }
 
     async fn handle_command(
@@ -262,7 +259,7 @@ impl Agent for DatabricksWorker {
                         parent_id: parent_id.clone(),
                         call: call.clone(),
                     }),
-                    Event::Request(Request::Completion { content }),
+                    Event::UserCompletion { content },
                 ])
             }
         }
@@ -287,17 +284,16 @@ impl Agent for DatabricksWorker {
 pub struct DatabricksLink;
 
 impl<ES: EventStore> Link<ES> for DatabricksLink {
-    type RuntimeA = MainAgent;
-    type RuntimeB = DatabricksWorker;
+    type AggregateA = AgentState<MainAgent>;
+    type AggregateB = AgentState<DatabricksWorker>;
 
     async fn forward(
         &self,
-        a_id: &str,
-        event: &Event<MainEvent>,
+        envelope: &Envelope<AgentState<MainAgent>>,
         _handler: &Handler<AgentState<MainAgent>, ES>,
     ) -> Option<(String, Command<DatabricksCommand>)> {
-        match event {
-            Event::Request(Request::ToolCalls { calls }) => {
+        match &envelope.data {
+            Event::ToolCalls { calls } => {
                 if let Some(call) = calls
                     .iter()
                     .find(|c| c.function.name == "explore_databricks_catalog")
@@ -306,7 +302,7 @@ impl<ES: EventStore> Link<ES> for DatabricksLink {
                     return Some((
                         worker_id,
                         Command::Agent(DatabricksCommand::Explore {
-                            parent_id: a_id.to_owned(),
+                            parent_id: envelope.aggregate_id.clone(),
                             call: call.clone(),
                         }),
                     ));
@@ -319,12 +315,11 @@ impl<ES: EventStore> Link<ES> for DatabricksLink {
 
     async fn backward(
         &self,
-        _b_id: &str,
-        event: &Event<DatabricksEvent>,
+        envelope: &Envelope<AgentState<DatabricksWorker>>,
         _handler: &Handler<AgentState<DatabricksWorker>, ES>,
     ) -> Option<(String, Command<()>)> {
         use dabgent_agent::toolbox::ToolCallExt;
-        match event {
+        match &envelope.data {
             Event::Agent(DatabricksEvent::Finished {
                 parent_id,
                 call,
@@ -332,9 +327,9 @@ impl<ES: EventStore> Link<ES> for DatabricksLink {
             }) => {
                 let result = serde_json::to_value(summary).unwrap();
                 let result = call.to_result(Ok(result));
-                let command = Command::SendResponse(Response::ToolResults {
+                let command = Command::PutToolResults {
                     results: vec![result],
-                });
+                };
                 Some((parent_id.clone(), command))
             }
             _ => None,
