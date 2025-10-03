@@ -1,7 +1,9 @@
 use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
 use dabgent_agent::processor::link::{Link, Runtime, link_runtimes};
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
-use dabgent_agent::processor::tools::{TemplateConfig, ToolHandler};
+use dabgent_agent::processor::tools::{
+    get_dockerfile_dir_from_src_ws, TemplateConfig, ToolHandler,
+};
 use dabgent_agent::processor::utils::LogHandler;
 use dabgent_agent::toolbox::{self, basic::toolset};
 use dabgent_mq::db::sqlite::SqliteStore;
@@ -67,7 +69,7 @@ pub async fn run_planner_worker() -> Result<()> {
     let worker_tool_handler = ToolHandler::new(
         worker_tools,
         SandboxHandle::new(Default::default()),
-        TemplateConfig::default_dir("./examples"),
+        TemplateConfig::default_dir(get_dockerfile_dir_from_src_ws()),
     );
     let mut worker_runtime = Runtime::<AgentState<Worker>, _>::new(store.clone(), ())
         .with_handler(worker_llm)

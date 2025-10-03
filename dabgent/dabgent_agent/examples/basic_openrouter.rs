@@ -1,5 +1,4 @@
-use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
-use dabgent_agent::processor::link::Runtime;
+use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event, Request, Runtime};
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{
     get_dockerfile_dir_from_src_ws, TemplateConfig, ToolHandler,
@@ -16,16 +15,17 @@ use rig::message::{ToolResult, ToolResultContent, UserContent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-const MODEL: &str = "claude-sonnet-4-5-20250929";
+const MODEL: &str = "deepseek/deepseek-v3.2-exp";
 
 const SYSTEM_PROMPT: &str = "
 You are a python software engineer.
 Workspace is already set up using uv init.
 Use uv package manager if you need to add extra libraries.
 Program will be run using uv run main.py command.
+IMPORTANT: After the script runs successfully, you MUST call the 'done' tool to complete the task.
 ";
 
-const USER_PROMPT: &str = "minimal script that fetches my ip using some api like ipify.org";
+const USER_PROMPT: &str = "write a simple python script that prints 'Hello from DeepSeek!' and the result of 2+2";
 
 #[tokio::main]
 async fn main() {
@@ -39,7 +39,7 @@ pub async fn run_worker() -> Result<()> {
     let tools = toolset(Validator);
 
     let llm = LLMHandler::new(
-        Arc::new(rig::providers::anthropic::Client::from_env()),
+        Arc::new(rig::providers::openrouter::Client::from_env()),
         LLMConfig {
             model: MODEL.to_string(),
             preamble: Some(SYSTEM_PROMPT.to_string()),
@@ -53,15 +53,15 @@ pub async fn run_worker() -> Result<()> {
         TemplateConfig::default_dir(get_dockerfile_dir_from_src_ws()),
     );
 
-    let runtime = Runtime::<AgentState<Basic>, _>::new(store, ())
+    let runtime = Runtime::<Basic, _>::new(store, ())
         .with_handler(llm)
         .with_handler(tool_handler)
         .with_handler(LogHandler);
 
-    let command = Command::PutUserMessage {
+    let command = Command::SendRequest(Request::Completion {
         content: rig::OneOrMany::one(rig::message::UserContent::text(USER_PROMPT)),
-    };
-    runtime.handler.execute("basic", command).await?;
+    });
+    runtime.handler.execute("basic_openrouter", command).await?;
 
     runtime.start().await
 }
@@ -92,7 +92,7 @@ impl MQEvent for BasicEvent {
 pub enum BasicError {}
 
 impl Agent for Basic {
-    const TYPE: &'static str = "basic_worker";
+    const TYPE: &'static str = "basic_openrouter_worker";
     type AgentCommand = ();
     type AgentEvent = BasicEvent;
     type AgentError = BasicError;
@@ -117,12 +117,12 @@ impl Agent for Basic {
         }
         let content = completed.into_iter().map(UserContent::ToolResult);
         let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::UserCompletion { content }])
+        Ok(vec![Event::Request(Request::Completion { content })])
     }
 
     fn apply_event(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
         match event {
-            Event::ToolCalls { ref calls } => {
+            Event::Request(Request::ToolCalls { ref calls }) => {
                 for call in calls {
                     if call.function.name == "done" {
                         state.agent.done_call_id = Some(call.id.clone());

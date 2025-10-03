@@ -26,6 +26,15 @@ impl TemplateConfig {
     }
 }
 
+/// Dockerfile dir from the source workspace
+pub fn get_dockerfile_dir_from_src_ws() -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .to_str()
+        .expect("project dir is a non-Unicode string")
+        .to_owned()
+}
+
 pub struct ToolHandler {
     tools: Vec<Box<dyn ToolDyn>>,
     dagger: SandboxHandle,
