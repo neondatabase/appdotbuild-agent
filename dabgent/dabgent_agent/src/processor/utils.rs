@@ -1,6 +1,7 @@
 use super::agent::{Agent, AgentState};
 use dabgent_mq::{Aggregate, Callback, Envelope, Event, EventHandler, EventStore, Handler};
 use eyre::Result;
+use tokio::sync::oneshot;
 
 pub struct LogHandler;
 
@@ -22,6 +23,34 @@ where
     ) -> Result<()> {
         // tracing::info!(agent = A::TYPE, envelope = ?event, "event");
         tracing::info!(agent = A::TYPE, event = event.data.event_type(), data = ?event.data);
+        Ok(())
+    }
+}
+
+pub struct ShutdownHandler {
+    shutdown_tx: Option<oneshot::Sender<()>>,
+}
+
+impl ShutdownHandler {
+    pub fn new(shutdown_tx: oneshot::Sender<()>) -> Self {
+        Self {
+            shutdown_tx: Some(shutdown_tx),
+        }
+    }
+}
+
+impl<A: Agent, ES: EventStore> EventHandler<AgentState<A>, ES> for ShutdownHandler {
+    async fn process(
+        &mut self,
+        _handler: &Handler<AgentState<A>, ES>,
+        envelope: &Envelope<AgentState<A>>,
+    ) -> Result<()> {
+        if matches!(&envelope.data, super::agent::Event::Shutdown) {
+            tracing::info!("Shutdown event received, triggering graceful shutdown");
+            if let Some(tx) = self.shutdown_tx.take() {
+                let _ = tx.send(());
+            }
+        }
         Ok(())
     }
 }

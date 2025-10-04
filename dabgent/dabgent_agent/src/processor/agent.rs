@@ -19,6 +19,7 @@ pub enum Command<T> {
     PutToolResults {
         results: Vec<ToolResult>,
     },
+    Shutdown,
     Agent(T),
 }
 
@@ -36,6 +37,7 @@ pub enum Event<T> {
     ToolResults {
         results: Vec<ToolResult>,
     },
+    Shutdown,
     Agent(T),
 }
 
@@ -54,6 +56,7 @@ impl<T: MQEvent> MQEvent for Event<T> {
             Event::ToolCalls { .. } => "tool.calls".to_owned(),
             Event::AgentCompletion { .. } => "agent.completion".to_owned(),
             Event::ToolResults { .. } => "tool.results".to_owned(),
+            Event::Shutdown => "shutdown".to_owned(),
             Event::Agent(inner) => inner.event_type(),
         }
     }
@@ -166,6 +169,7 @@ impl<A: Agent> Aggregate for AgentState<A> {
                 }
                 Ok(events)
             }
+            Command::Shutdown => Ok(vec![Event::Shutdown]),
             Command::Agent(cmd) => {
                 let events = A::handle_command(self, cmd, services)
                     .await

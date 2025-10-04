@@ -1,4 +1,4 @@
-use super::agent::{Agent, AgentState, Event};
+use super::agent::{Agent, AgentState, Command, Event};
 use super::tools::TemplateConfig;
 use crate::llm::FinishReason;
 use crate::toolbox::ToolDyn;
@@ -138,8 +138,20 @@ impl<A: Agent, ES: EventStore> EventHandler<AgentState<A>, ES> for FinishHandler
             use dabgent_mq::Event as MQEvent;
             let event_type = envelope.data.event_type();
             if event_type.contains("finished") || event_type.contains("done") {
-                if let Err(e) = self.replay_and_export(handler, &envelope.aggregate_id).await {
-                    tracing::error!("Failed to export artifacts: {}", e);
+                match self.replay_and_export(handler, &envelope.aggregate_id).await {
+                    Ok(_) => {
+                        tracing::info!("Export completed, triggering shutdown");
+                        handler
+                            .execute_with_metadata(
+                                &envelope.aggregate_id,
+                                Command::Shutdown,
+                                envelope.metadata.clone(),
+                            )
+                            .await?;
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to export artifacts: {}", e);
+                    }
                 }
             }
         }

@@ -3,7 +3,7 @@ use dabgent_agent::processor::link::Runtime;
 use dabgent_agent::processor::finish::FinishHandler;
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{TemplateConfig, ToolHandler};
-use dabgent_agent::processor::utils::LogHandler;
+use dabgent_agent::processor::utils::{LogHandler, ShutdownHandler};
 use dabgent_fastapi::{toolset::dataapps_toolset, validator::DataAppsValidator};
 use dabgent_mq::listener::PollingQueue;
 use dabgent_mq::{create_store, Event as MQEvent, StoreConfig};
@@ -13,6 +13,7 @@ use rig::client::ProviderClient;
 use rig::message::{ToolResult, ToolResultContent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::oneshot;
 
 
 #[tokio::main]
@@ -69,6 +70,11 @@ pub async fn run_worker() -> Result<()> {
     );
     runtime = runtime.with_handler(finish_handler);
 
+    // Setup shutdown handler to trigger on Shutdown event
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown_handler = ShutdownHandler::new(shutdown_tx);
+    runtime = runtime.with_handler(shutdown_handler);
+
     let runtime = runtime.with_handler(LogHandler);
 
     // Send initial command before starting runtime
@@ -77,7 +83,16 @@ pub async fn run_worker() -> Result<()> {
     };
     runtime.handler.execute("dataapps", command).await?;
 
-    runtime.start().await
+    // Run pipeline with graceful shutdown on completion
+    tokio::select! {
+        result = runtime.start() => {
+            result
+        },
+        _ = shutdown_rx => {
+            tracing::info!("Graceful shutdown triggered");
+            Ok(())
+        }
+    }
 }
 
 const SYSTEM_PROMPT: &str = "
@@ -199,3 +214,4 @@ impl Agent for DataAppsAgent {
         }
     }
 }
+

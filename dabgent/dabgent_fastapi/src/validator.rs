@@ -81,7 +81,7 @@ impl DataAppsValidator {
         }
 
         // Install npm dependencies
-        let install_result = sandbox.exec("cd /app/frontend && npm install")
+        let install_result = sandbox.exec("cd /app/frontend && npm install")  // replace with npm ci later, but needs valid package-lock.json to be present
             .await.map_err(|e| {
                 let error = format!("Failed to install npm dependencies: {}", e);
                 tracing::error!("{}", error);
