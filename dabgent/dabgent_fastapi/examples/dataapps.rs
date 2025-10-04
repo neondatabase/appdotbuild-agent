@@ -1,4 +1,6 @@
-use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event, Request, Runtime};
+use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
+use dabgent_agent::processor::link::Runtime;
+use dabgent_agent::processor::finish::FinishHandler;
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{TemplateConfig, ToolHandler};
 use dabgent_agent::processor::utils::LogHandler;
@@ -8,7 +10,7 @@ use dabgent_mq::{create_store, Event as MQEvent, StoreConfig};
 use dabgent_sandbox::SandboxHandle;
 use eyre::Result;
 use rig::client::ProviderClient;
-use rig::message::{ToolResult, ToolResultContent, UserContent};
+use rig::message::{ToolResult, ToolResultContent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -28,6 +30,10 @@ pub async fn run_worker() -> Result<()> {
 
     let tools = dataapps_toolset(DataAppsValidator::new());
 
+    let sandbox_handle = SandboxHandle::new(Default::default());
+    let template_config = TemplateConfig::new("./dabgent_fastapi".to_string(), "fastapi.Dockerfile".to_string())
+        .with_template("../dataapps/template_minimal".to_string());
+
     let llm = LLMHandler::new(
         Arc::new(rig::providers::gemini::Client::from_env()),
         LLMConfig {
@@ -40,20 +46,35 @@ pub async fn run_worker() -> Result<()> {
 
     let tool_handler = ToolHandler::new(
         tools,
-        SandboxHandle::new(Default::default()),
-        TemplateConfig::new("./dabgent_fastapi".to_string(), "fastapi.Dockerfile".to_string())
-            .with_template("../dataapps/template_minimal".to_string()),
+        sandbox_handle.clone(),
+        template_config.clone(),
     );
 
-    let runtime = Runtime::<DataAppsAgent, _>::new(store, ())
+    let mut runtime = Runtime::<AgentState<DataAppsAgent>, _>::new(store, ())
         .with_handler(llm)
-        .with_handler(tool_handler)
-        .with_handler(LogHandler);
+        .with_handler(tool_handler);
+
+    // Wipe and prepare export path
+    let export_path = "/tmp/data_app";
+    if std::path::Path::new(export_path).exists() {
+        std::fs::remove_dir_all(export_path)?;
+    }
+
+    let tools_for_finish = dataapps_toolset(DataAppsValidator::new());
+    let finish_handler = FinishHandler::new(
+        sandbox_handle,
+        export_path.to_string(),
+        tools_for_finish,
+        template_config,
+    );
+    runtime = runtime.with_handler(finish_handler);
+
+    let runtime = runtime.with_handler(LogHandler);
 
     // Send initial command before starting runtime
-    let command = Command::SendRequest(Request::Completion {
+    let command = Command::PutUserMessage {
         content: rig::OneOrMany::one(rig::message::UserContent::text(USER_PROMPT)),
-    });
+    };
     runtime.handler.execute("dataapps", command).await?;
 
     runtime.start().await
@@ -149,7 +170,7 @@ impl Agent for DataAppsAgent {
         _: &Self::Services,
         incoming: Vec<ToolResult>,
     ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(incoming);
+        let completed = state.merge_tool_results(&incoming);
         if let Some(done_id) = &state.agent.done_call_id {
             if let Some(result) = completed.iter().find(|r| done_id == &r.id) {
                 let is_done = result.content.iter().any(|c| match c {
@@ -161,14 +182,12 @@ impl Agent for DataAppsAgent {
                 }
             }
         }
-        let content = completed.into_iter().map(UserContent::ToolResult);
-        let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::Request(Request::Completion { content })])
+        Ok(vec![state.results_passthrough(&incoming)])
     }
 
     fn apply_event(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
         match event {
-            Event::Request(Request::ToolCalls { ref calls }) => {
+            Event::ToolCalls { ref calls } => {
                 for call in calls {
                     if call.function.name == "done" {
                         state.agent.done_call_id = Some(call.id.clone());

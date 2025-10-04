@@ -1,7 +1,7 @@
 use super::agent::{Agent, AgentState, Command, Event};
 use crate::toolbox::{ToolCallExt, ToolDyn};
 use dabgent_mq::{Envelope, EventHandler, EventStore, Handler};
-use dabgent_sandbox::SandboxHandle;
+use dabgent_sandbox::{Sandbox, SandboxHandle};
 use eyre::Result;
 use rig::message::{ToolCall, ToolResult};
 
