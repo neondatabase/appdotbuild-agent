@@ -1,10 +1,11 @@
-use super::agent::{Agent, AgentState, Command, Event, EventHandler, Request, Response};
+use super::agent::{Agent, AgentState, Command, Event};
 use crate::toolbox::{ToolCallExt, ToolDyn};
-use dabgent_mq::{Envelope, EventStore, Handler};
-use dabgent_sandbox::{Sandbox, SandboxHandle};
+use dabgent_mq::{Envelope, EventHandler, EventStore, Handler};
+use dabgent_sandbox::SandboxHandle;
 use eyre::Result;
 use rig::message::{ToolCall, ToolResult};
 
+#[derive(Clone)]
 pub struct TemplateConfig {
     pub host_dir: String,
     pub dockerfile: String,
@@ -40,6 +41,15 @@ impl TemplateConfig {
             template_base_path: "/app".to_string(),
         }
     }
+}
+
+/// Dockerfile dir from the source workspace
+pub fn get_dockerfile_dir_from_src_ws() -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .to_str()
+        .expect("project dir is a non-Unicode string")
+        .to_owned()
 }
 
 pub struct ToolHandler {
@@ -137,19 +147,19 @@ impl ToolHandler {
     }
 }
 
-impl<A: Agent, ES: EventStore> EventHandler<A, ES> for ToolHandler {
+impl<A: Agent, ES: EventStore> EventHandler<AgentState<A>, ES> for ToolHandler {
     async fn process(
         &mut self,
         handler: &Handler<AgentState<A>, ES>,
         event: &Envelope<AgentState<A>>,
     ) -> Result<()> {
-        if let Event::Request(Request::ToolCalls { calls }) = &event.data {
+        if let Event::ToolCalls { calls } = &event.data {
             let results = self.run_tools(&event.aggregate_id, &calls).await?;
             if !results.is_empty() {
                 handler
                     .execute_with_metadata(
                         &event.aggregate_id,
-                        Command::SendResponse(Response::ToolResults { results }),
+                        Command::PutToolResults { results },
                         event.metadata.clone(),
                     )
                     .await?;

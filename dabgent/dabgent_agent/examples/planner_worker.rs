@@ -1,14 +1,13 @@
-use dabgent_agent::processor::agent::{
-    Agent, AgentState, Command, Event, Request, Response, Runtime,
-};
-use dabgent_agent::processor::link::{Link, link_runtimes};
+use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
+use dabgent_agent::processor::link::{Link, Runtime, link_runtimes};
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
-use dabgent_agent::processor::tools::{TemplateConfig, ToolHandler};
+use dabgent_agent::processor::tools::{
+    TemplateConfig, ToolHandler, get_dockerfile_dir_from_src_ws,
+};
 use dabgent_agent::processor::utils::LogHandler;
 use dabgent_agent::toolbox::{self, basic::toolset};
 use dabgent_mq::db::sqlite::SqliteStore;
-use dabgent_mq::listener::PollingQueue;
-use dabgent_mq::{Event as MQEvent, EventStore, Handler};
+use dabgent_mq::{Envelope, Event as MQEvent, EventStore, Handler, PollingQueue};
 use dabgent_sandbox::SandboxHandle;
 use eyre::Result;
 use rig::client::ProviderClient;
@@ -17,7 +16,7 @@ use rig::message::{ToolCall, ToolResult, ToolResultContent, UserContent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-const MODEL: &str = "claude-sonnet-4-20250514";
+const MODEL: &str = "claude-sonnet-4-5-20250929";
 
 const PLANNER_PROMPT: &str = "
 You are a planning assistant.
@@ -53,7 +52,7 @@ pub async fn run_planner_worker() -> Result<()> {
             ..Default::default()
         },
     );
-    let mut planner_runtime = Runtime::<Planner, _>::new(store.clone(), ())
+    let mut planner_runtime = Runtime::<AgentState<Planner>, _>::new(store.clone(), ())
         .with_handler(planner_llm)
         .with_handler(LogHandler);
 
@@ -70,9 +69,9 @@ pub async fn run_planner_worker() -> Result<()> {
     let worker_tool_handler = ToolHandler::new(
         worker_tools,
         SandboxHandle::new(Default::default()),
-        TemplateConfig::default_dir("./examples"),
+        TemplateConfig::default_dir(get_dockerfile_dir_from_src_ws()),
     );
-    let mut worker_runtime = Runtime::<Worker, _>::new(store.clone(), ())
+    let mut worker_runtime = Runtime::<AgentState<Worker>, _>::new(store.clone(), ())
         .with_handler(worker_llm)
         .with_handler(worker_tool_handler)
         .with_handler(LogHandler);
@@ -80,9 +79,9 @@ pub async fn run_planner_worker() -> Result<()> {
     link_runtimes(&mut planner_runtime, &mut worker_runtime, PlannerWorkerLink);
 
     // Send initial task to planner before starting runtimes
-    let command = Command::SendRequest(Request::Completion {
-        content: rig::OneOrMany::one(rig::message::UserContent::text(USER_PROMPT)),
-    });
+    let command = Command::PutUserMessage {
+        content: rig::OneOrMany::one(UserContent::text(USER_PROMPT)),
+    };
     planner_runtime.handler.execute("planner", command).await?;
 
     let planner_handle = tokio::spawn(async move { planner_runtime.start().await });
@@ -121,17 +120,6 @@ impl Agent for Planner {
     type AgentEvent = PlannerEvent;
     type AgentError = PlannerError;
     type Services = ();
-
-    async fn handle_tool_results(
-        state: &AgentState<Self>,
-        _: &Self::Services,
-        incoming: Vec<ToolResult>,
-    ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(incoming);
-        let content = completed.into_iter().map(UserContent::ToolResult);
-        let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::Request(Request::Completion { content })])
-    }
 
     fn apply_event(_state: &mut AgentState<Self>, _event: Event<Self::AgentEvent>) {}
 }
@@ -189,7 +177,7 @@ impl Agent for Worker {
         _: &Self::Services,
         incoming: Vec<ToolResult>,
     ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(incoming);
+        let completed = state.merge_tool_results(&incoming);
         if let Some(done_id) = &state.agent.done_call_id {
             if let Some(result) = completed.iter().find(|r| done_id == &r.id) {
                 let is_done = result.content.iter().any(|c| match c {
@@ -205,10 +193,7 @@ impl Agent for Worker {
                 }
             }
         }
-
-        let content = completed.into_iter().map(UserContent::ToolResult);
-        let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::Request(Request::Completion { content })])
+        Ok(vec![state.results_passthrough(&incoming)])
     }
 
     async fn handle_command(
@@ -230,7 +215,7 @@ impl Agent for Worker {
                         parent_id: parent_id.clone(),
                         call: call.clone(),
                     }),
-                    Event::Request(Request::Completion { content }),
+                    Event::UserCompletion { content },
                 ])
             }
         }
@@ -238,7 +223,7 @@ impl Agent for Worker {
 
     fn apply_event(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
         match event {
-            Event::Request(Request::ToolCalls { ref calls }) => {
+            Event::ToolCalls { ref calls } => {
                 for call in calls {
                     if call.function.name == "done" {
                         state.agent.done_call_id = Some(call.id.clone());
@@ -259,23 +244,22 @@ impl Agent for Worker {
 pub struct PlannerWorkerLink;
 
 impl<ES: EventStore> Link<ES> for PlannerWorkerLink {
-    type RuntimeA = Planner;
-    type RuntimeB = Worker;
+    type AggregateA = AgentState<Planner>;
+    type AggregateB = AgentState<Worker>;
 
     async fn forward(
         &self,
-        a_id: &str,
-        event: &Event<PlannerEvent>,
+        envelope: &Envelope<AgentState<Planner>>,
         _handler: &Handler<AgentState<Planner>, ES>,
     ) -> Option<(String, Command<WorkerCommand>)> {
-        match event {
-            Event::Request(Request::ToolCalls { calls }) => {
+        match &envelope.data {
+            Event::ToolCalls { calls } => {
                 if let Some(call) = calls.iter().find(|call| call.function.name == "send_task") {
                     let worker_id = format!("task_{}", call.id);
                     return Some((
                         worker_id,
                         Command::Agent(WorkerCommand::Grab {
-                            parent_id: a_id.to_owned(),
+                            parent_id: envelope.aggregate_id.clone(),
                             call: call.clone(),
                         }),
                     ));
@@ -288,12 +272,11 @@ impl<ES: EventStore> Link<ES> for PlannerWorkerLink {
 
     async fn backward(
         &self,
-        _b_id: &str,
-        event: &Event<WorkerEvent>,
+        envelope: &Envelope<AgentState<Worker>>,
         _handler: &Handler<AgentState<Worker>, ES>,
     ) -> Option<(String, Command<()>)> {
         use dabgent_agent::toolbox::ToolCallExt;
-        match event {
+        match &envelope.data {
             Event::Agent(WorkerEvent::Finished {
                 parent_id,
                 call,
@@ -301,9 +284,9 @@ impl<ES: EventStore> Link<ES> for PlannerWorkerLink {
             }) => {
                 let result = serde_json::to_value(result).unwrap();
                 let result = call.to_result(Ok(result));
-                let command = Command::SendResponse(Response::ToolResults {
+                let command = Command::PutToolResults {
                     results: vec![result],
-                });
+                };
                 Some((parent_id.clone(), command))
             }
             _ => None,

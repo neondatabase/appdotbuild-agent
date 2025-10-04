@@ -1,38 +1,41 @@
 use crate::llm::CompletionResponse;
-use dabgent_mq::listener::EventQueue;
-use dabgent_mq::{Aggregate, Callback, Envelope, Event as MQEvent, EventStore, Handler, Listener};
+use dabgent_mq::{Aggregate, Event as MQEvent};
 use eyre::Result;
-use rig::message::{ToolCall, ToolResult};
+use rig::message::{ToolCall, ToolResult, UserContent};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command<T> {
-    SendRequest(Request),
-    SendResponse(Response),
+    PutUserMessage {
+        content: rig::OneOrMany<rig::message::UserContent>,
+    },
+    PutToolCalls {
+        calls: Vec<ToolCall>,
+    },
+    PutCompletion {
+        response: CompletionResponse,
+    },
+    PutToolResults {
+        results: Vec<ToolResult>,
+    },
     Agent(T),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Request {
-    Completion {
+pub enum Event<T> {
+    UserCompletion {
         content: rig::OneOrMany<rig::message::UserContent>,
     },
     ToolCalls {
         calls: Vec<ToolCall>,
     },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Response {
-    Completion { response: CompletionResponse },
-    ToolResults { results: Vec<ToolResult> },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Event<T> {
-    Request(Request),
-    Response(Response),
+    AgentCompletion {
+        response: CompletionResponse,
+    },
+    ToolResults {
+        results: Vec<ToolResult>,
+    },
     Agent(T),
 }
 
@@ -47,9 +50,11 @@ impl<T: MQEvent> MQEvent for Event<T> {
 
     fn event_type(&self) -> String {
         match self {
-            Event::Request(..) => "request".to_owned(),
-            Event::Response(..) => "response".to_owned(),
-            Event::Agent(inner) => format!("agent.{}", inner.event_type()),
+            Event::UserCompletion { .. } => "user.completion".to_owned(),
+            Event::ToolCalls { .. } => "tool.calls".to_owned(),
+            Event::AgentCompletion { .. } => "agent.completion".to_owned(),
+            Event::ToolResults { .. } => "tool.results".to_owned(),
+            Event::Agent(inner) => inner.event_type(),
         }
     }
 }
@@ -61,19 +66,21 @@ pub trait Agent: Default + Send + Sync + Clone {
     type AgentError: std::error::Error + Send + Sync + 'static;
     type Services: Send + Sync;
 
+    #[allow(unused)]
     fn handle_tool_results(
         state: &AgentState<Self>,
         services: &Self::Services,
         incoming: Vec<ToolResult>,
-    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, Self::AgentError>> + Send;
+    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, Self::AgentError>> + Send {
+        async move { Ok(vec![state.results_passthrough(&incoming)]) }
+    }
 
     #[allow(unused)]
     fn handle_command(
         state: &AgentState<Self>,
         cmd: Self::AgentCommand,
         services: &Self::Services,
-    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, Self::AgentError>> + Send
-    {
+    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, Self::AgentError>> + Send {
         async { Ok(vec![]) }
     }
 
@@ -101,9 +108,17 @@ impl<A: Agent> AgentState<A> {
         true
     }
 
-    pub fn merge_tool_results(&self, mut incoming: Vec<ToolResult>) -> Vec<ToolResult> {
-        incoming.extend(self.calls.values().filter_map(|r| r.clone()));
-        incoming
+    pub fn merge_tool_results(&self, incoming: &[ToolResult]) -> Vec<ToolResult> {
+        let mut merged = incoming.to_vec();
+        merged.extend(self.calls.values().filter_map(|r| r.clone()));
+        merged
+    }
+
+    pub fn results_passthrough(&self, incoming: &[ToolResult]) -> Event<A::AgentEvent> {
+        let completed = self.merge_tool_results(incoming);
+        let content = completed.into_iter().map(UserContent::ToolResult);
+        let content = rig::OneOrMany::many(content).unwrap();
+        Event::UserCompletion { content }
     }
 }
 
@@ -120,37 +135,34 @@ impl<A: Agent> Aggregate for AgentState<A> {
         services: &Self::Services,
     ) -> Result<Vec<Self::Event>, Self::Error> {
         match cmd {
-            Command::SendRequest(request) => match request {
-                Request::Completion { content } => {
-                    if !self.all_tools_ready() {
-                        return Err(Error::NotReady.into());
-                    }
-                    Ok(vec![Event::Request(Request::Completion { content })])
+            Command::PutUserMessage { content } => {
+                if !self.all_tools_ready() {
+                    return Err(Error::NotReady.into());
                 }
-                Request::ToolCalls { calls } => {
-                    Ok(vec![Event::Request(Request::ToolCalls { calls })])
+                Ok(vec![Event::UserCompletion { content }])
+            }
+            Command::PutToolCalls { calls } => Ok(vec![Event::ToolCalls { calls }]),
+            Command::PutCompletion { response } => {
+                let mut events = vec![Event::AgentCompletion {
+                    response: response.clone(),
+                }];
+                if let Some(calls) = response.tool_calls() {
+                    events.push(Event::ToolCalls { calls });
                 }
-            },
-            Command::SendResponse(response) => {
-                let mut events = vec![Event::Response(response.clone())];
-                match response {
-                    Response::ToolResults { results } => {
-                        if let Some(call) = results.iter().find(|c| !self.calls.contains_key(&c.id))
-                        {
-                            return Err(Error::UnexpectedTool(call.id.clone()).into());
-                        }
-                        if self.check_ready(&results) {
-                            let agent_events = A::handle_tool_results(self, services, results)
-                                .await
-                                .map_err(AgentError::Agent)?;
-                            events.extend(agent_events);
-                        }
-                    }
-                    Response::Completion { response } => {
-                        if let Some(calls) = response.tool_calls() {
-                            events.push(Event::Request(Request::ToolCalls { calls }))
-                        }
-                    }
+                Ok(events)
+            }
+            Command::PutToolResults { results } => {
+                if let Some(call) = results.iter().find(|c| !self.calls.contains_key(&c.id)) {
+                    return Err(Error::UnexpectedTool(call.id.clone()).into());
+                }
+                let mut events = vec![Event::ToolResults {
+                    results: results.clone(),
+                }];
+                if self.check_ready(&results) {
+                    let agent_events = A::handle_tool_results(self, services, results)
+                        .await
+                        .map_err(AgentError::Agent)?;
+                    events.extend(agent_events);
                 }
                 Ok(events)
             }
@@ -165,29 +177,25 @@ impl<A: Agent> Aggregate for AgentState<A> {
 
     fn apply(&mut self, event: Self::Event) {
         match event.clone() {
-            Event::Request(request) => match &request {
-                Request::Completion { content } => {
-                    self.messages.push(rig::message::Message::User {
-                        content: content.clone(),
-                    });
-                    self.calls.clear();
+            Event::UserCompletion { content } => {
+                self.messages.push(rig::message::Message::User {
+                    content: content.clone(),
+                });
+                self.calls.clear();
+            }
+            Event::ToolCalls { calls } => {
+                for call in calls {
+                    self.calls.insert(call.id.clone(), None);
                 }
-                Request::ToolCalls { calls } => {
-                    for call in calls {
-                        self.calls.insert(call.id.clone(), None);
-                    }
+            }
+            Event::AgentCompletion { response } => {
+                self.messages.push(response.message());
+            }
+            Event::ToolResults { results } => {
+                for result in results {
+                    self.calls.insert(result.id.clone(), Some(result));
                 }
-            },
-            Event::Response(response) => match response {
-                Response::Completion { response } => {
-                    self.messages.push(response.message());
-                }
-                Response::ToolResults { results } => {
-                    for result in results {
-                        self.calls.insert(result.id.clone(), Some(result));
-                    }
-                }
-            },
+            }
             _ => {}
         }
         A::apply_event(self, event);
@@ -210,64 +218,4 @@ pub enum AgentError<E: std::error::Error> {
     Shared(#[from] Error),
     #[error("Agent error: {0}")]
     Agent(#[source] E),
-}
-
-pub trait EventHandler<A: Agent, ES: EventStore>: Send {
-    fn process(
-        &mut self,
-        handler: &Handler<AgentState<A>, ES>,
-        event: &Envelope<AgentState<A>>,
-    ) -> impl Future<Output = Result<()>> + Send;
-}
-
-pub struct HandlerAdapter<A, ES, H>
-where
-    A: Agent,
-    ES: EventStore,
-    H: EventHandler<A, ES>,
-{
-    handler: Handler<AgentState<A>, ES>,
-    event_handler: H,
-}
-
-impl<A, ES, H> HandlerAdapter<A, ES, H>
-where
-    A: Agent,
-    ES: EventStore,
-    H: EventHandler<A, ES>,
-{
-    pub fn new(handler: Handler<AgentState<A>, ES>, event_handler: H) -> Self {
-        Self { handler, event_handler }
-    }
-}
-
-impl<A: Agent, ES: EventStore, H: EventHandler<A, ES>> Callback<AgentState<A>>
-    for HandlerAdapter<A, ES, H>
-{
-    async fn process(&mut self, event: &Envelope<AgentState<A>>) -> Result<()> {
-        self.event_handler.process(&self.handler, event).await
-    }
-}
-
-pub struct Runtime<A: Agent + 'static, ES: EventQueue + 'static> {
-    pub handler: Handler<AgentState<A>, ES>,
-    pub listener: Listener<AgentState<A>, ES>,
-}
-
-impl<A: Agent<Services: Clone> + 'static, ES: EventQueue + 'static> Runtime<A, ES> {
-    pub fn new(store: ES, services: A::Services) -> Self {
-        let listener = store.listener::<AgentState<A>>();
-        let handler = Handler::new(store.clone(), services);
-        Self { handler, listener }
-    }
-
-    pub fn with_handler(mut self, event_handler: impl EventHandler<A, ES> + 'static) -> Self {
-        let adapter = HandlerAdapter::new(self.handler.clone(), event_handler);
-        self.listener.register(adapter);
-        self
-    }
-
-    pub async fn start(mut self) -> Result<()> {
-        self.listener.run().await
-    }
 }

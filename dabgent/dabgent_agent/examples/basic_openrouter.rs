@@ -1,5 +1,4 @@
 use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
-use dabgent_agent::processor::finish::FinishHandler;
 use dabgent_agent::processor::link::Runtime;
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{
@@ -13,21 +12,22 @@ use dabgent_mq::listener::PollingQueue;
 use dabgent_sandbox::{DaggerSandbox, Sandbox, SandboxHandle};
 use eyre::Result;
 use rig::client::ProviderClient;
-use rig::message::{ToolResult, ToolResultContent};
+use rig::message::{ToolResult, ToolResultContent, UserContent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-const MODEL: &str = "claude-sonnet-4-5-20250929";
+const MODEL: &str = "deepseek/deepseek-v3.2-exp";
 
 const SYSTEM_PROMPT: &str = "
 You are a python software engineer.
 Workspace is already set up using uv init.
 Use uv package manager if you need to add extra libraries.
 Program will be run using uv run main.py command.
-When you finish the task, call the done tool to signal completion.
+IMPORTANT: After the script runs successfully, you MUST call the 'done' tool to complete the task.
 ";
 
-const USER_PROMPT: &str = "minimal script that fetches my ip using some api like ipify.org";
+const USER_PROMPT: &str =
+    "write a simple python script that prints 'Hello from DeepSeek!' and the result of 2+2";
 
 #[tokio::main]
 async fn main() {
@@ -41,7 +41,7 @@ pub async fn run_worker() -> Result<()> {
     let tools = toolset(Validator);
 
     let llm = LLMHandler::new(
-        Arc::new(rig::providers::anthropic::Client::from_env()),
+        Arc::new(rig::providers::openrouter::Client::from_env()),
         LLMConfig {
             model: MODEL.to_string(),
             preamble: Some(SYSTEM_PROMPT.to_string()),
@@ -49,38 +49,21 @@ pub async fn run_worker() -> Result<()> {
             ..Default::default()
         },
     );
-
-    let sandbox_handle = SandboxHandle::new(Default::default());
-    let template_config = TemplateConfig::default_dir(get_dockerfile_dir_from_src_ws());
-
     let tool_handler = ToolHandler::new(
         tools,
-        sandbox_handle.clone(),
-        template_config.clone(),
+        SandboxHandle::new(Default::default()),
+        TemplateConfig::default_dir(get_dockerfile_dir_from_src_ws()),
     );
 
-    let mut runtime = Runtime::<AgentState<Basic>, _>::new(store, ())
+    let runtime = Runtime::<AgentState<Basic>, _>::new(store, ())
         .with_handler(llm)
-        .with_handler(tool_handler);
-
-    // Optionally enable artifact export if EXPORT_PATH is set
-    if let Ok(export_path) = std::env::var("EXPORT_PATH") {
-        let tools_for_finish = toolset(Validator);
-        let finish_handler = FinishHandler::new(
-            sandbox_handle,
-            export_path,
-            tools_for_finish,
-            template_config,
-        );
-        runtime = runtime.with_handler(finish_handler);
-    }
-
-    let runtime = runtime.with_handler(LogHandler);
+        .with_handler(tool_handler)
+        .with_handler(LogHandler);
 
     let command = Command::PutUserMessage {
-        content: rig::OneOrMany::one(rig::message::UserContent::text(USER_PROMPT)),
+        content: rig::OneOrMany::one(UserContent::text(USER_PROMPT)),
     };
-    runtime.handler.execute("basic", command).await?;
+    runtime.handler.execute("basic_openrouter", command).await?;
 
     runtime.start().await
 }
@@ -111,7 +94,7 @@ impl MQEvent for BasicEvent {
 pub enum BasicError {}
 
 impl Agent for Basic {
-    const TYPE: &'static str = "basic_worker";
+    const TYPE: &'static str = "basic_openrouter_worker";
     type AgentCommand = ();
     type AgentEvent = BasicEvent;
     type AgentError = BasicError;

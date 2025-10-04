@@ -1,4 +1,4 @@
-use crate::{Aggregate, Envelope, EventStore};
+use crate::{Aggregate, Envelope, EventStore, Handler};
 use eyre::Result;
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -16,6 +16,14 @@ pub trait Callback<A: Aggregate>: Send {
     {
         Box::new(self)
     }
+}
+
+pub trait EventHandler<A: Aggregate, ES: EventStore>: Send {
+    fn process(
+        &mut self,
+        handler: &Handler<A, ES>,
+        event: &Envelope<A>,
+    ) -> impl Future<Output = Result<()>> + Send;
 }
 
 pub trait CallbackDyn<A: Aggregate>: Send {
@@ -138,15 +146,25 @@ impl<A: Aggregate + 'static, ES: EventStore> Listener<A, ES> {
         self
     }
 
-    pub fn register<C: Callback<A> + 'static>(&mut self, callback: C) {
+    pub fn push_callback<C: Callback<A> + 'static>(&mut self, callback: C) {
         self.callbacks.push(Arc::new(Mutex::new(callback)));
+    }
+
+    pub fn push_handler<H: EventHandler<A, ES> + 'static>(
+        &mut self,
+        handler: H,
+        services: A::Services,
+    ) {
+        let h = Handler::new(self.store.clone(), services);
+        let adapter = CallbackAdapter::new(h, handler);
+        self.push_callback(adapter);
     }
 
     pub async fn run(&mut self) -> eyre::Result<()> {
         let store = self.store.clone();
         let callbacks = self.callbacks.clone();
         let (task_tx, mut task_rx) = mpsc::unbounded_channel::<(String, i64, i64)>();
-        tokio::spawn(async move {
+        let mut task_handle = tokio::spawn(async move {
             while let Some((aggregate_id, from, to)) = task_rx.recv().await {
                 let envelopes = store.load_latest_events(&aggregate_id, from).await?;
                 for envelope in envelopes.iter().filter(|e| e.sequence <= to) {
@@ -159,6 +177,10 @@ impl<A: Aggregate + 'static, ES: EventStore> Listener<A, ES> {
         let mut interval = tokio::time::interval(self.poll_interval);
         loop {
             tokio::select! {
+                result = &mut task_handle => {
+                    tracing::info!(agent = A::TYPE, result = ?result, "killed");
+                    return result?
+                },
                 Ok(wake) = self.wake_rx.recv() => {
                     if wake.aggregate_type != A::TYPE {
                         continue;
@@ -214,5 +236,37 @@ impl<A: Aggregate + 'static, ES: EventStore> Listener<A, ES> {
         }
         self.offsets.insert(aggregate_id.to_string(), to);
         Ok(())
+    }
+}
+
+struct CallbackAdapter<A, ES, H>
+where
+    A: Aggregate,
+    ES: EventStore,
+    H: EventHandler<A, ES>,
+{
+    handler: Handler<A, ES>,
+    event_handler: H,
+}
+
+impl<A, ES, H> CallbackAdapter<A, ES, H>
+where
+    A: Aggregate,
+    ES: EventStore,
+    H: EventHandler<A, ES>,
+{
+    pub fn new(handler: Handler<A, ES>, event_handler: H) -> Self {
+        Self {
+            handler,
+            event_handler,
+        }
+    }
+}
+
+impl<A: Aggregate, ES: EventStore, H: EventHandler<A, ES>> Callback<A>
+    for CallbackAdapter<A, ES, H>
+{
+    async fn process(&mut self, event: &Envelope<A>) -> Result<()> {
+        self.event_handler.process(&self.handler, event).await
     }
 }

@@ -17,6 +17,10 @@ impl PostgresStore {
         }
     }
 
+    pub async fn migrate(&self) {
+        MIGRATOR.run(&self.pool).await.expect("Migration failed")
+    }
+
     fn select_query<T: AsRef<str>>(
         &self,
         aggregate_type: T,
@@ -43,12 +47,6 @@ impl PostgresStore {
         let where_clause = conditions.join(" AND ");
         let sql = format!("SELECT * FROM events WHERE {where_clause} ORDER BY sequence ASC");
         (sql, params)
-    }
-}
-
-impl PostgresStore {
-    pub async fn migrate(&self) {
-        MIGRATOR.run(&self.pool).await.expect("Migration failed")
     }
 }
 

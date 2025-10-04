@@ -162,7 +162,7 @@ async fn benchmark_scenario(
 
         let handle = tokio::spawn(async move {
             let (tx, mut rx) = mpsc::unbounded_channel();
-            listener.register(BenchCallback::new(tx));
+            listener.push_callback(BenchCallback::new(tx));
             tokio::spawn(async move {
                 let _ = listener.run().await;
             });
