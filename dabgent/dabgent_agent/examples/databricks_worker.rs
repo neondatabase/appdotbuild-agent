@@ -1,5 +1,7 @@
-use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
-use dabgent_agent::processor::databricks::{self, DatabricksToolHandler};
+use dabgent_agent::processor::agent::{Agent, AgentError, AgentState, Command, Event};
+use dabgent_agent::processor::databricks::{
+    self, DatabricksTool, DatabricksToolHandler, FinishDelegation, FinishDelegationArgs,
+};
 use dabgent_agent::processor::link::{Link, Runtime, link_runtimes};
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::utils::LogHandler;
@@ -9,7 +11,7 @@ use dabgent_mq::{Envelope, Event as MQEvent, EventStore, Handler, PollingQueue};
 use eyre::Result;
 use rig::client::ProviderClient;
 use rig::completion::ToolDefinition;
-use rig::message::{ToolCall, ToolResult, ToolResultContent, UserContent};
+use rig::message::{ToolCall, UserContent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -136,15 +138,33 @@ impl Agent for MainAgent {
     type AgentEvent = MainEvent;
     type AgentError = MainError;
     type Services = ();
-
-    fn apply_event(_state: &mut AgentState<Self>, _event: Event<Self::AgentEvent>) {}
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DatabricksWorker {
     pub parent_id: Option<String>,
     pub parent_call: Option<ToolCall>,
-    pub finished: bool,
+}
+
+impl DatabricksWorker {
+    fn finish_args_opt(&self, calls: &[ToolCall]) -> Option<FinishDelegationArgs> {
+        for call in calls.iter().map(|c| &c.function) {
+            if call.name == FinishDelegation.name() {
+                let args = serde_json::from_value(call.arguments.clone());
+                return Some(args.unwrap());
+            }
+        }
+        None
+    }
+
+    fn emit_finished(&self, summary: String) -> Event<DatabricksEvent> {
+        let event = DatabricksEvent::Finished {
+            parent_id: self.parent_id.clone().unwrap(),
+            call: self.parent_call.clone().unwrap(),
+            summary,
+        };
+        Event::Agent(event)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,58 +208,23 @@ impl Agent for DatabricksWorker {
     type AgentError = DatabricksError;
     type Services = ();
 
-    async fn handle_tool_results(
+    async fn handle(
         state: &AgentState<Self>,
-        _: &Self::Services,
-        incoming: Vec<ToolResult>,
-    ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(&incoming);
-
-        // Check if finish_delegation was called
-        for result in &completed {
-            for content in result.content.iter() {
-                if let ToolResultContent::Text(text) = content {
-                    // If we have a result for finish_delegation, emit Finished event
-                    if state.calls.keys().any(|id| *id == result.id) {
-                        if let (Some(parent_id), Some(parent_call)) =
-                            (&state.agent.parent_id, &state.agent.parent_call)
-                        {
-                            return Ok(vec![Event::Agent(DatabricksEvent::Finished {
-                                parent_id: parent_id.clone(),
-                                call: parent_call.clone(),
-                                summary: text.text.clone(),
-                            })]);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(vec![state.results_passthrough(&incoming)])
-    }
-
-    async fn handle_command(
-        _state: &AgentState<Self>,
-        cmd: Self::AgentCommand,
-        _: &Self::Services,
-    ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
+        cmd: Command<Self::AgentCommand>,
+        services: &Self::Services,
+    ) -> Result<Vec<Event<Self::AgentEvent>>, AgentError<Self::AgentError>> {
         match cmd {
-            DatabricksCommand::Explore { parent_id, call } => {
-                let catalog = call
-                    .function
-                    .arguments
-                    .get("catalog")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("main");
-                let prompt = call
-                    .function
-                    .arguments
-                    .get("prompt")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                let description = format!("Explore catalog '{}': {}", catalog, prompt);
+            Command::PutToolCalls { calls } => {
+                if let Some(args) = state.agent.finish_args_opt(&calls) {
+                    return Ok(vec![state.agent.emit_finished(args.summary)]);
+                }
+                Ok(vec![Event::ToolCalls { calls }])
+            }
+            Command::Agent(DatabricksCommand::Explore { parent_id, call }) => {
+                let args = &call.function.arguments;
+                let args: ExploreCatalogArgs = serde_json::from_value(args.clone()).unwrap();
+                let description = format!("Explore catalog '{}': {}", args.catalog, args.prompt);
                 let content = rig::OneOrMany::one(UserContent::text(description));
-
                 Ok(vec![
                     Event::Agent(DatabricksEvent::Grabbed {
                         parent_id: parent_id.clone(),
@@ -248,26 +233,25 @@ impl Agent for DatabricksWorker {
                     Event::UserCompletion { content },
                 ])
             }
-        }
-    }
-
-    fn apply_event(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
-        match event {
-            Event::Agent(DatabricksEvent::Grabbed { parent_id, call }) => {
-                state.agent.parent_id = Some(parent_id);
-                state.agent.parent_call = Some(call);
-                state.agent.finished = false;
-            }
-            Event::Agent(DatabricksEvent::Finished { .. }) => {
-                state.agent.finished = true;
-            }
-            _ => {}
+            _ => state.handle_shared(cmd, services).await,
         }
     }
 }
 
 #[derive(Clone)]
 pub struct DatabricksLink;
+
+impl DatabricksLink {
+    fn trigger_call_opt(&self, calls: &[ToolCall]) -> Option<ToolCall> {
+        let trigger = explore_databricks_tool_definition();
+        for call in calls.iter() {
+            if call.function.name == trigger.name {
+                return Some(call.clone());
+            }
+        }
+        None
+    }
+}
 
 impl<ES: EventStore> Link<ES> for DatabricksLink {
     type AggregateA = AgentState<MainAgent>;
@@ -280,10 +264,7 @@ impl<ES: EventStore> Link<ES> for DatabricksLink {
     ) -> Option<(String, Command<DatabricksCommand>)> {
         match &envelope.data {
             Event::ToolCalls { calls } => {
-                if let Some(call) = calls
-                    .iter()
-                    .find(|c| c.function.name == "explore_databricks_catalog")
-                {
+                if let Some(call) = self.trigger_call_opt(&calls) {
                     let worker_id = format!("databricks_{}", call.id);
                     return Some((
                         worker_id,
@@ -321,6 +302,12 @@ impl<ES: EventStore> Link<ES> for DatabricksLink {
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExploreCatalogArgs {
+    pub catalog: String,
+    pub prompt: String,
 }
 
 fn explore_databricks_tool_definition() -> ToolDefinition {

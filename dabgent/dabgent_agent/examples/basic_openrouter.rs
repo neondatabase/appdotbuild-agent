@@ -1,4 +1,4 @@
-use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
+use dabgent_agent::processor::agent::{Agent, AgentError, AgentState, Command, Event};
 use dabgent_agent::processor::link::Runtime;
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{
@@ -12,7 +12,7 @@ use dabgent_mq::listener::PollingQueue;
 use dabgent_sandbox::{DaggerSandbox, Sandbox, SandboxHandle};
 use eyre::Result;
 use rig::client::ProviderClient;
-use rig::message::{ToolResult, ToolResultContent, UserContent};
+use rig::message::{Text, ToolResult, ToolResultContent, UserContent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -73,6 +73,24 @@ pub struct Basic {
     pub done_call_id: Option<String>,
 }
 
+impl Basic {
+    fn is_success(&self, result: &ToolResult) -> bool {
+        result.content.iter().any(|c| match c {
+            ToolResultContent::Text(Text { text }) => text.contains("success"),
+            _ => false,
+        })
+    }
+
+    fn is_done(&self, results: &[ToolResult]) -> bool {
+        self.done_call_id.as_ref().map_or(false, |id| {
+            results
+                .iter()
+                .find(|r| &r.id == id)
+                .map_or(false, |r| self.is_success(r))
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BasicEvent {
     Finished,
@@ -100,37 +118,18 @@ impl Agent for Basic {
     type AgentError = BasicError;
     type Services = ();
 
-    async fn handle_tool_results(
+    async fn handle(
         state: &AgentState<Self>,
-        _: &Self::Services,
-        incoming: Vec<ToolResult>,
-    ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(&incoming);
-        if let Some(done_id) = &state.agent.done_call_id {
-            if let Some(result) = completed.iter().find(|r| done_id == &r.id) {
-                let is_done = result.content.iter().any(|c| match c {
-                    ToolResultContent::Text(text) => text.text.contains("success"),
-                    _ => false,
-                });
-                if is_done {
-                    return Ok(vec![Event::Agent(BasicEvent::Finished)]);
-                }
+        cmd: Command<Self::AgentCommand>,
+        services: &Self::Services,
+    ) -> Result<Vec<Event<Self::AgentEvent>>, AgentError<Self::AgentError>> {
+        match cmd {
+            Command::PutToolResults { results } if state.agent.is_done(&results) => {
+                let mut events = state.shared_put_results(&results)?;
+                events.push(Event::Agent(BasicEvent::Finished));
+                Ok(events)
             }
-        }
-        Ok(vec![state.results_passthrough(&incoming)])
-    }
-
-    fn apply_event(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
-        match event {
-            Event::ToolCalls { ref calls } => {
-                for call in calls {
-                    if call.function.name == "done" {
-                        state.agent.done_call_id = Some(call.id.clone());
-                        break;
-                    }
-                }
-            }
-            _ => {}
+            _ => state.handle_shared(cmd, services).await,
         }
     }
 }

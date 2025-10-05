@@ -1,5 +1,5 @@
-use dabgent_agent::event::Event as AgentEvent;
 use dabgent_agent::llm::CompletionResponse;
+use dabgent_agent::processor::agent::Event;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -11,24 +11,24 @@ use rig::completion::message::{
     AssistantContent, ToolCall, ToolResult, ToolResultContent, UserContent,
 };
 
-pub struct EventList<'a> {
-    events: &'a [AgentEvent],
+pub struct EventList<'a, T> {
+    events: &'a [Event<T>],
 }
 
-impl<'a> EventList<'a> {
-    pub fn new(events: &'a [AgentEvent]) -> Self {
+impl<'a, T> EventList<'a, T> {
+    pub fn new(events: &'a [Event<T>]) -> Self {
         Self { events }
     }
 }
 
-impl Widget for EventList<'_> {
+impl<T> Widget for EventList<'_, T> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut state = ListState::default(); // move to parent state
 
         let items: Vec<ListItem> = self
             .events
             .iter()
-            .map(|event| ListItem::new(event_as_text(event)))
+            .filter_map(|event| event_as_text(event).map(ListItem::new))
             .collect();
 
         let list = List::new(items)
@@ -40,94 +40,12 @@ impl Widget for EventList<'_> {
     }
 }
 
-pub fn event_as_text(event: &AgentEvent) -> Text<'_> {
+pub fn event_as_text<T>(event: &Event<T>) -> Option<Text<'_>> {
     match event {
-        AgentEvent::LLMConfig {
-            model,
-            temperature,
-            max_tokens,
-            preamble,
-            tools,
-            recipient,
-            ..
-        } => render_llm_config(model, *temperature, *max_tokens, preamble, tools, recipient),
-        AgentEvent::AgentMessage { response, .. } => render_agent_message(response),
-        AgentEvent::UserMessage(content) => render_user_message(content),
-        AgentEvent::ArtifactsCollected(artifacts) => render_artifacts_collected(artifacts),
-        AgentEvent::TaskCompleted { .. } => Text::raw("Task completed"),
-        AgentEvent::SeedSandboxFromTemplate { .. } => Text::raw("Sandbox seeded from template"),
-        AgentEvent::SandboxSeeded { .. } => Text::raw("Sandbox seeded"),
-        AgentEvent::PipelineShutdown => Text::raw("Pipeline shutdown"),
-        AgentEvent::ToolResult(_) => Text::raw("Tool result"),
-        AgentEvent::PlanCreated { tasks } => render_plan_created(tasks),
-        AgentEvent::PlanUpdated { tasks } => render_plan_updated(tasks),
+        Event::UserCompletion { content } => Some(render_user_message(&content)),
+        Event::AgentCompletion { response } => Some(render_agent_message(response)),
+        _ => None,
     }
-}
-
-pub fn render_artifacts_collected(
-    artifacts: &std::collections::HashMap<String, String>,
-) -> Text<'_> {
-    Text::from(format!("Collected {} artifacts", artifacts.len()))
-}
-
-pub fn render_plan_created(tasks: &[String]) -> Text<'_> {
-    let mut lines = vec![Line::from("Plan created with tasks:")];
-    for (i, task) in tasks.iter().enumerate() {
-        lines.push(Line::from(format!("  {}. {}", i + 1, task)));
-    }
-    Text::from(lines)
-}
-
-pub fn render_plan_updated(tasks: &[String]) -> Text<'_> {
-    let mut lines = vec![Line::from("Plan updated with tasks:")];
-    for (i, task) in tasks.iter().enumerate() {
-        lines.push(Line::from(format!("  {}. {}", i + 1, task)));
-    }
-    Text::from(lines)
-}
-
-pub fn render_llm_config<'a>(
-    model: &'a str,
-    temperature: f64,
-    max_tokens: u64,
-    preamble: &'a Option<String>,
-    tools: &'a Option<Vec<rig::completion::ToolDefinition>>,
-    recipient: &'a Option<String>,
-) -> Text<'a> {
-    let mut lines = Vec::new();
-    lines.push(Line::from(vec![
-        Span::styled("Configured model", Style::new().bold()),
-        Span::raw(format!(": {model}")),
-    ]));
-    lines.push(Line::from(format!(
-        "temperature: {temperature}, max_tokens: {max_tokens}"
-    )));
-    if let Some(preamble) = preamble {
-        lines.push(Line::from(vec![
-            Span::styled("preamble", Style::new().italic()),
-            Span::raw(": "),
-            Span::raw(preamble.clone()),
-        ]));
-    }
-    if let Some(tools) = tools {
-        let names = tools
-            .iter()
-            .map(|tool| tool.name.clone())
-            .collect::<Vec<_>>();
-        lines.push(Line::from(vec![
-            Span::styled("tools", Style::new().italic()),
-            Span::raw(": "),
-            Span::raw(names.join(", ")),
-        ]));
-    }
-    if let Some(recipient) = recipient {
-        lines.push(Line::from(vec![
-            Span::styled("recipient", Style::new().italic()),
-            Span::raw(": "),
-            Span::raw(recipient.clone()),
-        ]));
-    }
-    Text::from(lines)
 }
 
 pub fn render_agent_message(completion: &CompletionResponse) -> Text<'_> {

@@ -1,7 +1,8 @@
 use color_eyre::eyre::OptionExt;
 use crossterm::event::Event as CrosstermEvent;
-use dabgent_agent::event::Event as AgentEvent;
-use dabgent_mq::db::EventStream;
+use dabgent_agent::processor::agent::{Agent, AgentState, Event};
+use dabgent_agent::processor::link::Runtime;
+use dabgent_mq::{Callback, Envelope, EventQueue};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
@@ -17,71 +18,50 @@ pub enum AppEvent {
 }
 
 #[derive(Debug, Clone)]
-pub enum Event {
+pub enum CliEvent<T> {
     Tick,
     Crossterm(CrosstermEvent),
-    Thread(AgentEvent),
+    Agent(Event<T>),
     App(AppEvent),
 }
 
-pub struct EventHandler {
-    sender: mpsc::UnboundedSender<Event>,
-    receiver: mpsc::UnboundedReceiver<Event>,
+pub struct EventHandler<T> {
+    sender: mpsc::UnboundedSender<CliEvent<T>>,
+    receiver: mpsc::UnboundedReceiver<CliEvent<T>>,
 }
 
-impl EventHandler {
-    pub fn new(events_stream: EventStream<AgentEvent>) -> Self {
+impl<T: Send + 'static> EventHandler<T> {
+    pub fn new<A, ES>(runtime: &mut Runtime<AgentState<A>, ES>) -> Self
+    where
+        A: Agent<AgentEvent = T>,
+        ES: EventQueue,
+    {
         let (sender, receiver) = mpsc::unbounded_channel();
         let actor = EventTask::new(sender.clone());
         tokio::spawn(async { actor.run().await });
-        let actor = StoreTask::new(sender.clone(), events_stream);
-        tokio::spawn(async { actor.run().await });
+        let forwarder = CliForwarder::new(sender.clone());
+        runtime.listener.push_callback(forwarder);
         Self { sender, receiver }
     }
 
-    pub async fn next(&mut self) -> color_eyre::Result<Event> {
+    pub async fn next(&mut self) -> color_eyre::Result<CliEvent<T>> {
         self.receiver
             .recv()
             .await
             .ok_or_eyre("Failed to receive event")
     }
 
-    pub fn send(&self, event: Event) {
+    pub fn send(&self, event: CliEvent<T>) {
         let _ = self.sender.send(event);
     }
 }
 
-pub struct StoreTask {
-    sender: mpsc::UnboundedSender<Event>,
-    receiver: EventStream<AgentEvent>,
+pub struct EventTask<T> {
+    sender: mpsc::UnboundedSender<CliEvent<T>>,
 }
 
-impl StoreTask {
-    pub fn new(sender: mpsc::UnboundedSender<Event>, receiver: EventStream<AgentEvent>) -> Self {
-        Self { sender, receiver }
-    }
-
-    pub async fn run(mut self) -> color_eyre::Result<()> {
-        while let Some(event) = self.receiver.next().await {
-            match event {
-                Ok(event) => {
-                    let _ = self.sender.send(Event::Thread(event));
-                }
-                Err(error) => {
-                    tracing::error!("Error receiving app event: {}", error);
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-pub struct EventTask {
-    sender: mpsc::UnboundedSender<Event>,
-}
-
-impl EventTask {
-    pub fn new(sender: mpsc::UnboundedSender<Event>) -> Self {
+impl<T> EventTask<T> {
+    pub fn new(sender: mpsc::UnboundedSender<CliEvent<T>>) -> Self {
         Self { sender }
     }
 
@@ -96,17 +76,34 @@ impl EventTask {
                     break;
                 }
                 _ = tick_delay => {
-                    self.send(Event::Tick);
+                    self.send(CliEvent::Tick);
                 }
                 Some(Ok(evt)) = reader.next() => {
-                    self.send(Event::Crossterm(evt));
+                    self.send(CliEvent::Crossterm(evt));
                 }
             };
         }
         Ok(())
     }
 
-    fn send(&self, event: Event) {
+    fn send(&self, event: CliEvent<T>) {
         let _ = self.sender.send(event);
+    }
+}
+
+struct CliForwarder<T> {
+    sender: mpsc::UnboundedSender<CliEvent<T>>,
+}
+
+impl<T> CliForwarder<T> {
+    pub fn new(sender: mpsc::UnboundedSender<CliEvent<T>>) -> Self {
+        Self { sender }
+    }
+}
+
+impl<A: Agent> Callback<AgentState<A>> for CliForwarder<A::AgentEvent> {
+    async fn process(&mut self, envelope: &Envelope<AgentState<A>>) -> eyre::Result<()> {
+        let _ = self.sender.send(CliEvent::Agent(envelope.data.clone()));
+        Ok(())
     }
 }

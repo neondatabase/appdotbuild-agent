@@ -66,25 +66,18 @@ pub trait Agent: Default + Send + Sync + Clone {
     type AgentError: std::error::Error + Send + Sync + 'static;
     type Services: Send + Sync;
 
-    #[allow(unused)]
-    fn handle_tool_results(
+    fn handle(
         state: &AgentState<Self>,
+        cmd: Command<Self::AgentCommand>,
         services: &Self::Services,
-        incoming: Vec<ToolResult>,
-    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, Self::AgentError>> + Send {
-        async move { Ok(vec![state.results_passthrough(&incoming)]) }
+    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, AgentError<Self::AgentError>>> + Send
+    {
+        state.handle_shared(cmd, services)
     }
 
-    #[allow(unused)]
-    fn handle_command(
-        state: &AgentState<Self>,
-        cmd: Self::AgentCommand,
-        services: &Self::Services,
-    ) -> impl Future<Output = Result<Vec<Event<Self::AgentEvent>>, Self::AgentError>> + Send {
-        async { Ok(vec![]) }
+    fn apply(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
+        state.apply_shared(event)
     }
-
-    fn apply_event(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>);
 }
 
 #[derive(Clone, Default, Debug)]
@@ -114,69 +107,73 @@ impl<A: Agent> AgentState<A> {
         merged
     }
 
-    pub fn results_passthrough(&self, incoming: &[ToolResult]) -> Event<A::AgentEvent> {
+    pub fn results_to_user(&self, incoming: &[ToolResult]) -> Event<A::AgentEvent> {
         let completed = self.merge_tool_results(incoming);
         let content = completed.into_iter().map(UserContent::ToolResult);
         let content = rig::OneOrMany::many(content).unwrap();
         Event::UserCompletion { content }
     }
-}
 
-impl<A: Agent> Aggregate for AgentState<A> {
-    const TYPE: &'static str = A::TYPE;
-    type Command = Command<A::AgentCommand>;
-    type Event = Event<A::AgentEvent>;
-    type Services = A::Services;
-    type Error = AgentError<A::AgentError>;
-
-    async fn handle(
+    pub fn shared_put_user(
         &self,
-        cmd: Self::Command,
-        services: &Self::Services,
-    ) -> Result<Vec<Self::Event>, Self::Error> {
+        content: &rig::OneOrMany<UserContent>,
+    ) -> Result<Vec<Event<A::AgentEvent>>, AgentError<A::AgentError>> {
+        if !self.all_tools_ready() {
+            return Err(Error::NotReady.into());
+        }
+        Ok(vec![Event::UserCompletion {
+            content: content.clone(),
+        }])
+    }
+
+    pub fn shared_put_completion(
+        &self,
+        response: &CompletionResponse,
+    ) -> Result<Vec<Event<A::AgentEvent>>, AgentError<A::AgentError>> {
+        let mut events = vec![Event::AgentCompletion {
+            response: response.clone(),
+        }];
+        if let Some(calls) = response.tool_calls() {
+            events.push(Event::ToolCalls { calls });
+        }
+        Ok(events)
+    }
+
+    pub fn shared_put_results(
+        &self,
+        results: &[ToolResult],
+    ) -> Result<Vec<Event<A::AgentEvent>>, AgentError<A::AgentError>> {
+        if let Some(call) = results.iter().find(|c| !self.calls.contains_key(&c.id)) {
+            return Err(Error::UnexpectedTool(call.id.clone()).into());
+        }
+        Ok(vec![Event::ToolResults {
+            results: results.to_vec(),
+        }])
+    }
+
+    #[allow(unused)]
+    pub async fn handle_shared(
+        &self,
+        cmd: Command<A::AgentCommand>,
+        services: &A::Services,
+    ) -> Result<Vec<Event<A::AgentEvent>>, AgentError<A::AgentError>> {
         match cmd {
-            Command::PutUserMessage { content } => {
-                if !self.all_tools_ready() {
-                    return Err(Error::NotReady.into());
-                }
-                Ok(vec![Event::UserCompletion { content }])
-            }
+            Command::PutUserMessage { content } => self.shared_put_user(&content),
             Command::PutToolCalls { calls } => Ok(vec![Event::ToolCalls { calls }]),
-            Command::PutCompletion { response } => {
-                let mut events = vec![Event::AgentCompletion {
-                    response: response.clone(),
-                }];
-                if let Some(calls) = response.tool_calls() {
-                    events.push(Event::ToolCalls { calls });
-                }
-                Ok(events)
-            }
+            Command::PutCompletion { response } => self.shared_put_completion(&response),
             Command::PutToolResults { results } => {
-                if let Some(call) = results.iter().find(|c| !self.calls.contains_key(&c.id)) {
-                    return Err(Error::UnexpectedTool(call.id.clone()).into());
-                }
-                let mut events = vec![Event::ToolResults {
-                    results: results.clone(),
-                }];
+                let mut events = self.shared_put_results(&results)?;
                 if self.check_ready(&results) {
-                    let agent_events = A::handle_tool_results(self, services, results)
-                        .await
-                        .map_err(AgentError::Agent)?;
-                    events.extend(agent_events);
+                    events.push(self.results_to_user(&results));
                 }
                 Ok(events)
             }
-            Command::Agent(cmd) => {
-                let events = A::handle_command(self, cmd, services)
-                    .await
-                    .map_err(AgentError::Agent)?;
-                Ok(events)
-            }
+            _ => Ok(vec![]),
         }
     }
 
-    fn apply(&mut self, event: Self::Event) {
-        match event.clone() {
+    pub fn apply_shared(&mut self, event: Event<A::AgentEvent>) {
+        match event {
             Event::UserCompletion { content } => {
                 self.messages.push(rig::message::Message::User {
                     content: content.clone(),
@@ -198,7 +195,26 @@ impl<A: Agent> Aggregate for AgentState<A> {
             }
             _ => {}
         }
-        A::apply_event(self, event);
+    }
+}
+
+impl<A: Agent> Aggregate for AgentState<A> {
+    const TYPE: &'static str = A::TYPE;
+    type Command = Command<A::AgentCommand>;
+    type Event = Event<A::AgentEvent>;
+    type Services = A::Services;
+    type Error = AgentError<A::AgentError>;
+
+    async fn handle(
+        &self,
+        cmd: Self::Command,
+        services: &Self::Services,
+    ) -> Result<Vec<Self::Event>, Self::Error> {
+        A::handle(self, cmd, services).await
+    }
+
+    fn apply(&mut self, event: Self::Event) {
+        A::apply(self, event);
     }
 }
 

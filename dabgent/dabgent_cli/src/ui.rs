@@ -1,6 +1,7 @@
 use crate::App;
 use crate::widgets::event_as_text;
-use dabgent_mq::db::EventStore;
+use dabgent_agent::processor::agent::Agent;
+use dabgent_mq::EventStore;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
@@ -8,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, StatefulWidget, Widget},
 };
 
-impl<S: EventStore> Widget for &mut App<S> {
+impl<A: Agent, ES: EventStore> Widget for &mut App<A, ES> {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
@@ -28,12 +29,12 @@ impl<S: EventStore> Widget for &mut App<S> {
     }
 }
 
-impl<S: EventStore> App<S> {
+impl<A: Agent, ES: EventStore> App<A, ES> {
     fn draw_messages(&mut self, area: Rect, buf: &mut Buffer) {
         let items: Vec<ListItem> = self
             .history
             .iter()
-            .map(|event| ListItem::new(event_as_text(event)))
+            .filter_map(|event| event_as_text(event).map(ListItem::new))
             .collect();
 
         let title = if self.auto_scroll {
