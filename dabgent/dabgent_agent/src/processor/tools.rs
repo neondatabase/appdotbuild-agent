@@ -89,6 +89,7 @@ impl ToolHandler {
                         aggregate_id,
                         &self.config.host_dir,
                         &self.config.dockerfile,
+                        vec![],
                     )
                     .await?;
 

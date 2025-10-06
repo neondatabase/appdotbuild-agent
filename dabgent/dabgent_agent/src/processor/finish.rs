@@ -48,6 +48,7 @@ impl FinishHandler {
                         aggregate_id,
                         &self.template_config.host_dir,
                         &self.template_config.dockerfile,
+                        vec![],
                     )
                     .await?
             }

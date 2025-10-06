@@ -2,18 +2,40 @@ use crate::ExecResult;
 use dagger_sdk::core::logger::DynLogger;
 use dagger_sdk::logging::{StdLogger, TracingLogger};
 use eyre::Result;
+use globset::{GlobSet, GlobSetBuilder};
 use std::{future::Future, io::Write, sync::Arc};
 
 #[derive(Clone)]
 pub struct Sandbox {
     ctr: dagger_sdk::Container,
     client: dagger_sdk::DaggerConn,
+    restricted_files: GlobSet,
 }
 
 impl Sandbox {
     /// Create a sandbox from an existing Dagger container and client
     pub fn from_container(ctr: dagger_sdk::Container, client: dagger_sdk::DaggerConn) -> Self {
-        Self { ctr, client }
+        Self {
+            ctr,
+            client,
+            restricted_files: GlobSet::empty(),
+        }
+    }
+
+    /// Add file restrictions to the sandbox
+    pub fn with_restrictions(mut self, patterns: Vec<String>) -> Result<Self> {
+        let mut builder = GlobSetBuilder::new();
+        for pattern in patterns {
+            builder.add(globset::Glob::new(&pattern)?);
+        }
+        self.restricted_files = builder.build()?;
+        Ok(self)
+    }
+
+    /// Check if a file path matches any restricted patterns
+    fn is_restricted(&self, path: &str) -> bool {
+        let normalized = path.strip_prefix('/').unwrap_or(path);
+        self.restricted_files.is_match(normalized)
     }
 
     /// Get the cloned underlying Dagger container
@@ -37,6 +59,9 @@ impl crate::Sandbox for Sandbox {
     }
 
     async fn write_file(&mut self, path: &str, content: &str) -> Result<()> {
+        if self.is_restricted(path) {
+            return Err(eyre::eyre!("File '{}' is protected and cannot be modified", path));
+        }
         self.ctr = self.ctr.with_new_file(path, content);
         Ok(())
     }
@@ -46,6 +71,13 @@ impl crate::Sandbox for Sandbox {
     async fn write_files(&mut self, files: Vec<(&str, &str)>) -> Result<()> {
         if files.is_empty() {
             return Ok(());
+        }
+
+        // Check for restricted files first
+        for (file_path, _) in &files {
+            if self.is_restricted(file_path) {
+                return Err(eyre::eyre!("File '{}' is protected and cannot be modified", file_path));
+            }
         }
 
         // Create a temporary directory to stage all files
@@ -84,6 +116,9 @@ impl crate::Sandbox for Sandbox {
     }
 
     async fn delete_file(&mut self, path: &str) -> Result<()> {
+        if self.is_restricted(path) {
+            return Err(eyre::eyre!("File '{}' is protected and cannot be modified", path));
+        }
         self.ctr = self.ctr.without_file(path);
         Ok(())
     }
@@ -108,7 +143,8 @@ impl crate::Sandbox for Sandbox {
     {
         let ctr = self.ctr.clone();
         let client = self.client.clone();
-        Ok(Sandbox { ctr, client })
+        let restricted_files = self.restricted_files.clone();
+        Ok(Sandbox { ctr, client, restricted_files })
     }
 }
 

@@ -758,6 +758,7 @@ dependencies = [
  "chrono",
  "dagger-sdk",
  "eyre",
+ "globset",
  "serde",
  "serde_json",
  "tempfile",

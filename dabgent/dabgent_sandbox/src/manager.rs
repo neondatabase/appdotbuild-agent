@@ -14,6 +14,7 @@ enum ManagerMessage {
         id: String,
         host_dir: String,
         dockerfile: String,
+        restricted_files: Vec<String>,
         respond_to: oneshot::Sender<Result<DaggerSandbox>>,
     },
     Get {
@@ -25,6 +26,7 @@ enum ManagerMessage {
         sandbox: DaggerSandbox,
         respond_to: oneshot::Sender<()>,
     },
+    Shutdown,
 }
 
 impl SandboxManager {
@@ -36,20 +38,23 @@ impl SandboxManager {
         }
     }
 
-    async fn handle_message(&mut self, msg: ManagerMessage) {
+    async fn handle_message(&mut self, msg: ManagerMessage) -> bool {
         match msg {
             ManagerMessage::CreateFromDirectory {
                 id,
                 host_dir,
                 dockerfile,
+                restricted_files,
                 respond_to,
             } => {
-                let result = self.create_sandbox(&id, &host_dir, &dockerfile).await;
+                let result = self.create_sandbox(&id, &host_dir, &dockerfile, restricted_files).await;
                 let _ = respond_to.send(result);
+                true
             }
             ManagerMessage::Get { id, respond_to } => {
                 let sandbox = self.registry.get(&id).cloned();
                 let _ = respond_to.send(sandbox);
+                true
             }
             ManagerMessage::Set {
                 id,
@@ -58,7 +63,9 @@ impl SandboxManager {
             } => {
                 self.registry.insert(id, sandbox);
                 let _ = respond_to.send(());
+                true
             }
+            ManagerMessage::Shutdown => false,
         }
     }
 
@@ -67,6 +74,7 @@ impl SandboxManager {
         id: &str,
         host_dir: &str,
         dockerfile: &str,
+        restricted_files: Vec<String>,
     ) -> Result<DaggerSandbox> {
         let opts = dagger_sdk::ContainerBuildOptsBuilder::default()
             .dockerfile(dockerfile)
@@ -78,7 +86,10 @@ impl SandboxManager {
             .build_opts(self.client.host().directory(host_dir), opts);
 
         ctr.sync().await?;
-        let sandbox = DaggerSandbox::from_container(ctr, self.client.clone());
+        let mut sandbox = DaggerSandbox::from_container(ctr, self.client.clone());
+        if !restricted_files.is_empty() {
+            sandbox = sandbox.with_restrictions(restricted_files)?;
+        }
         self.registry.insert(id.to_string(), sandbox.clone());
         Ok(sandbox)
     }
@@ -86,13 +97,31 @@ impl SandboxManager {
 
 async fn run_sandbox_manager(mut manager: SandboxManager) {
     while let Some(msg) = manager.receiver.recv().await {
-        manager.handle_message(msg).await;
+        if !manager.handle_message(msg).await {
+            break;
+        }
     }
 }
 
-#[derive(Clone)]
 pub struct SandboxHandle {
     sender: mpsc::Sender<ManagerMessage>,
+}
+
+impl Clone for SandboxHandle {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+        }
+    }
+}
+
+impl Drop for SandboxHandle {
+    fn drop(&mut self) {
+        let sender = self.sender.clone();
+        tokio::spawn(async move {
+            let _ = sender.send(ManagerMessage::Shutdown).await;
+        });
+    }
 }
 
 impl SandboxHandle {
@@ -117,12 +146,14 @@ impl SandboxHandle {
         id: &str,
         host_dir: &str,
         dockerfile: &str,
+        restricted_files: Vec<String>,
     ) -> Result<DaggerSandbox> {
         let (send, recv) = oneshot::channel();
         let msg = ManagerMessage::CreateFromDirectory {
             id: id.to_owned(),
             host_dir: host_dir.to_owned(),
             dockerfile: dockerfile.to_owned(),
+            restricted_files,
             respond_to: send,
         };
         let _ = self.sender.send(msg).await;
