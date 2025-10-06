@@ -262,3 +262,71 @@ impl Default for ConnectOpts {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_restricted_exact_match() {
+        let matcher = build_restriction_matcher(vec!["config.yaml".to_string()]).unwrap();
+
+        assert!(is_path_restricted(&matcher, "config.yaml"));
+        assert!(is_path_restricted(&matcher, "/config.yaml"));
+        assert!(!is_path_restricted(&matcher, "other.yaml"));
+    }
+
+    #[test]
+    fn test_is_restricted_wildcard() {
+        let matcher = build_restriction_matcher(vec!["*.env".to_string()]).unwrap();
+
+        assert!(is_path_restricted(&matcher, ".env"));
+        assert!(is_path_restricted(&matcher, "prod.env"));
+        assert!(is_path_restricted(&matcher, "/app/.env"));
+        assert!(!is_path_restricted(&matcher, "env.txt"));
+    }
+
+    #[test]
+    fn test_is_restricted_directory_pattern() {
+        let matcher = build_restriction_matcher(vec!["secrets/**".to_string()]).unwrap();
+
+        assert!(is_path_restricted(&matcher, "secrets/api.key"));
+        assert!(is_path_restricted(&matcher, "/secrets/db/password.txt"));
+        assert!(!is_path_restricted(&matcher, "other/file.txt"));
+    }
+
+    #[test]
+    fn test_is_restricted_multiple_patterns() {
+        let matcher = build_restriction_matcher(vec![
+            "*.env".to_string(),
+            "secrets/**".to_string(),
+            "config.yaml".to_string(),
+        ]).unwrap();
+
+        assert!(is_path_restricted(&matcher, ".env"));
+        assert!(is_path_restricted(&matcher, "secrets/key.pem"));
+        assert!(is_path_restricted(&matcher, "config.yaml"));
+        assert!(!is_path_restricted(&matcher, "app.py"));
+    }
+
+    #[test]
+    fn test_empty_restrictions() {
+        let matcher = build_restriction_matcher(vec![]).unwrap();
+
+        assert!(!is_path_restricted(&matcher, "any/file.txt"));
+        assert!(!is_path_restricted(&matcher, ".env"));
+    }
+
+    fn build_restriction_matcher(patterns: Vec<String>) -> Result<GlobSet> {
+        let mut builder = GlobSetBuilder::new();
+        for pattern in patterns {
+            builder.add(globset::Glob::new(&pattern)?);
+        }
+        builder.build().map_err(Into::into)
+    }
+
+    fn is_path_restricted(matcher: &GlobSet, path: &str) -> bool {
+        let normalized = path.strip_prefix('/').unwrap_or(path);
+        matcher.is_match(normalized)
+    }
+}
