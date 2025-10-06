@@ -174,7 +174,10 @@ agent/app_dumps/*.*
 agent/bin/*.*
 agent/laravel_agent/template_backup_*/**
 agent/benchmark_results*/*
+
+# dabgent
 dabgent/claude_code.json
+dabgent/dabgent_agent/output/**
 
 # Serena
 .serena

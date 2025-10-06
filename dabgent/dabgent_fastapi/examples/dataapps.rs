@@ -1,11 +1,19 @@
-use dabgent_agent::processor::{CompactProcessor, FinishProcessor, Pipeline, Processor, ThreadProcessor, ToolProcessor};
-use dabgent_agent::toolbox::ToolDyn;
-use dabgent_fastapi::{toolset::dataapps_toolset, validator::DataAppsValidator, artifact_preparer::DataAppsArtifactPreparer};
-use dabgent_fastapi::templates::{EMBEDDED_TEMPLATES, DEFAULT_TEMPLATE_PATH};
-use dabgent_mq::{EventStore, create_store, StoreConfig};
-use dabgent_sandbox::{Sandbox, dagger::{ConnectOpts, Sandbox as DaggerSandbox}};
+use dabgent_agent::processor::agent::{Agent, AgentError, AgentState, Command, Event};
+use dabgent_agent::processor::link::Runtime;
+use dabgent_agent::processor::finish::FinishHandler;
+use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
+use dabgent_agent::processor::tools::{TemplateConfig, ToolHandler};
+use dabgent_agent::processor::utils::{LogHandler, ShutdownHandler};
+use dabgent_fastapi::{toolset::dataapps_toolset, validator::DataAppsValidator};
+use dabgent_mq::listener::PollingQueue;
+use dabgent_mq::{create_store, Event as MQEvent, StoreConfig};
+use dabgent_sandbox::SandboxHandle;
 use eyre::Result;
 use rig::client::ProviderClient;
+use rig::message::{Text, ToolResult, ToolResultContent};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::oneshot;
 
 
 #[tokio::main]
@@ -14,80 +22,77 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
+    run_worker().await.unwrap();
+}
 
-    const STREAM_ID: &str = "dataapps";
-    const AGGREGATE_ID: &str = "thread";
+pub async fn run_worker() -> Result<()> {
+    let store = create_store(Some(StoreConfig::from_env())).await?;
+    let store = PollingQueue::new(store);
 
-    let opts = ConnectOpts::default();
-    opts.connect(|client| async move {
-        let llm = rig::providers::gemini::Client::from_env();
-        let store = create_store(Some(StoreConfig::from_env())).await?;
-        tracing::info!("Event store initialized successfully");
-        let sandbox = create_sandbox(&client).await?;
-        let tool_processor_tools = dataapps_toolset(DataAppsValidator::new());
-        let finish_processor_tools = dataapps_toolset(DataAppsValidator::new());
+    let tools = dataapps_toolset(DataAppsValidator::new());
 
-        push_llm_config(&store, STREAM_ID, AGGREGATE_ID, &tool_processor_tools).await?;
+    let sandbox_handle = SandboxHandle::new(Default::default());
+    let template_config = TemplateConfig::new("./dabgent_fastapi".to_string(), "fastapi.Dockerfile".to_string())
+        .with_template("../dataapps/template_minimal".to_string());
 
-        // Use embedded templates in release mode, filesystem in debug mode
-        let template_path = if cfg!(debug_assertions) {
-            DEFAULT_TEMPLATE_PATH
-        } else {
-            EMBEDDED_TEMPLATES
-        };
+    let llm = LLMHandler::new(
+        Arc::new(rig::providers::gemini::Client::from_env()),
+        LLMConfig {
+            model: MODEL.to_string(),
+            preamble: Some(SYSTEM_PROMPT.to_string()),
+            tools: Some(tools.iter().map(|tool| tool.definition()).collect()),
+            ..Default::default()
+        },
+    );
 
-        push_seed_sandbox(&store, STREAM_ID, AGGREGATE_ID, template_path, "/app").await?;
-        push_prompt(&store, STREAM_ID, AGGREGATE_ID, USER_PROMPT).await?;
+    let tool_handler = ToolHandler::new(
+        tools,
+        sandbox_handle.clone(),
+        template_config.clone(),
+    );
 
-        tracing::info!("Starting DataApps pipeline with model: {}", MODEL);
+    let mut runtime = Runtime::<AgentState<DataAppsAgent>, _>::new(store, ())
+        .with_handler(llm)
+        .with_handler(tool_handler);
 
-        let thread_processor = ThreadProcessor::new(llm.clone(), store.clone());
+    // Wipe and prepare export path
+    let export_path = "/tmp/data_app";
+    if std::path::Path::new(export_path).exists() {
+        std::fs::remove_dir_all(export_path)?;
+    }
 
-        // Create export directory path with timestamp
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let export_path = format!("/tmp/dataapps_output_{}", timestamp);
+    let tools_for_finish = dataapps_toolset(DataAppsValidator::new());
+    let finish_handler = FinishHandler::new(
+        sandbox_handle,
+        export_path.to_string(),
+        tools_for_finish,
+        template_config,
+    );
+    runtime = runtime.with_handler(finish_handler);
 
-        // Fork sandbox for completion processor
-        let completion_sandbox = sandbox.fork().await?;
-        let tool_processor = ToolProcessor::new(dabgent_sandbox::Sandbox::boxed(sandbox), store.clone(), tool_processor_tools, None);
+    // Setup shutdown handler to trigger on Shutdown event
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown_handler = ShutdownHandler::new(shutdown_tx);
+    runtime = runtime.with_handler(shutdown_handler);
 
-        // Create CompactProcessor with small threshold for testing
-        let compact_processor = CompactProcessor::new(
-            store.clone(),
-            2048,
-            "gemini-2.5-flash".to_string(),  // Use same model as main pipeline
-        );
+    let runtime = runtime.with_handler(LogHandler);
 
-        // FixMe: FinishProcessor should have no state, including export path
-        let finish_processor = FinishProcessor::new_with_preparer(
-            dabgent_sandbox::Sandbox::boxed(completion_sandbox),
-            store.clone(),
-            export_path.clone(),
-            finish_processor_tools,
-            DataAppsArtifactPreparer,
-        );
+    // Send initial command before starting runtime
+    let command = Command::PutUserMessage {
+        content: rig::OneOrMany::one(rig::message::UserContent::text(USER_PROMPT)),
+    };
+    runtime.handler.execute("dataapps", command).await?;
 
-        let pipeline = Pipeline::new(
-            store.clone(),
-            vec![
-                thread_processor.boxed(),
-                tool_processor.boxed(),
-                compact_processor.boxed(),
-                finish_processor.boxed(),
-            ],
-        );
-
-        tracing::info!("Artifacts will be exported to: {}", export_path);
-        tracing::info!("Pipeline configured, starting execution...");
-
-        pipeline.run(STREAM_ID.to_owned()).await?;
-        Ok(())
-    })
-    .await
-    .unwrap();
+    // Run pipeline with graceful shutdown on completion
+    tokio::select! {
+        result = runtime.start() => {
+            result
+        },
+        _ = shutdown_rx => {
+            tracing::info!("Graceful shutdown triggered");
+            Ok(())
+        }
+    }
 }
 
 const SYSTEM_PROMPT: &str = "
@@ -135,82 +140,84 @@ The app should be functional.
 
 const MODEL: &str = "gemini-2.5-flash";
 
-async fn create_sandbox(client: &dagger_sdk::DaggerConn) -> Result<DaggerSandbox> {
-    tracing::info!("Setting up sandbox with DataApps template...");
-
-    // Build container from fastapi.Dockerfile
-    let opts = dagger_sdk::ContainerBuildOptsBuilder::default()
-        .dockerfile("fastapi.Dockerfile")
-        .build()?;
-
-    let ctr = client
-        .container()
-        .build_opts(client.host().directory("./dabgent_fastapi"), opts);
-
-    ctr.sync().await?;
-    let sandbox = DaggerSandbox::from_container(ctr, client.clone());
-    tracing::info!("Sandbox ready for DataApps development");
-    Ok(sandbox)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DataAppsAgent {
+    pub done_call_id: Option<String>,
 }
 
-async fn push_llm_config<S: EventStore>(
-    store: &S,
-    stream_id: &str,
-    aggregate_id: &str,
-    tools: &[Box<dyn ToolDyn>],
-) -> Result<()> {
-    tracing::info!("Pushing LLM configuration to event store...");
+impl DataAppsAgent {
+    fn is_success(&self, result: &ToolResult) -> bool {
+        result.content.iter().any(|c| match c {
+            ToolResultContent::Text(Text { text }) => text.contains("success"),
+            _ => false,
+        })
+    }
 
-    // Extract tool definitions from the tools
-    let tool_definitions: Vec<rig::completion::ToolDefinition> = tools
-        .iter()
-        .map(|tool| tool.definition())
-        .collect();
-
-    let event = dabgent_agent::event::Event::LLMConfig {
-        model: MODEL.to_owned(),
-        temperature: 0.0,
-        max_tokens: 8192,
-        preamble: Some(SYSTEM_PROMPT.to_owned()),
-        tools: Some(tool_definitions),
-        recipient: None,
-        parent: None,
-    };
-    store
-        .push_event(stream_id, aggregate_id, &event, &Default::default())
-        .await
-        .map_err(Into::into)
+    fn is_done(&self, results: &[ToolResult]) -> bool {
+        self.done_call_id.as_ref().map_or(false, |id| {
+            results
+                .iter()
+                .find(|r| &r.id == id)
+                .map_or(false, |r| self.is_success(r))
+        })
+    }
 }
 
-async fn push_seed_sandbox<S: EventStore>(
-    store: &S,
-    stream_id: &str,
-    aggregate_id: &str,
-    template_path: &str,
-    base_path: &str,
-) -> Result<()> {
-    tracing::info!("Pushing seed sandbox event: {}", template_path);
-    let event = dabgent_agent::event::Event::SeedSandboxFromTemplate {
-        template_path: template_path.to_owned(),
-        base_path: base_path.to_owned(),
-    };
-    store
-        .push_event(stream_id, aggregate_id, &event, &Default::default())
-        .await
-        .map_err(Into::into)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DataAppsEvent {
+    Finished,
 }
 
-async fn push_prompt<S: EventStore>(
-    store: &S,
-    stream_id: &str,
-    aggregate_id: &str,
-    prompt: &str,
-) -> Result<()> {
-    tracing::info!("Pushing initial prompt to event store...");
-    let content = rig::message::UserContent::Text(rig::message::Text { text: prompt.to_owned() });
-    let event = dabgent_agent::event::Event::UserMessage(rig::OneOrMany::one(content));
-    store
-        .push_event(stream_id, aggregate_id, &event, &Default::default())
-        .await
-        .map_err(Into::into)
+impl MQEvent for DataAppsEvent {
+    fn event_type(&self) -> String {
+        match self {
+            DataAppsEvent::Finished => "finished".to_string(),
+        }
+    }
+
+    fn event_version(&self) -> String {
+        "1.0".to_string()
+    }
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum DataAppsError {}
+
+impl Agent for DataAppsAgent {
+    const TYPE: &'static str = "dataapps_worker";
+    type AgentCommand = ();
+    type AgentEvent = DataAppsEvent;
+    type AgentError = DataAppsError;
+    type Services = ();
+
+    async fn handle(
+        state: &AgentState<Self>,
+        cmd: Command<Self::AgentCommand>,
+        services: &Self::Services,
+    ) -> Result<Vec<Event<Self::AgentEvent>>, AgentError<Self::AgentError>> {
+        match cmd {
+            Command::PutToolResults { results } if state.agent.is_done(&results) => {
+                let mut events = state.shared_put_results(&results)?;
+                events.push(Event::Agent(DataAppsEvent::Finished));
+                Ok(events)
+            }
+            _ => state.handle_shared(cmd, services).await,
+        }
+    }
+
+    fn apply(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
+        match &event {
+            Event::ToolCalls { calls } => {
+                for call in calls {
+                    if call.function.name == "done" {
+                        state.agent.done_call_id = Some(call.id.clone());
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+        state.apply_shared(event);
+    }
+}
+

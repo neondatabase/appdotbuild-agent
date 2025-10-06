@@ -2,7 +2,7 @@ use crate::ExecResult;
 use dagger_sdk::core::logger::DynLogger;
 use dagger_sdk::logging::{StdLogger, TracingLogger};
 use eyre::Result;
-use std::{io::Write, sync::Arc, future::Future};
+use std::{future::Future, io::Write, sync::Arc};
 
 #[derive(Clone)]
 pub struct Sandbox {
@@ -14,6 +14,11 @@ impl Sandbox {
     /// Create a sandbox from an existing Dagger container and client
     pub fn from_container(ctr: dagger_sdk::Container, client: dagger_sdk::DaggerConn) -> Self {
         Self { ctr, client }
+    }
+
+    /// Get the cloned underlying Dagger container
+    pub fn container(&self) -> dagger_sdk::Container {
+        self.ctr.clone()
     }
 }
 
@@ -60,8 +65,11 @@ impl crate::Sandbox for Sandbox {
         }
 
         // Use with_directory to add all files at once - this prevents deep query chains
-        let host_dir = self.client.host().directory(temp_path.to_string_lossy().to_string());
-        
+        let host_dir = self
+            .client
+            .host()
+            .directory(temp_path.to_string_lossy().to_string());
+
         // Mount the entire temporary directory to root, which will merge all files
         self.ctr = self.ctr.with_directory("/", host_dir);
 
@@ -103,7 +111,6 @@ impl crate::Sandbox for Sandbox {
         Ok(Sandbox { ctr, client })
     }
 }
-
 
 impl ExecResult {
     async fn get_output(ctr: &dagger_sdk::Container) -> Result<Self> {

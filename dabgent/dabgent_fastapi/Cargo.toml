@@ -16,6 +16,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dotenvy = "0.15"
 rust-embed = { version = "8.7.2", features = ["include-exclude"] }
+thiserror = "2.0"
 
 [dev-dependencies]
 dagger-sdk = "0.18.16"

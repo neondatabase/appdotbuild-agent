@@ -2,7 +2,8 @@ mod common;
 
 use common::{create_test_store, PythonValidator};
 use dabgent_agent::llm::{LLMClientDyn, WithRetryExt};
-use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event, Request, Runtime};
+use dabgent_agent::processor::agent::{Agent, AgentState, Command, Event};
+use dabgent_agent::processor::link::Runtime;
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{
     get_dockerfile_dir_from_src_ws, TemplateConfig, ToolHandler,
@@ -12,7 +13,7 @@ use dabgent_mq::{Event as MQEvent, EventStore};
 use dabgent_sandbox::SandboxHandle;
 use eyre::Result;
 use rig::client::ProviderClient;
-use rig::message::{ToolResult, ToolResultContent, UserContent};
+use rig::message::{ToolResult, ToolResultContent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,7 +56,7 @@ impl Agent for BasicAgent {
         _: &Self::Services,
         incoming: Vec<ToolResult>,
     ) -> Result<Vec<Event<Self::AgentEvent>>, Self::AgentError> {
-        let completed = state.merge_tool_results(incoming);
+        let completed = state.merge_tool_results(&incoming);
         if let Some(done_id) = &state.agent.done_call_id {
             if let Some(result) = completed.iter().find(|r| done_id == &r.id) {
                 let is_done = result.content.iter().any(|c| match c {
@@ -67,14 +68,12 @@ impl Agent for BasicAgent {
                 }
             }
         }
-        let content = completed.into_iter().map(UserContent::ToolResult);
-        let content = rig::OneOrMany::many(content).unwrap();
-        Ok(vec![Event::Request(Request::Completion { content })])
+        Ok(vec![state.results_passthrough(&incoming)])
     }
 
     fn apply_event(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
         match event {
-            Event::Request(Request::ToolCalls { ref calls }) => {
+            Event::ToolCalls { ref calls } => {
                 for call in calls {
                     if call.function.name == "done" {
                         state.agent.done_call_id = Some(call.id.clone());
@@ -165,13 +164,13 @@ IMPORTANT: After the script runs successfully, you MUST call the 'done' tool to 
         TemplateConfig::default_dir(get_dockerfile_dir_from_src_ws()),
     );
 
-    let runtime = Runtime::<BasicAgent, _>::new(store.clone(), ())
+    let runtime = Runtime::<AgentState<BasicAgent>, _>::new(store.clone(), ())
         .with_handler(llm)
         .with_handler(tool_handler);
 
-    let command = Command::SendRequest(Request::Completion {
+    let command = Command::PutUserMessage {
         content: rig::OneOrMany::one(rig::message::UserContent::text(user_prompt)),
-    });
+    };
     runtime.handler.execute(aggregate_id, command).await?;
 
     // Start the runtime in the background

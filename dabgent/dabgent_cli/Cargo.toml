@@ -26,3 +26,6 @@ sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "json", "chrono
 dagger-sdk = "0.18.16"
 dotenvy = "0.15"
 futures = "0.3"
+
+[dev-dependencies]
+dabgent_integrations = { path = "../dabgent_integrations" }

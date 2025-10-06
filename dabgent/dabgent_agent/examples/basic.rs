@@ -1,4 +1,5 @@
 use dabgent_agent::processor::agent::{Agent, AgentError, AgentState, Command, Event};
+use dabgent_agent::processor::finish::FinishHandler;
 use dabgent_agent::processor::link::Runtime;
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
 use dabgent_agent::processor::tools::{
@@ -23,6 +24,7 @@ You are a python software engineer.
 Workspace is already set up using uv init.
 Use uv package manager if you need to add extra libraries.
 Program will be run using uv run main.py command.
+When you finish the task, call the done tool to signal completion.
 ";
 
 const USER_PROMPT: &str = "minimal script that fetches my ip using some api like ipify.org";
@@ -47,16 +49,29 @@ pub async fn run_worker() -> Result<()> {
             ..Default::default()
         },
     );
-    let tool_handler = ToolHandler::new(
-        tools,
-        SandboxHandle::new(Default::default()),
-        TemplateConfig::default_dir(get_dockerfile_dir_from_src_ws()),
-    );
 
-    let runtime = Runtime::<AgentState<Basic>, _>::new(store, ())
+    let sandbox_handle = SandboxHandle::new(Default::default());
+    let template_config = TemplateConfig::default_dir(get_dockerfile_dir_from_src_ws());
+
+    let tool_handler = ToolHandler::new(tools, sandbox_handle.clone(), template_config.clone());
+
+    let mut runtime = Runtime::<AgentState<Basic>, _>::new(store, ())
         .with_handler(llm)
-        .with_handler(tool_handler)
-        .with_handler(LogHandler);
+        .with_handler(tool_handler);
+
+    // Optionally enable artifact export if EXPORT_PATH is set
+    if let Ok(export_path) = std::env::var("EXPORT_PATH") {
+        let tools_for_finish = toolset(Validator);
+        let finish_handler = FinishHandler::new(
+            sandbox_handle,
+            export_path,
+            tools_for_finish,
+            template_config,
+        );
+        runtime = runtime.with_handler(finish_handler);
+    }
+
+    let runtime = runtime.with_handler(LogHandler);
 
     let command = Command::PutUserMessage {
         content: rig::OneOrMany::one(rig::message::UserContent::text(USER_PROMPT)),
