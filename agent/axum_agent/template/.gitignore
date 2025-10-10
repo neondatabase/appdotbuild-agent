@@ -1,0 +1,5 @@
+target/
+Cargo.lock
+.env.local
+.env.production
+.DS_Store

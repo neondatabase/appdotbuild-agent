@@ -1,0 +1,71 @@
+[package]
+name = "app-build-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework (updated to 0.8 with new route syntax)
+axum = { version = "0.8", features = ["macros"] }
+axum-extra = { version = "0.9", features = ["query"] }
+
+# Database ORM and migrations
+diesel = { version = "2.2", features = ["postgres", "r2d2", "chrono", "uuid", "serde_json"] }
+diesel_migrations = "2.2"
+
+# PostgreSQL client library with bundled libpq (eliminates system dependency)
+pq-sys = { version = "0.6", features = ["bundled"] }
+
+# OpenSSL with vendored feature for static linking
+openssl-sys = { version = "0.9", features = ["vendored"] }
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# HTTP and middleware
+tower = "0.4"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+hyper = { version = "1.0", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Date/time and UUIDs
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Environment variables
+dotenvy = "0.15"
+
+# Configuration management
+clap = { version = "4.0", features = ["derive", "env"] }
+
+# Template engine for HTMX
+askama = { version = "0.12", features = ["with-axum"] }
+askama_axum = "0.4"
+
+# Validation (simple, no complex dependencies)
+validator = { version = "0.18", features = ["derive"] }
+
+# Security (basic auth, no complex features)
+argon2 = "0.5"
+jsonwebtoken = "9.0"
+
+[dev-dependencies]
+# Testing
+axum-test = "15.0"
+tokio-test = "0.4"
+
+# HTTP client for integration tests
+reqwest = { version = "0.12", features = ["json"] }
+
+# Performance testing
+criterion = { version = "0.5", features = ["html_reports"] }

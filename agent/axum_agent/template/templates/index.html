@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Welcome - Axum App{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="text-align: center;">
+        <h1 style="font-size: 3rem; margin-bottom: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+            🚀 Welcome to your Rust App
+        </h1>
+        <p style="font-size: 1.2rem; color: #64748b; margin-bottom: 2rem;">
+            Built with Axum + HTMX + Diesel
+        </p>
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-top: 2rem;">
+            <div style="background: linear-gradient(135deg, #667eea 10%, #764ba2 100%); color: white; padding: 2rem; border-radius: 12px;">
+                <h3 style="margin-bottom: 1rem;">⚡ Axum 0.8</h3>
+                <p>Modern async web framework with compile-time safety</p>
+            </div>
+            <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 2rem; border-radius: 12px;">
+                <h3 style="margin-bottom: 1rem;">🎯 HTMX</h3>
+                <p>Dynamic interactions without complex JavaScript</p>
+            </div>
+            <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 2rem; border-radius: 12px;">
+                <h3 style="margin-bottom: 1rem;">🗄️ Diesel</h3>
+                <p>Type-safe ORM for PostgreSQL with migrations</p>
+            </div>
+            <div style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 2rem; border-radius: 12px;">
+                <h3 style="margin-bottom: 1rem;">🔒 Secure</h3>
+                <p>Built-in authentication & validation patterns</p>
+            </div>
+        </div>
+        
+        <div style="margin-top: 3rem;">
+            <a href="/api/health" class="btn" style="margin-right: 1rem;">Check API Health</a>
+            <a href="https://github.com/tokio-rs/axum" class="btn btn-secondary" target="_blank">Learn More</a>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h2 style="margin-bottom: 1rem;">🛠️ Quick Start</h2>
+    <ol style="line-height: 2;">
+        <li>Create your data models in <code style="background: #f1f5f9; padding: 0.25rem 0.5rem; border-radius: 4px;">src/models.rs</code></li>
+        <li>Add database migrations in <code style="background: #f1f5f9; padding: 0.25rem 0.5rem; border-radius: 4px;">migrations/</code></li>
+        <li>Implement handlers in <code style="background: #f1f5f9; padding: 0.25rem 0.5rem; border-radius: 4px;">src/http/handlers/</code></li>
+        <li>Add routes in <code style="background: #f1f5f9; padding: 0.25rem 0.5rem; border-radius: 4px;">src/http/routes.rs</code></li>
+        <li>Create templates in <code style="background: #f1f5f9; padding: 0.25rem 0.5rem; border-radius: 4px;">templates/</code></li>
+    </ol>
+</div>
+{% endblock %}

@@ -1,0 +1,1 @@
+# Rust agent for Axum + HTMX applications

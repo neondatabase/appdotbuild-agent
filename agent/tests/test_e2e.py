@@ -132,6 +132,7 @@ async def run_e2e(
                     "nicegui_agent": "nicegui_agent/template",
                     "trpc_agent": "trpc_agent/template",
                     "laravel_agent": "laravel_agent/template",
+                    "axum_agent": "axum_agent/template",
                     None: "trpc_agent/template",  # default
                 }
 
