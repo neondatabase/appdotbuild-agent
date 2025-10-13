@@ -1,12 +1,11 @@
 use dabgent_agent::processor::agent::{Agent, AgentError, AgentState, Command, Event};
-use dabgent_agent::processor::finish::FinishHandler;
+// use dabgent_agent::processor::finish::FinishHandler;
 use dabgent_agent::processor::link::Runtime;
 use dabgent_agent::processor::llm::{LLMConfig, LLMHandler};
-use dabgent_agent::processor::tools::{
-    TemplateConfig, ToolHandler, get_dockerfile_dir_from_src_ws,
-};
+use dabgent_agent::processor::sandbox::{self, SandboxProvider, TemplateConfig, toolset};
+use dabgent_agent::processor::tools::get_dockerfile_dir_from_src_ws;
 use dabgent_agent::processor::utils::LogHandler;
-use dabgent_agent::toolbox::{self, basic::toolset};
+use dabgent_agent::tool::ToolHandler;
 use dabgent_mq::Event as MQEvent;
 use dabgent_mq::db::sqlite::SqliteStore;
 use dabgent_mq::listener::PollingQueue;
@@ -53,23 +52,29 @@ pub async fn run_worker() -> Result<()> {
     let sandbox_handle = SandboxHandle::new(Default::default());
     let template_config = TemplateConfig::default_dir(get_dockerfile_dir_from_src_ws());
 
-    let tool_handler = ToolHandler::new(tools, sandbox_handle.clone(), template_config.clone());
+    let tool_handler = ToolHandler::new(
+        SandboxProvider {
+            config: template_config,
+            dagger: sandbox_handle,
+        },
+        tools,
+    );
 
-    let mut runtime = Runtime::<AgentState<Basic>, _>::new(store, ())
+    let runtime = Runtime::<AgentState<Basic>, _>::new(store, ())
         .with_handler(llm)
         .with_handler(tool_handler);
 
     // Optionally enable artifact export if EXPORT_PATH is set
-    if let Ok(export_path) = std::env::var("EXPORT_PATH") {
-        let tools_for_finish = toolset(Validator);
-        let finish_handler = FinishHandler::new(
-            sandbox_handle,
-            export_path,
-            tools_for_finish,
-            template_config,
-        );
-        runtime = runtime.with_handler(finish_handler);
-    }
+    // if let Ok(export_path) = std::env::var("EXPORT_PATH") {
+    //     let tools_for_finish = toolset(Validator);
+    //     let finish_handler = FinishHandler::new(
+    //         sandbox_handle,
+    //         export_path,
+    //         tools_for_finish,
+    //         template_config,
+    //     );
+    //     runtime = runtime.with_handler(finish_handler);
+    // }
 
     let runtime = runtime.with_handler(LogHandler);
 
@@ -145,6 +150,21 @@ impl Agent for Basic {
             _ => state.handle_shared(cmd, services).await,
         }
     }
+
+    fn apply(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
+        state.apply_shared(event.clone());
+        match event {
+            Event::ToolCalls { ref calls } => {
+                for call in calls {
+                    if call.function.name == "done" {
+                        state.agent.done_call_id = Some(call.id.clone());
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 async fn store() -> PollingQueue<SqliteStore> {
@@ -158,7 +178,7 @@ async fn store() -> PollingQueue<SqliteStore> {
 
 pub struct Validator;
 
-impl toolbox::Validator for Validator {
+impl sandbox::Validator for Validator {
     async fn run(&self, sandbox: &mut DaggerSandbox) -> Result<Result<(), String>> {
         sandbox.exec("uv run main.py").await.map(|result| {
             if result.exit_code == 0 {

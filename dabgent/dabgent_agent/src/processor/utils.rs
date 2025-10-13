@@ -21,7 +21,6 @@ where
         _handler: &Handler<AgentState<A>, ES>,
         event: &Envelope<AgentState<A>>,
     ) -> Result<()> {
-        // tracing::info!(agent = A::TYPE, envelope = ?event, "event");
         tracing::info!(agent = A::TYPE, event = event.data.event_type(), data = ?event.data);
         Ok(())
     }

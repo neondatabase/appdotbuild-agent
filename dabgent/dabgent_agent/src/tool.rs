@@ -20,7 +20,7 @@ pub trait Tool: Send + Sync {
     fn definition(&self) -> ToolDefinition;
     fn call(
         &self,
-        ctx: &Self::Context,
+        ctx: &mut Self::Context,
         args: &Self::Args,
     ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send;
     fn parse_args(args: &JsonValue) -> eyre::Result<Self::Args> {
@@ -37,7 +37,7 @@ pub trait Tool: Send + Sync {
 pub trait ToolDyn<T>: Send + Sync {
     fn name(&self) -> String;
     fn definition(&self) -> ToolDefinition;
-    fn call<'a>(&'a self, ctx: &'a T, args: &'a JsonValue) -> BoxFuture<'a, ToolResultDyn>;
+    fn call<'a>(&'a self, ctx: &'a mut T, args: &'a JsonValue) -> BoxFuture<'a, ToolResultDyn>;
 }
 
 impl<T: Tool> ToolDyn<T::Context> for T {
@@ -51,7 +51,7 @@ impl<T: Tool> ToolDyn<T::Context> for T {
 
     fn call<'a>(
         &'a self,
-        ctx: &'a T::Context,
+        ctx: &'a mut T::Context,
         args: &'a JsonValue,
     ) -> BoxFuture<'a, ToolResultDyn> {
         Box::pin(async {
@@ -64,10 +64,16 @@ impl<T: Tool> ToolDyn<T::Context> for T {
 pub trait CtxProvider: Send + Sync {
     type Context: Send + Sync;
 
-    fn context_for(
+    fn get_context(
         &self,
         aggregate_id: &str,
     ) -> impl Future<Output = eyre::Result<Self::Context>> + Send;
+
+    fn put_context(
+        &self,
+        aggregate_id: &str,
+        context: Self::Context,
+    ) -> impl Future<Output = eyre::Result<()>> + Send;
 }
 
 pub struct ToolHandler<T: CtxProvider> {
@@ -93,7 +99,7 @@ where
         event: &Envelope<AgentState<A>>,
     ) -> eyre::Result<()> {
         if let Event::ToolCalls { calls } = &event.data {
-            let ctx = self.provider.context_for(&event.aggregate_id).await?;
+            let mut ctx = self.provider.get_context(&event.aggregate_id).await?;
             let mut results = Vec::new();
             for call in calls.iter() {
                 let name = call.function.name.clone();
@@ -101,7 +107,7 @@ where
                     Some(tool) => tool,
                     None => continue,
                 };
-                let result = tool.call(&ctx, &call.function.arguments).await?;
+                let result = tool.call(&mut ctx, &call.function.arguments).await?;
                 results.push(call.to_result(result));
             }
             if results.is_empty() {
@@ -111,6 +117,7 @@ where
             handler
                 .execute_with_metadata(&event.aggregate_id, command, event.metadata.clone())
                 .await?;
+            self.provider.put_context(&event.aggregate_id, ctx).await?;
         }
         Ok(())
     }

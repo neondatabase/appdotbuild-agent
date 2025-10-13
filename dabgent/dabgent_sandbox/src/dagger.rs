@@ -60,7 +60,10 @@ impl crate::Sandbox for Sandbox {
 
     async fn write_file(&mut self, path: &str, content: &str) -> Result<()> {
         if self.is_restricted(path) {
-            return Err(eyre::eyre!("File '{}' is protected and cannot be modified", path));
+            return Err(eyre::eyre!(
+                "File '{}' is protected and cannot be modified",
+                path
+            ));
         }
         self.ctr = self.ctr.with_new_file(path, content);
         Ok(())
@@ -76,7 +79,10 @@ impl crate::Sandbox for Sandbox {
         // Check for restricted files first
         for (file_path, _) in &files {
             if self.is_restricted(file_path) {
-                return Err(eyre::eyre!("File '{}' is protected and cannot be modified", file_path));
+                return Err(eyre::eyre!(
+                    "File '{}' is protected and cannot be modified",
+                    file_path
+                ));
             }
         }
 
@@ -117,7 +123,10 @@ impl crate::Sandbox for Sandbox {
 
     async fn delete_file(&mut self, path: &str) -> Result<()> {
         if self.is_restricted(path) {
-            return Err(eyre::eyre!("File '{}' is protected and cannot be modified", path));
+            return Err(eyre::eyre!(
+                "File '{}' is protected and cannot be modified",
+                path
+            ));
         }
         self.ctr = self.ctr.without_file(path);
         Ok(())
@@ -144,7 +153,11 @@ impl crate::Sandbox for Sandbox {
         let ctr = self.ctr.clone();
         let client = self.client.clone();
         let restricted_files = self.restricted_files.clone();
-        Ok(Sandbox { ctr, client, restricted_files })
+        Ok(Sandbox {
+            ctr,
+            client,
+            restricted_files,
+        })
     }
 }
 
@@ -301,7 +314,8 @@ mod tests {
             "*.env".to_string(),
             "secrets/**".to_string(),
             "config.yaml".to_string(),
-        ]).unwrap();
+        ])
+        .unwrap();
 
         assert!(is_path_restricted(&matcher, ".env"));
         assert!(is_path_restricted(&matcher, "secrets/key.pem"));
