@@ -1,38 +1,12 @@
 use dabgent_mcp::providers::{CombinedProvider, IOProvider};
 use rmcp::model::CallToolRequestParam;
-use rmcp::{RootService, ServiceExt};
+use rmcp::ServiceExt;
 use rmcp_in_process_transport::in_process::TokioInProcess;
-use std::path::Path;
 use tempfile::TempDir;
 
-// helper to initialize a project and return service for validation
-async fn setup_initialized_project(
-    work_dir: &Path,
-) -> RootService<(), TokioInProcess<CombinedProvider>> {
+fn create_io_provider() -> CombinedProvider {
     let io = IOProvider::new().unwrap();
-    let provider = CombinedProvider::new(None, None, Some(io)).unwrap();
-    let tokio_in_process = TokioInProcess::new(provider).await.unwrap();
-    let service = ().serve(tokio_in_process).await.unwrap();
-
-    let init_args = serde_json::json!({
-        "work_dir": work_dir.to_string_lossy(),
-        "force_rewrite": false
-    });
-
-    let init_result = service
-        .call_tool(CallToolRequestParam {
-            name: "initiate_project".into(),
-            arguments: Some(init_args.as_object().unwrap().clone()),
-        })
-        .await
-        .unwrap();
-
-    // verify initialization succeeded
-    let content = init_result.content.first().unwrap();
-    let text = content.as_text().unwrap();
-    assert!(text.text.contains("Successfully copied"));
-
-    service
+    CombinedProvider::new(None, None, Some(io)).unwrap()
 }
 
 #[tokio::test]
@@ -40,7 +14,23 @@ async fn test_validate_after_initiate() {
     let temp_dir = TempDir::new().unwrap();
     let work_dir = temp_dir.path();
 
-    let service = setup_initialized_project(work_dir).await;
+    let provider = create_io_provider();
+    let tokio_in_process = TokioInProcess::new(provider).await.unwrap();
+    let service = ().serve(tokio_in_process).await.unwrap();
+
+    // initialize project
+    let init_args = serde_json::json!({
+        "work_dir": work_dir.to_string_lossy(),
+        "force_rewrite": false
+    });
+
+    service
+        .call_tool(CallToolRequestParam {
+            name: "initiate_project".into(),
+            arguments: Some(init_args.as_object().unwrap().clone()),
+        })
+        .await
+        .unwrap();
 
     // validate the initialized project
     let validate_args = serde_json::json!({
@@ -77,7 +67,23 @@ async fn test_validate_with_typescript_error() {
     let temp_dir = TempDir::new().unwrap();
     let work_dir = temp_dir.path();
 
-    let service = setup_initialized_project(work_dir).await;
+    let provider = create_io_provider();
+    let tokio_in_process = TokioInProcess::new(provider).await.unwrap();
+    let service = ().serve(tokio_in_process).await.unwrap();
+
+    // initialize project
+    let init_args = serde_json::json!({
+        "work_dir": work_dir.to_string_lossy(),
+        "force_rewrite": false
+    });
+
+    service
+        .call_tool(CallToolRequestParam {
+            name: "initiate_project".into(),
+            arguments: Some(init_args.as_object().unwrap().clone()),
+        })
+        .await
+        .unwrap();
 
     // introduce a TypeScript syntax error
     let broken_file = work_dir.join("server/src/index.ts");

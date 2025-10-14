@@ -11,10 +11,6 @@ path = "src/main.rs"
 name = "client"
 path = "examples/client.rs"
 
-[[example]]
-name = "validate_template"
-path = "examples/validate_template.rs"
-
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "process", "sync"] }
 serde = { version = "1", features = ["derive"] }
