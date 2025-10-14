@@ -235,47 +235,9 @@ async fn run_typescript_validation(
 ) -> Result<(), ValidationDetails> {
     tracing::info!("Starting TypeScript validation...");
 
-    // determine the correct directory - check if client/ exists (for template_trpc)
-    // otherwise assume we're at the root
-    let check_client = sandbox
-        .exec("test -f /app/client/package.json && echo 'client' || echo 'root'")
-        .await
-        .map_err(|e| ValidationDetails {
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: format!("Failed to check directory structure: {}", e),
-        })?;
-
-    let npm_dir = if check_client.stdout.trim() == "client" {
-        "/app/client"
-    } else {
-        "/app"
-    };
-
-    tracing::info!("Using npm directory: {}", npm_dir);
-
-    // install dependencies
-    let install_result = sandbox
-        .exec(&format!("cd {} && npm install", npm_dir))
-        .await
-        .map_err(|e| ValidationDetails {
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: format!("Failed to run npm install: {}", e),
-        })?;
-
-    if install_result.exit_code != 0 {
-        tracing::error!("npm install failed: {:?}", install_result);
-        return Err(ValidationDetails {
-            exit_code: install_result.exit_code,
-            stdout: install_result.stdout,
-            stderr: install_result.stderr,
-        });
-    }
-
-    // run typescript compilation
+    // run build from root (installs all deps and builds)
     let build_result = sandbox
-        .exec(&format!("cd {} && npm run build", npm_dir))
+        .exec("cd /app && npm run build")
         .await
         .map_err(|e| ValidationDetails {
             exit_code: -1,
