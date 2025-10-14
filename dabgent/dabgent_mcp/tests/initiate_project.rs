@@ -1,4 +1,4 @@
-use dabgent_mcp::providers::{CombinedProvider, FilesystemProvider};
+use dabgent_mcp::providers::{CombinedProvider, IOProvider};
 use rmcp::model::CallToolRequestParam;
 use rmcp::ServiceExt;
 use rmcp_in_process_transport::in_process::TokioInProcess;
@@ -28,8 +28,8 @@ async fn test_optimistic() {
     let temp_dir = TempDir::new().unwrap();
     let work_dir = temp_dir.path().join("optimistic_test");
 
-    let filesystem = FilesystemProvider::new().unwrap();
-    let provider = CombinedProvider::new(None, None, Some(filesystem)).unwrap();
+    let io = IOProvider::new().unwrap();
+    let provider = CombinedProvider::new(None, None, Some(io)).unwrap();
     let tokio_in_process = TokioInProcess::new(provider).await.unwrap();
     let service = ().serve(tokio_in_process).await.unwrap();
 
@@ -63,8 +63,8 @@ async fn test_force_rewrite() {
     let temp_dir = TempDir::new().unwrap();
     let work_dir = temp_dir.path().join("force_rewrite_test");
 
-    let filesystem = FilesystemProvider::new().unwrap();
-    let provider = CombinedProvider::new(None, None, Some(filesystem)).unwrap();
+    let io = IOProvider::new().unwrap();
+    let provider = CombinedProvider::new(None, None, Some(io)).unwrap();
     let tokio_in_process = TokioInProcess::new(provider).await.unwrap();
     let service = ().serve(tokio_in_process).await.unwrap();
 
@@ -143,8 +143,8 @@ async fn test_pessimistic_no_write_access() {
         fs::set_permissions(&work_dir, perms).unwrap();
     }
 
-    let filesystem = FilesystemProvider::new().unwrap();
-    let provider = CombinedProvider::new(None, None, Some(filesystem)).unwrap();
+    let io = IOProvider::new().unwrap();
+    let provider = CombinedProvider::new(None, None, Some(io)).unwrap();
     let tokio_in_process = TokioInProcess::new(provider).await.unwrap();
     let service = ().serve(tokio_in_process).await.unwrap();
 

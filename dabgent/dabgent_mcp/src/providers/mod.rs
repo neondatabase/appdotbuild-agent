@@ -1,9 +1,9 @@
 pub mod databricks;
-pub mod filesystem;
+pub mod io;
 pub mod google_sheets;
 
 pub use databricks::DatabricksProvider;
-pub use filesystem::FilesystemProvider;
+pub use io::IOProvider;
 pub use google_sheets::GoogleSheetsProvider;
 
 use eyre::Result;
@@ -19,22 +19,22 @@ use std::sync::Arc;
 pub struct CombinedProvider {
     databricks: Option<Arc<DatabricksProvider>>,
     google_sheets: Option<Arc<GoogleSheetsProvider>>,
-    filesystem: Option<Arc<FilesystemProvider>>,
+    io: Option<Arc<IOProvider>>,
 }
 
 impl CombinedProvider {
     pub fn new(
         databricks: Option<DatabricksProvider>,
         google_sheets: Option<GoogleSheetsProvider>,
-        filesystem: Option<FilesystemProvider>,
+        io: Option<IOProvider>,
     ) -> Result<Self> {
-        if databricks.is_none() && google_sheets.is_none() && filesystem.is_none() {
+        if databricks.is_none() && google_sheets.is_none() && io.is_none() {
             return Err(eyre::eyre!("at least one provider must be available"));
         }
         Ok(Self {
             databricks: databricks.map(Arc::new),
             google_sheets: google_sheets.map(Arc::new),
-            filesystem: filesystem.map(Arc::new),
+            io: io.map(Arc::new),
         })
     }
 }
@@ -48,8 +48,8 @@ impl ServerHandler for CombinedProvider {
         if self.google_sheets.is_some() {
             providers.push("Google Sheets");
         }
-        if self.filesystem.is_some() {
-            providers.push("Filesystem");
+        if self.io.is_some() {
+            providers.push("I/O");
         }
 
         ServerInfo {
@@ -93,8 +93,8 @@ impl ServerHandler for CombinedProvider {
             }
         }
 
-        if let Some(ref filesystem) = self.filesystem {
-            if let Ok(result) = filesystem
+        if let Some(ref io) = self.io {
+            if let Ok(result) = io
                 .call_tool(params.clone(), context.clone())
                 .await
             {
@@ -127,8 +127,8 @@ impl ServerHandler for CombinedProvider {
             }
         }
 
-        if let Some(ref filesystem) = self.filesystem {
-            if let Ok(result) = filesystem.list_tools(params.clone(), context.clone()).await {
+        if let Some(ref io) = self.io {
+            if let Ok(result) = io.list_tools(params.clone(), context.clone()).await {
                 tools.extend(result.tools);
             }
         }

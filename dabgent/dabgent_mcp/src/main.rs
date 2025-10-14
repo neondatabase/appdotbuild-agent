@@ -1,5 +1,5 @@
 use dabgent_mcp::providers::{
-    CombinedProvider, DatabricksProvider, FilesystemProvider, GoogleSheetsProvider,
+    CombinedProvider, DatabricksProvider, IOProvider, GoogleSheetsProvider,
 };
 use eyre::Result;
 use rmcp::transport::stdio;
@@ -25,15 +25,15 @@ async fn main() -> Result<()> {
     // initialize all available providers
     let databricks = DatabricksProvider::new().ok();
     let google_sheets = GoogleSheetsProvider::new().await.ok();
-    let filesystem = FilesystemProvider::new().ok();
+    let io = IOProvider::new().ok();
 
     // create combined provider with all available integrations
-    let provider = CombinedProvider::new(databricks, google_sheets, filesystem).map_err(|_| {
+    let provider = CombinedProvider::new(databricks, google_sheets, io).map_err(|_| {
         eyre::eyre!(
             "No integrations available. Configure at least one:\n\
              - Databricks: Set DATABRICKS_HOST and DATABRICKS_TOKEN\n\
              - Google Sheets: Place credentials at ~/.config/gspread/credentials.json\n\
-             - Filesystem: Always available"
+             - I/O: Always available"
         )
     })?;
 

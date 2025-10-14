@@ -5,18 +5,18 @@
 //! - Basic MCP protocol operations work (list_tools, call_tool)
 //! - At least one provider is available
 
-use dabgent_mcp::providers::{CombinedProvider, FilesystemProvider};
+use dabgent_mcp::providers::{CombinedProvider, IOProvider};
 use eyre::Result;
 use rmcp::ServiceExt;
 use rmcp_in_process_transport::in_process::TokioInProcess;
 
 #[tokio::test]
 async fn smoke_test_mcp_server() -> Result<()> {
-    // use FilesystemProvider as it requires no credentials
-    let filesystem = FilesystemProvider::new()?;
+    // use IOProvider as it requires no credentials
+    let io = IOProvider::new()?;
 
     // create provider (no need to try other providers for smoke test)
-    let provider = CombinedProvider::new(None, None, Some(filesystem))?;
+    let provider = CombinedProvider::new(None, None, Some(io))?;
 
     // create in-process service
     let tokio_in_process = TokioInProcess::new(provider).await?;
