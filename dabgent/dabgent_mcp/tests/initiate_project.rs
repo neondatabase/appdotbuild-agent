@@ -10,13 +10,21 @@ use tempfile::TempDir;
 fn verify_template_files(work_dir: &Path) {
     assert!(work_dir.exists(), "work_dir should exist");
 
-    // verify Dockerfile exists in root
-    let dockerfile = work_dir.join("Dockerfile");
-    assert!(dockerfile.exists(), "Dockerfile should exist in work_dir root");
-
     // verify .gitignore exists in root
     let gitignore = work_dir.join(".gitignore");
     assert!(gitignore.exists(), ".gitignore should exist in work_dir root");
+
+    // verify build.sh exists in root
+    let build_sh = work_dir.join("build.sh");
+    assert!(build_sh.exists(), "build.sh should exist in work_dir root");
+
+    // verify client directory exists
+    let client_dir = work_dir.join("client");
+    assert!(client_dir.exists(), "client directory should exist");
+
+    // verify server directory exists
+    let server_dir = work_dir.join("server");
+    assert!(server_dir.exists(), "server directory should exist");
 
     // verify we have some files
     let has_files = work_dir.read_dir().unwrap().count() > 0;
@@ -82,13 +90,13 @@ async fn test_force_rewrite() {
         .await
         .unwrap();
 
-    // read original Dockerfile content
-    let dockerfile_path = work_dir.join("Dockerfile");
-    let original_dockerfile = fs::read_to_string(&dockerfile_path).unwrap();
+    // read original .gitignore content
+    let gitignore_path = work_dir.join(".gitignore");
+    let original_gitignore = fs::read_to_string(&gitignore_path).unwrap();
 
-    // mess with files: add extra file and modify Dockerfile
+    // mess with files: add extra file and modify .gitignore
     fs::write(work_dir.join("extra_file.txt"), "should be deleted").unwrap();
-    fs::write(&dockerfile_path, "modified content").unwrap();
+    fs::write(&gitignore_path, "modified content").unwrap();
     assert!(work_dir.join("extra_file.txt").exists());
 
     // force rewrite
@@ -115,11 +123,11 @@ async fn test_force_rewrite() {
         "extra_file.txt should be removed by force_rewrite"
     );
 
-    // verify Dockerfile is restored to original
-    let restored_dockerfile = fs::read_to_string(&dockerfile_path).unwrap();
+    // verify .gitignore is restored to original
+    let restored_gitignore = fs::read_to_string(&gitignore_path).unwrap();
     assert_eq!(
-        original_dockerfile, restored_dockerfile,
-        "Dockerfile should be restored to original content"
+        original_gitignore, restored_gitignore,
+        ".gitignore should be restored to original content"
     );
 
     verify_template_files(&work_dir);
