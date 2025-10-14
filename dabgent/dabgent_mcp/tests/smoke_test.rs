@@ -34,6 +34,18 @@ async fn smoke_test_mcp_server() -> Result<()> {
     let tools_response = service.list_tools(Default::default()).await?;
     assert!(!tools_response.tools.is_empty(), "Should have at least one tool");
 
+    // verify initiate_project tool is exposed
+    assert!(
+        tools_response.tools.iter().any(|t| t.name == "initiate_project"),
+        "initiate_project tool should be exposed"
+    );
+
+    // verify validate_project tool is exposed
+    assert!(
+        tools_response.tools.iter().any(|t| t.name == "validate_project"),
+        "validate_project tool should be exposed"
+    );
+
     // cleanup
     service.cancel().await?;
 

@@ -1,7 +1,4 @@
-use dabgent_mcp::providers::{CombinedProvider, IOProvider};
-use rmcp::model::CallToolRequestParam;
-use rmcp::ServiceExt;
-use rmcp_in_process_transport::in_process::TokioInProcess;
+use dabgent_mcp::providers::IOProvider;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -31,64 +28,29 @@ fn verify_template_files(work_dir: &Path) {
     assert!(has_files, "work_dir should contain files from template");
 }
 
-#[tokio::test]
-async fn test_optimistic() {
+#[test]
+fn test_optimistic() {
     let temp_dir = TempDir::new().unwrap();
     let work_dir = temp_dir.path().join("optimistic_test");
 
-    let io = IOProvider::new().unwrap();
-    let provider = CombinedProvider::new(None, None, Some(io)).unwrap();
-    let tokio_in_process = TokioInProcess::new(provider).await.unwrap();
-    let service = ().serve(tokio_in_process).await.unwrap();
+    let result = IOProvider::initiate_project_impl(&work_dir, false).unwrap();
 
-    let args = serde_json::json!({
-        "work_dir": work_dir.to_string_lossy(),
-        "force_rewrite": false
-    });
-
-    let result = service
-        .call_tool(CallToolRequestParam {
-            name: "initiate_project".into(),
-            arguments: Some(args.as_object().unwrap().clone()),
-        })
-        .await
-        .unwrap();
-
-    // verify success message
-    let content = result.content.first().unwrap();
-    let text = content.as_text().unwrap();
-    assert!(text.text.contains("Successfully copied"));
-    assert!(text.text.contains("from default template"));
+    // verify result
+    assert!(result.files_copied > 0);
+    assert_eq!(result.work_dir, work_dir.display().to_string());
+    assert_eq!(result.template_source, "default template");
 
     // verify files including Dockerfile and .gitignore
     verify_template_files(&work_dir);
-
-    service.cancel().await.unwrap();
 }
 
-#[tokio::test]
-async fn test_force_rewrite() {
+#[test]
+fn test_force_rewrite() {
     let temp_dir = TempDir::new().unwrap();
     let work_dir = temp_dir.path().join("force_rewrite_test");
 
-    let io = IOProvider::new().unwrap();
-    let provider = CombinedProvider::new(None, None, Some(io)).unwrap();
-    let tokio_in_process = TokioInProcess::new(provider).await.unwrap();
-    let service = ().serve(tokio_in_process).await.unwrap();
-
-    let args = serde_json::json!({
-        "work_dir": work_dir.to_string_lossy(),
-        "force_rewrite": false
-    });
-
     // initial copy
-    service
-        .call_tool(CallToolRequestParam {
-            name: "initiate_project".into(),
-            arguments: Some(args.as_object().unwrap().clone()),
-        })
-        .await
-        .unwrap();
+    IOProvider::initiate_project_impl(&work_dir, false).unwrap();
 
     // read original .gitignore content
     let gitignore_path = work_dir.join(".gitignore");
@@ -100,22 +62,10 @@ async fn test_force_rewrite() {
     assert!(work_dir.join("extra_file.txt").exists());
 
     // force rewrite
-    let args = serde_json::json!({
-        "work_dir": work_dir.to_string_lossy(),
-        "force_rewrite": true
-    });
+    let result = IOProvider::initiate_project_impl(&work_dir, true).unwrap();
 
-    let result = service
-        .call_tool(CallToolRequestParam {
-            name: "initiate_project".into(),
-            arguments: Some(args.as_object().unwrap().clone()),
-        })
-        .await
-        .unwrap();
-
-    let content = result.content.first().unwrap();
-    let text = content.as_text().unwrap();
-    assert!(text.text.contains("Successfully copied"));
+    // verify result
+    assert!(result.files_copied > 0);
 
     // verify extra file was removed
     assert!(
@@ -131,12 +81,10 @@ async fn test_force_rewrite() {
     );
 
     verify_template_files(&work_dir);
-
-    service.cancel().await.unwrap();
 }
 
-#[tokio::test]
-async fn test_pessimistic_no_write_access() {
+#[test]
+fn test_pessimistic_no_write_access() {
     let temp_dir = TempDir::new().unwrap();
     let work_dir = temp_dir.path().join("readonly_test");
 
@@ -151,27 +99,10 @@ async fn test_pessimistic_no_write_access() {
         fs::set_permissions(&work_dir, perms).unwrap();
     }
 
-    let io = IOProvider::new().unwrap();
-    let provider = CombinedProvider::new(None, None, Some(io)).unwrap();
-    let tokio_in_process = TokioInProcess::new(provider).await.unwrap();
-    let service = ().serve(tokio_in_process).await.unwrap();
-
-    let args = serde_json::json!({
-        "work_dir": work_dir.to_string_lossy(),
-        "force_rewrite": false
-    });
-
-    let result = service
-        .call_tool(CallToolRequestParam {
-            name: "initiate_project".into(),
-            arguments: Some(args.as_object().unwrap().clone()),
-        })
-        .await;
+    let result = IOProvider::initiate_project_impl(&work_dir, false);
 
     // should fail with permission error
     assert!(result.is_err(), "should fail due to permission denied");
-
-    service.cancel().await.unwrap();
 
     // cleanup: restore permissions before dropping TempDir
     #[cfg(unix)]

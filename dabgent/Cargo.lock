@@ -748,7 +748,6 @@ dependencies = [
  "dabgent_agent",
  "dabgent_integrations",
  "dabgent_sandbox",
- "dagger-sdk",
  "eyre",
  "rmcp",
  "rmcp-in-process-transport",

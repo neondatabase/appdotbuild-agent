@@ -22,7 +22,6 @@ thiserror = "2.0"
 rmcp = { version = "0.6", features = ["server", "client", "transport-io", "transport-child-process"] }
 # update rmcp when rmcp-in-process-transport will support newer rmcp version
 schemars = "1"
-dagger-sdk = "0.18.16"
 
 # internal dependencies
 dabgent_integrations = { path = "../dabgent_integrations" }

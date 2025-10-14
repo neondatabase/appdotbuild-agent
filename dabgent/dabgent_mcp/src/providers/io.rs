@@ -89,6 +89,42 @@ impl IOProvider {
         })
     }
 
+    /// Core logic for initiating a project from template
+    pub fn initiate_project_impl(
+        work_dir: &Path,
+        force_rewrite: bool,
+    ) -> Result<InitiateProjectResult> {
+        // use hardcoded template path
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let template_path = manifest_dir.join(DEFAULT_TEMPLATE_PATH);
+
+        // validate template directory exists
+        if !template_path.exists() {
+            eyre::bail!("default template directory does not exist: {}", template_path.display());
+        }
+
+        if !template_path.is_dir() {
+            eyre::bail!("default template path is not a directory: {}", template_path.display());
+        }
+
+        // handle force rewrite
+        if force_rewrite && work_dir.exists() {
+            std::fs::remove_dir_all(work_dir)?;
+        }
+
+        // create work directory if it doesn't exist
+        std::fs::create_dir_all(work_dir)?;
+
+        // collect and copy files using git ls-files
+        let files = collect_template_files(&template_path, work_dir)?;
+
+        Ok(InitiateProjectResult {
+            files_copied: files.len(),
+            work_dir: work_dir.display().to_string(),
+            template_source: "default template".to_string(),
+        })
+    }
+
     #[tool(
         name = "initiate_project",
         description = "Initialize a project by copying template files from the default TypeScript (tRPC + React) template to a work directory. Supports force rewrite to wipe and recreate the directory."
@@ -97,83 +133,29 @@ impl IOProvider {
         &self,
         Parameters(args): Parameters<InitiateProjectArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        // use hardcoded template path
-        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let template_path = manifest_dir.join(DEFAULT_TEMPLATE_PATH);
         let work_path = PathBuf::from(&args.work_dir);
 
-        // validate template directory exists
-        if !template_path.exists() {
-            return Err(ErrorData::internal_error(
-                format!("default template directory does not exist: {}", template_path.display()),
-                None,
-            ));
-        }
-
-        if !template_path.is_dir() {
-            return Err(ErrorData::internal_error(
-                format!("default template path is not a directory: {}", template_path.display()),
-                None,
-            ));
-        }
-
-        // handle force rewrite
-        if args.force_rewrite && work_path.exists() {
-            std::fs::remove_dir_all(&work_path).map_err(|e| {
-                ErrorData::internal_error(
-                    format!("failed to remove work directory: {}", e),
-                    None,
-                )
-            })?;
-        }
-
-        // create work directory if it doesn't exist
-        std::fs::create_dir_all(&work_path).map_err(|e| {
-            ErrorData::internal_error(format!("failed to create work directory: {}", e), None)
+        let result = Self::initiate_project_impl(&work_path, args.force_rewrite).map_err(|e| {
+            ErrorData::internal_error(format!("failed to initiate project: {}", e), None)
         })?;
-
-        // collect and copy files using git ls-files
-        let files = collect_template_files(&template_path, &work_path).map_err(|e| {
-            ErrorData::internal_error(format!("failed to collect template files: {}", e), None)
-        })?;
-
-        let result = InitiateProjectResult {
-            files_copied: files.len(),
-            work_dir: args.work_dir,
-            template_source: "default template".to_string(),
-        };
 
         Ok(CallToolResult::success(vec![Content::text(result.display())]))
     }
 
-    #[tool(
-        name = "validate_project",
-        description = "Validate a project by copying files to a sandbox and running TypeScript compilation check. Returns validation result with success status and details."
-    )]
-    pub async fn validate_project(
-        &self,
-        Parameters(args): Parameters<ValidateProjectArgs>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let work_path = PathBuf::from(&args.work_dir);
-
+    /// Core logic for validating a project
+    pub async fn validate_project_impl(work_dir: &Path) -> Result<ValidateProjectResult> {
         // validate work directory exists
-        if !work_path.exists() {
-            return Err(ErrorData::invalid_params(
-                format!("work directory does not exist: {}", work_path.display()),
-                None,
-            ));
+        if !work_dir.exists() {
+            eyre::bail!("work directory does not exist: {}", work_dir.display());
         }
 
-        if !work_path.is_dir() {
-            return Err(ErrorData::invalid_params(
-                format!("work path is not a directory: {}", work_path.display()),
-                None,
-            ));
+        if !work_dir.is_dir() {
+            eyre::bail!("work path is not a directory: {}", work_dir.display());
         }
 
         // use channel to pass validation result out of dagger connection callback
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let work_dir = args.work_dir.clone();
+        let work_dir_str = work_dir.display().to_string();
 
         // create connection and run validation
         let opts = ConnectOpts::default()
@@ -189,7 +171,7 @@ impl IOProvider {
                     .with_exec(vec!["mkdir", "-p", "/app"]);
 
                 // copy work directory to container
-                let host_dir = client.host().directory(work_dir);
+                let host_dir = client.host().directory(work_dir_str);
                 let container = container.with_directory("/app", host_dir);
 
                 let mut sandbox = DaggerSandbox::from_container(container, client);
@@ -203,15 +185,12 @@ impl IOProvider {
             .await;
 
         if let Err(e) = connect_result {
-            return Err(ErrorData::internal_error(
-                format!("failed to connect to dagger: {}", e),
-                None,
-            ));
+            eyre::bail!("failed to connect to dagger: {}", e);
         }
 
-        let validation_result = rx.await.map_err(|_| {
-            ErrorData::internal_error("validation task was cancelled".to_string(), None)
-        })?;
+        let validation_result = rx
+            .await
+            .map_err(|_| eyre::eyre!("validation task was cancelled"))?;
 
         let result = match validation_result {
             Ok(_) => ValidateProjectResult {
@@ -225,6 +204,23 @@ impl IOProvider {
                 details: Some(details),
             },
         };
+
+        Ok(result)
+    }
+
+    #[tool(
+        name = "validate_project",
+        description = "Validate a project by copying files to a sandbox and running TypeScript compilation check. Returns validation result with success status and details."
+    )]
+    pub async fn validate_project(
+        &self,
+        Parameters(args): Parameters<ValidateProjectArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let work_path = PathBuf::from(&args.work_dir);
+
+        let result = Self::validate_project_impl(&work_path).await.map_err(|e| {
+            ErrorData::internal_error(format!("failed to validate project: {}", e), None)
+        })?;
 
         Ok(CallToolResult::success(vec![Content::text(result.display())]))
     }
