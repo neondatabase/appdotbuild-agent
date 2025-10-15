@@ -146,6 +146,12 @@ impl crate::Sandbox for Sandbox {
         dir.export(host_path).await.map_err(Into::into)
     }
 
+    async fn refresh_from_host(&mut self, host_path: &str, container_path: &str) -> Result<()> {
+        let host_dir = self.client.host().directory(host_path.to_string());
+        self.ctr = self.ctr.with_directory(container_path, host_dir);
+        Ok(())
+    }
+
     async fn fork(&self) -> Result<Self>
     where
         Self: Sized,

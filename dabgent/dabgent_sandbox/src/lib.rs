@@ -32,6 +32,17 @@ pub trait Sandbox {
         host_path: &str,
     ) -> impl Future<Output = Result<String>> + Send;
 
+    fn refresh_from_host(
+        &mut self,
+        host_path: &str,
+        container_path: &str,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async move {
+            let _ = (host_path, container_path);
+            Err(eyre::eyre!("refresh_from_host not supported"))
+        }
+    }
+
     fn fork(&self) -> impl Future<Output = Result<Self>> + Send
     where
         Self: Sized,
@@ -62,6 +73,11 @@ pub trait SandboxDyn: Send + Sync {
         container_path: &'a str,
         host_path: &'a str,
     ) -> FutureBoxed<'a, Result<String>>;
+    fn refresh_from_host<'a>(
+        &'a mut self,
+        host_path: &'a str,
+        container_path: &'a str,
+    ) -> FutureBoxed<'a, Result<()>>;
     fn fork(&self) -> FutureBoxed<'_, Result<Box<dyn SandboxDyn>>>;
 }
 
@@ -107,6 +123,14 @@ impl<T: Sandbox + Send + Sync + 'static> SandboxDyn for T {
         host_path: &'a str,
     ) -> FutureBoxed<'a, Result<String>> {
         Box::pin(self.export_directory(container_path, host_path))
+    }
+
+    fn refresh_from_host<'a>(
+        &'a mut self,
+        host_path: &'a str,
+        container_path: &'a str,
+    ) -> FutureBoxed<'a, Result<()>> {
+        Box::pin(self.refresh_from_host(host_path, container_path))
     }
 
     fn fork(&self) -> FutureBoxed<'_, Result<Box<dyn SandboxDyn>>> {

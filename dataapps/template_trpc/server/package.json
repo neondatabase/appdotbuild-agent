@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "db:push": "drizzle-kit push --force",
     "db:push-ci": "yes | npm run db:push",
-    "lint": "eslint --cache src/index.ts"
+    "lint": "eslint --cache src/index.ts",
+    "test": "node --test --import tsx src/healthcheck.test.ts"
   },
   "dependencies": {
     "@trpc/server": "^11.6.0",

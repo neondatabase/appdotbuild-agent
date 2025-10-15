@@ -4,6 +4,7 @@
   "scripts": {
     "install:all": "cd server && npm install && cd ../client && npm install",
     "build": "npm run install:all && cd client && npm run build && cd .. && rm -rf server/dist && mv client/dist server/public",
-    "start": "cd server && npm start"
+    "start": "cd server && npm start",
+    "test": "cd server && npm test"
   }
 }

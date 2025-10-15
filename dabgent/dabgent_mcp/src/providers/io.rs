@@ -171,13 +171,13 @@ impl IOProvider {
                     .with_exec(vec!["mkdir", "-p", "/app"]);
 
                 // copy work directory to container
-                let host_dir = client.host().directory(work_dir_str);
+                let host_dir = client.host().directory(work_dir_str.clone());
                 let container = container.with_directory("/app", host_dir);
 
                 let mut sandbox = DaggerSandbox::from_container(container, client);
 
                 // run validation checks
-                let validation_result = run_typescript_validation(&mut sandbox).await;
+                let validation_result = run_typescript_validation(&mut sandbox, work_dir_str).await;
 
                 let _ = tx.send(validation_result);
                 Ok(())
@@ -195,12 +195,12 @@ impl IOProvider {
         let result = match validation_result {
             Ok(_) => ValidateProjectResult {
                 success: true,
-                message: "TypeScript compilation passed".to_string(),
+                message: "All validations passed (build + tests)".to_string(),
                 details: None,
             },
             Err(details) => ValidateProjectResult {
                 success: false,
-                message: "TypeScript compilation failed".to_string(),
+                message: "Validation failed".to_string(),
                 details: Some(details),
             },
         };
@@ -228,8 +228,19 @@ impl IOProvider {
 
 async fn run_typescript_validation(
     sandbox: &mut DaggerSandbox,
+    work_dir: String,
 ) -> Result<(), ValidationDetails> {
-    tracing::info!("Starting TypeScript validation...");
+    tracing::info!("Starting validation (build + tests)...");
+
+    // re-copy fresh files from host before validation
+    sandbox
+        .refresh_from_host(&work_dir, "/app")
+        .await
+        .map_err(|e| ValidationDetails {
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: format!("Failed to refresh from host: {}", e),
+        })?;
 
     // run build from root (installs all deps and builds)
     let build_result = sandbox
@@ -250,7 +261,28 @@ async fn run_typescript_validation(
         });
     }
 
-    tracing::info!("TypeScript validation passed");
+    tracing::info!("Build passed, running tests...");
+
+    // run tests from root
+    let test_result = sandbox
+        .exec("cd /app && npm test")
+        .await
+        .map_err(|e| ValidationDetails {
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: format!("Failed to run npm test: {}", e),
+        })?;
+
+    if test_result.exit_code != 0 {
+        tracing::error!("npm test failed: {:?}", test_result);
+        return Err(ValidationDetails {
+            exit_code: test_result.exit_code,
+            stdout: test_result.stdout,
+            stderr: test_result.stderr,
+        });
+    }
+
+    tracing::info!("Validation passed (build + tests)");
     Ok(())
 }
 
