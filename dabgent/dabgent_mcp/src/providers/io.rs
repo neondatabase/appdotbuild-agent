@@ -12,11 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Template {
-    /// TypeScript template with tRPC backend and React frontend. Full-stack type-safe API with client-server communication.
-    #[serde(rename = "trpc")]
+enum Template {
     Trpc,
 }
 
@@ -43,12 +39,6 @@ impl Template {
     }
 }
 
-impl Default for Template {
-    fn default() -> Self {
-        Template::Trpc
-    }
-}
-
 #[derive(Clone)]
 pub struct IOProvider {
     tool_router: ToolRouter<Self>,
@@ -58,9 +48,6 @@ pub struct IOProvider {
 pub struct InitiateProjectArgs {
     /// Path to the work directory to copy to
     pub work_dir: String,
-    /// Template to use for project initialization
-    #[serde(default)]
-    pub template: Template,
     /// If true, wipe the work directory before copying
     #[serde(default)]
     pub force_rewrite: bool,
@@ -129,7 +116,7 @@ impl IOProvider {
     }
 
     /// Core logic for initiating a project from template
-    pub fn initiate_project_impl(
+    fn initiate_project_impl(
         work_dir: &Path,
         template: Template,
         force_rewrite: bool,
@@ -175,7 +162,7 @@ impl IOProvider {
     ) -> Result<CallToolResult, ErrorData> {
         let work_path = PathBuf::from(&args.work_dir);
 
-        let result = Self::initiate_project_impl(&work_path, args.template, args.force_rewrite).map_err(|e| {
+        let result = Self::initiate_project_impl(&work_path, Template::Trpc, args.force_rewrite).map_err(|e| {
             ErrorData::internal_error(format!("failed to initiate project: {}", e), None)
         })?;
 
