@@ -3,7 +3,7 @@ pub mod io;
 pub mod google_sheets;
 
 pub use databricks::DatabricksProvider;
-pub use io::IOProvider;
+pub use io::{IOProvider, Template};
 pub use google_sheets::GoogleSheetsProvider;
 
 use eyre::Result;

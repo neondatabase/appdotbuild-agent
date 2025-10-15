@@ -12,7 +12,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-enum Template {
+/// Internal template enum - not exposed via MCP protocol.
+/// Only public for testing purposes.
+#[doc(hidden)]
+pub enum Template {
     Trpc,
 }
 
@@ -115,8 +118,10 @@ impl IOProvider {
         })
     }
 
-    /// Core logic for initiating a project from template
-    fn initiate_project_impl(
+    /// Core logic for initiating a project from template.
+    /// Internal implementation - only public for testing purposes.
+    #[doc(hidden)]
+    pub fn initiate_project_impl(
         work_dir: &Path,
         template: Template,
         force_rewrite: bool,

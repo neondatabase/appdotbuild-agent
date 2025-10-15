@@ -1,4 +1,4 @@
-use dabgent_mcp::providers::IOProvider;
+use dabgent_mcp::providers::{IOProvider, Template};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -33,12 +33,12 @@ fn test_optimistic() {
     let temp_dir = TempDir::new().unwrap();
     let work_dir = temp_dir.path().join("optimistic_test");
 
-    let result = IOProvider::initiate_project_impl(&work_dir, false).unwrap();
+    let result = IOProvider::initiate_project_impl(&work_dir, Template::Trpc, false).unwrap();
 
     // verify result
     assert!(result.files_copied > 0);
     assert_eq!(result.work_dir, work_dir.display().to_string());
-    assert_eq!(result.template_source, "default template");
+    assert_eq!(result.template_name, "tRPC TypeScript");
 
     // verify files including Dockerfile and .gitignore
     verify_template_files(&work_dir);
@@ -50,7 +50,7 @@ fn test_force_rewrite() {
     let work_dir = temp_dir.path().join("force_rewrite_test");
 
     // initial copy
-    IOProvider::initiate_project_impl(&work_dir, false).unwrap();
+    IOProvider::initiate_project_impl(&work_dir, Template::Trpc, false).unwrap();
 
     // read original .gitignore content
     let gitignore_path = work_dir.join(".gitignore");
@@ -62,7 +62,7 @@ fn test_force_rewrite() {
     assert!(work_dir.join("extra_file.txt").exists());
 
     // force rewrite
-    let result = IOProvider::initiate_project_impl(&work_dir, true).unwrap();
+    let result = IOProvider::initiate_project_impl(&work_dir, Template::Trpc, true).unwrap();
 
     // verify result
     assert!(result.files_copied > 0);
@@ -99,7 +99,7 @@ fn test_pessimistic_no_write_access() {
         fs::set_permissions(&work_dir, perms).unwrap();
     }
 
-    let result = IOProvider::initiate_project_impl(&work_dir, false);
+    let result = IOProvider::initiate_project_impl(&work_dir, Template::Trpc, false);
 
     // should fail with permission error
     assert!(result.is_err(), "should fail due to permission denied");
