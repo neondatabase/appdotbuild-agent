@@ -12,7 +12,42 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-pub const DEFAULT_TEMPLATE_PATH: &str = "../../dataapps/template_trpc";
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Template {
+    /// TypeScript template with tRPC backend and React frontend. Full-stack type-safe API with client-server communication.
+    #[serde(rename = "trpc")]
+    Trpc,
+}
+
+impl Template {
+    fn path(&self) -> &'static str {
+        match self {
+            Template::Trpc => "../../dataapps/template_trpc",
+        }
+    }
+
+    fn description(&self) -> &'static str {
+        match self {
+            Template::Trpc => "TypeScript full-stack template with tRPC for type-safe API communication between React frontend and Node.js backend. Use this when building type-safe TypeScript applications with the following structure:\n\
+            - server/: Node.js backend with tRPC API\n\
+            - client/: React frontend with tRPC client\n\
+            Use the validate tool to run all the necessary checks (build + tests).",
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Template::Trpc => "tRPC TypeScript",
+        }
+    }
+}
+
+impl Default for Template {
+    fn default() -> Self {
+        Template::Trpc
+    }
+}
 
 #[derive(Clone)]
 pub struct IOProvider {
@@ -23,6 +58,9 @@ pub struct IOProvider {
 pub struct InitiateProjectArgs {
     /// Path to the work directory to copy to
     pub work_dir: String,
+    /// Template to use for project initialization
+    #[serde(default)]
+    pub template: Template,
     /// If true, wipe the work directory before copying
     #[serde(default)]
     pub force_rewrite: bool,
@@ -32,14 +70,15 @@ pub struct InitiateProjectArgs {
 pub struct InitiateProjectResult {
     pub files_copied: usize,
     pub work_dir: String,
-    pub template_source: String,
+    pub template_name: String,
+    pub template_description: String,
 }
 
 impl ToolResultDisplay for InitiateProjectResult {
     fn display(&self) -> String {
         format!(
-            "Successfully copied {} files from default template to {}",
-            self.files_copied, self.work_dir
+            "Successfully copied {} files from {} template to {}\n\nTemplate: {}\n\n{}",
+            self.files_copied, self.template_name, self.work_dir, self.template_name, self.template_description
         )
     }
 }
@@ -92,19 +131,19 @@ impl IOProvider {
     /// Core logic for initiating a project from template
     pub fn initiate_project_impl(
         work_dir: &Path,
+        template: Template,
         force_rewrite: bool,
     ) -> Result<InitiateProjectResult> {
-        // use hardcoded template path
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let template_path = manifest_dir.join(DEFAULT_TEMPLATE_PATH);
+        let template_path = manifest_dir.join(template.path());
 
         // validate template directory exists
         if !template_path.exists() {
-            eyre::bail!("default template directory does not exist: {}", template_path.display());
+            eyre::bail!("template directory does not exist: {}", template_path.display());
         }
 
         if !template_path.is_dir() {
-            eyre::bail!("default template path is not a directory: {}", template_path.display());
+            eyre::bail!("template path is not a directory: {}", template_path.display());
         }
 
         // handle force rewrite
@@ -121,7 +160,8 @@ impl IOProvider {
         Ok(InitiateProjectResult {
             files_copied: files.len(),
             work_dir: work_dir.display().to_string(),
-            template_source: "default template".to_string(),
+            template_name: template.name().to_string(),
+            template_description: template.description().to_string(),
         })
     }
 
@@ -135,7 +175,7 @@ impl IOProvider {
     ) -> Result<CallToolResult, ErrorData> {
         let work_path = PathBuf::from(&args.work_dir);
 
-        let result = Self::initiate_project_impl(&work_path, args.force_rewrite).map_err(|e| {
+        let result = Self::initiate_project_impl(&work_path, args.template, args.force_rewrite).map_err(|e| {
             ErrorData::internal_error(format!("failed to initiate project: {}", e), None)
         })?;
 
