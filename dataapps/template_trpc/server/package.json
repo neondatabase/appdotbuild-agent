@@ -2,7 +2,7 @@
   "name": "server",
   "private": true,
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.json",
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "db:push": "drizzle-kit push --force",
