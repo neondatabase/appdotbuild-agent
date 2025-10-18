@@ -3,16 +3,22 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy all package.json files
+# Copy all package files (may not have lock files if agent modified deps)
 COPY client/package*.json ./client/
 COPY server/package*.json ./server/
 
 # Install all dependencies with BuildKit cache mount
+# Note: Using npm install (not npm ci) in build stage because:
+# - Agent may add new dependencies to package.json during development
+# - package-lock.json may be missing or out of sync
+# - npm install will generate/update the lock file
+# - Using --legacy-peer-deps to allow peer dependency mismatches (agent may add incompatible packages)
+# The generated lock file is then copied to production stage for reproducible builds
 RUN --mount=type=cache,target=/root/.npm \
-    cd client && npm ci
+    cd client && npm install --legacy-peer-deps
 
 RUN --mount=type=cache,target=/root/.npm \
-    cd server && npm ci
+    cd server && npm install --legacy-peer-deps
 
 # Copy server source (needed for client build due to tRPC types)
 COPY server/ ./server/
@@ -29,10 +35,11 @@ RUN apk add --no-cache curl
 
 WORKDIR /app
 
-# Install production dependencies only with BuildKit cache mount
-COPY server/package*.json ./server/
+# Copy package files including the lock file generated in build stage
+# This ensures reproducible production builds with exact dependency versions
+COPY --from=builder /app/server/package*.json ./server/
 RUN --mount=type=cache,target=/root/.npm \
-    cd server && npm ci --omit=dev
+    cd server && npm install --omit=dev --legacy-peer-deps
 
 # Copy server source
 COPY server/ ./server/

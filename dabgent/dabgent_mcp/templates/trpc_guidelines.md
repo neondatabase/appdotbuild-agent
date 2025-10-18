@@ -60,3 +60,46 @@ File structure:
 - Handle nullable fields: `value={field || ''}` for inputs
 - Type all callbacks explicitly: `onChange={(e: React.ChangeEvent<HTMLInputElement>) => ...}`
 - Use proper relative imports for server types: `import type { Product } from '../../server/src/schema'`
+
+## Data Visualization with Recharts
+
+The template includes Recharts for data visualization. Use Databricks brand colors for chart elements: `['#40d1f5', '#4462c9', '#EB1600', '#0B2026', '#4A4A4A', '#353a4a']` (apply via `stroke` or `fill` props).
+
+### Basic Chart Pattern:
+```tsx
+import { useState, useEffect } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
+import { trpc } from './utils/trpc';
+
+function MyDashboard() {
+  const [data, setData] = useState<{ name: string; value: number }[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // fetch from Databricks via tRPC
+    trpc.getMetrics.query()
+      .then(setData)
+      .catch((err) => setError(err.message));
+  }, []);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>My Metrics</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Line type="monotone" dataKey="value" stroke="hsl(var(--primary))" />
+          </LineChart>
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
+  );
+}
+```

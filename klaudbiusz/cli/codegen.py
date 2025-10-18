@@ -295,6 +295,25 @@ Use up to 10 tools per call to speed up the process.\n"""
             f"subagent={tool_input.subagent_type}, task={tool_input.description}, prompt={tool_input.prompt}",
         )
 
+    async def _log_todo_update(self, block: ToolUseBlock, truncate) -> None:
+        input_dict = block.input or {}
+        todos = input_dict.get("todos", [])
+
+        if not self.suppress_logs and todos:
+            completed = sum(1 for t in todos if t.get("status") == "completed")
+            in_progress = [t for t in todos if t.get("status") == "in_progress"]
+
+            logger.info(f"📋 Todo update: {completed}/{len(todos)} completed")
+            for todo in in_progress:
+                logger.info(f"   ▶ {todo.get('activeForm', todo.get('content', 'Unknown'))}")
+
+        await self.tracker.log(
+            self.run_id,
+            "assistant",
+            "todo_update",
+            f"todos={len(todos)}, completed={sum(1 for t in todos if t.get('status') == 'completed')}",
+        )
+
     async def _log_generic_tool(self, block: ToolUseBlock, truncate) -> None:
         params = ", ".join(f"{k}={v}" for k, v in (block.input or {}).items())
         if not self.suppress_logs:
@@ -311,6 +330,8 @@ Use up to 10 tools per call to speed up the process.\n"""
                     if not self.suppress_logs:
                         logger.info(f"💬 {block.text}")
                     await self.tracker.log(self.run_id, "assistant", "text", block.text)
+                case ToolUseBlock(name="TodoWrite"):
+                    await self._log_todo_update(block, truncate)
                 case ToolUseBlock(name="Task"):
                     await self._log_tool_use(block, truncate)
                 case ToolUseBlock(name="mcp__dabgent__scaffold_data_app"):

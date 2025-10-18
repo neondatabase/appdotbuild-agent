@@ -18,7 +18,7 @@ test("capture app screenshot", async () => {
 
   const targetUrl = process.env.TARGET_URL || "/";
   const targetPort = process.env.TARGET_PORT || "8000";
-  const waitTime = parseInt(process.env.WAIT_TIME || "5000");
+  const timeout = parseInt(process.env.WAIT_TIME || "30000");
 
   // resolve hostname to IP to avoid SSL protocol errors with service binding
   const { stdout } = await execAsync("getent hosts app | awk '{ print $1 }'");
@@ -26,6 +26,7 @@ test("capture app screenshot", async () => {
 
   console.log(`Resolved app to IP: ${appIp}`);
   console.log(`Navigating to http://${appIp}:${targetPort}${targetUrl}`);
+  console.log(`Waiting for network idle with timeout of ${timeout}ms`);
 
   const browser = await chromium.launch({
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
@@ -57,13 +58,11 @@ test("capture app screenshot", async () => {
 
   try {
     // use IP instead of hostname to avoid SSL protocol errors
+    // wait for network idle (500ms of no new requests) to ensure data is loaded
     await page.goto(`http://${appIp}:${targetPort}${targetUrl}`, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
+      waitUntil: "networkidle",
+      timeout: timeout,
     });
-
-    // wait for app to load
-    await page.waitForTimeout(waitTime);
 
     // take full page screenshot
     await page.screenshot({

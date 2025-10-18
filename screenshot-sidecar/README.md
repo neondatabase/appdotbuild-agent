@@ -54,9 +54,11 @@ Low-level function to screenshot a running service.
 - `appService` (Service) - Running web application service
 - `url` (string) - URL path to navigate to (default: "/")
 - `port` (number) - Port the service listens on (default: 8000)
-- `waitTime` (number) - Time to wait for page load in ms (default: 5000)
+- `waitTime` (number) - Maximum timeout to wait for network idle in ms (default: 30000)
 
-**Returns:** File - Screenshot PNG
+**Returns:** Directory - Contains screenshot.png and logs.txt
+
+**How it waits:** Uses Playwright's `networkidle` strategy - waits until there are no network requests for 500ms. This ensures apps with long-running queries (e.g., DWH queries) are fully loaded before capturing the screenshot. The `waitTime` parameter acts as a maximum timeout - if network idle is not reached within this time, the operation fails.
 
 ### `screenshotApp(appSource, envVars?, waitTime?, port?)`
 
@@ -65,10 +67,10 @@ High-level function to build from Dockerfile and screenshot.
 **Parameters:**
 - `appSource` (Directory) - Directory containing app source and Dockerfile
 - `envVars` (string) - Comma-separated KEY=VALUE pairs (e.g., "PORT=8000,DEBUG=true")
-- `waitTime` (number) - Time to wait for page load in ms (default: 20000)
+- `waitTime` (number) - Maximum timeout to wait for network idle in ms (default: 60000)
 - `port` (number) - Port the app listens on (default: 8000)
 
-**Returns:** File - Screenshot PNG
+**Returns:** Directory - Contains screenshot.png and logs.txt
 
 ## Files
 
