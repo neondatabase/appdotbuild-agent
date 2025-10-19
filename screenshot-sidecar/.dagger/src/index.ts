@@ -4,7 +4,33 @@
  * A reusable Dagger module that captures screenshots of running web applications
  * using Playwright. Assumes the app has a Dockerfile.
  */
-import { dag, Directory, Service, object, func } from "@dagger.io/dagger"
+import { dag, Directory, Service, object, func, Container } from "@dagger.io/dagger"
+
+// helper to process items with controlled concurrency
+async function processWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  processor: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: (R | null)[] = new Array(items.length).fill(null)
+  let nextIndex = 0
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex++
+      const result = await processor(items[currentIndex], currentIndex)
+      results[currentIndex] = result
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker()
+  )
+  await Promise.all(workers)
+
+  return results as R[]
+}
 
 @object()
 export class ScreenshotSidecar {
@@ -114,37 +140,38 @@ export class ScreenshotSidecar {
     const wait = waitTime || 60000
     const parallelism = concurrency || 3
 
-    // build all app containers and track successes/failures
-    const appServices: (Service | null)[] = []
-    const buildResults: boolean[] = []
+    // build app containers with controlled concurrency
+    console.log(`Building ${appSources.length} apps with concurrency ${parallelism}`)
 
-    for (let i = 0; i < appSources.length; i++) {
-      try {
-        let appContainer = appSources[i].dockerBuild()
+    const appServices = await processWithConcurrency(
+      appSources,
+      parallelism,
+      async (appSource, i): Promise<Service | null> => {
+        try {
+          let appContainer = appSource.dockerBuild()
 
-        // parse and apply environment variables
-        if (envVars) {
-          const pairs = envVars.split(",")
-          for (const pair of pairs) {
-            const [key, value] = pair.split("=")
-            if (key && value) {
-              appContainer = appContainer.withEnvVariable(key.trim(), value.trim())
+          // parse and apply environment variables
+          if (envVars) {
+            const pairs = envVars.split(",")
+            for (const pair of pairs) {
+              const [key, value] = pair.split("=")
+              if (key && value) {
+                appContainer = appContainer.withEnvVariable(key.trim(), value.trim())
+              }
             }
           }
+
+          // force evaluation by syncing - this will throw if build fails
+          await appContainer.sync()
+
+          console.log(`[app-${i}] Build successful`)
+          return appContainer.withExposedPort(targetPort).asService()
+        } catch (error) {
+          console.error(`[app-${i}] Build failed: ${error instanceof Error ? error.message : String(error)}`)
+          return null
         }
-
-        // force evaluation by syncing - this will throw if build fails
-        await appContainer.sync()
-
-        appServices.push(appContainer.withExposedPort(targetPort).asService())
-        buildResults.push(true)
-        console.log(`[app-${i}] Build successful`)
-      } catch (error) {
-        console.error(`[app-${i}] Build failed: ${error instanceof Error ? error.message : String(error)}`)
-        appServices.push(null)
-        buildResults.push(false)
       }
-    }
+    )
 
     // load playwright source
     const playwrightSource = dag.currentModule().source().directory("playwright")

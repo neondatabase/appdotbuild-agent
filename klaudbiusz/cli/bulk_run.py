@@ -181,7 +181,8 @@ def main(wipe_db: bool = False, n_jobs: int = -1, use_subagents: bool = False, s
     for r in successful:
         if r["screenshot_path"] is not None:
             screenshot_successful += 1
-        elif r["app_dir"] is not None:  # only count as failed if app was generated but screenshot failed
+        else:
+            # count as failed if app was generated (has app_dir) but screenshot missing
             screenshot_failed += 1
 
     print(f"\n{'=' * 80}")

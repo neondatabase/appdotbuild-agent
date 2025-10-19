@@ -62,6 +62,8 @@ def screenshot_apps(
     cmd.extend(["export", f"--path={temp_output}"])
 
     print(f"\nRunning dagger command with concurrency={concurrency}, wait_time={wait_time}ms")
+    print(f"Working directory: {sidecar_path}")
+    print(f"Command: {' '.join(cmd)}\n")
 
     try:
         # calculate timeout
