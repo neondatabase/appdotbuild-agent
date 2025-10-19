@@ -1,6 +1,10 @@
 # Multi-stage Dockerfile for tRPC template
 FROM node:20-alpine3.22 AS builder
 
+# install build tools for native Node.js modules (e.g., better-sqlite3, bcrypt)
+# python3: required by node-gyp, make/g++: build toolchain
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /app
 
 # Copy all package files (may not have lock files if agent modified deps)
