@@ -139,6 +139,7 @@ def main(wipe_db: bool = False, n_jobs: int = -1, use_subagents: bool = False, s
         else:
             failed.append(r)
 
+    apps_dir = "./app/"
     # batch screenshot all successful apps
     if successful:
         # get apps directory from first successful app
@@ -239,7 +240,7 @@ def main(wipe_db: bool = False, n_jobs: int = -1, use_subagents: bool = False, s
     print(f"\n{'=' * 80}\n")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = Path(f"bulk_run_results_{timestamp}.json")
+    output_file = Path(apps_dir) / Path(f"bulk_run_results_{timestamp}.json")
 
     output_file.write_text(json.dumps(results, indent=2))
     print(f"Results saved to {output_file}")
