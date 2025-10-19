@@ -2,9 +2,10 @@ import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import type { Server } from "node:http";
 
-// set dummy env vars before importing index
-process.env["DATABRICKS_HOST"] = "https://dummy.databricks.com";
-process.env["DATABRICKS_TOKEN"] = "dummy_token";
+// set dummy env vars before importing index (only if not already set)
+process.env["DATABRICKS_HOST"] =
+  process.env["DATABRICKS_HOST"] || "https://dummy.databricks.com";
+process.env["DATABRICKS_TOKEN"] = process.env["DATABRICKS_TOKEN"] || "dummy_token";
 
 test("server starts and responds to healthcheck", async () => {
   // dynamic import to ensure env vars are set first

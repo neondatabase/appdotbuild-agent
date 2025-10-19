@@ -216,10 +216,18 @@ impl IOProvider {
         let connect_result = opts
             .connect(move |client| async move {
                 // create base container with node image
-                let container = client
+                let mut container = client
                     .container()
-                    .from("node:20-alpine")
+                    .from("node:20-alpine3.22")
                     .with_exec(vec!["mkdir", "-p", "/app"]);
+
+                // propagate DATABRICKS_* env vars if set
+                if let Ok(host) = std::env::var("DATABRICKS_HOST") {
+                    container = container.with_env_variable("DATABRICKS_HOST", host);
+                }
+                if let Ok(token) = std::env::var("DATABRICKS_TOKEN") {
+                    container = container.with_env_variable("DATABRICKS_TOKEN", token);
+                }
 
                 // copy work directory to container
                 let host_dir = client.host().directory(work_dir_str.clone());
