@@ -699,28 +699,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dabgent_fastapi"
-version = "0.1.0"
-dependencies = [
- "dabgent_agent",
- "dabgent_mq",
- "dabgent_sandbox",
- "dagger-sdk",
- "dotenvy",
- "eyre",
- "rig-core",
- "rust-embed",
- "serde",
- "serde_json",
- "sqlx",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "dabgent_integrations"
 version = "0.1.0"
 dependencies = [
@@ -2201,15 +2179,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 dependencies = [
  "hashbrown 0.15.5",
-]
-
-[[package]]
-name = "matchers"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
-dependencies = [
- "regex-automata",
 ]
 
 [[package]]
@@ -4232,10 +4201,7 @@ version = "0.3.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2054a14f5307d601f88daf0553e1cbf472acc4f2c51afab632431cdcd72124d5"
 dependencies = [
- "matchers",
  "nu-ansi-term",
- "once_cell",
- "regex-automata",
  "sharded-slab",
  "smallvec",
  "thread_local",

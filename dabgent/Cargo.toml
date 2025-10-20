@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["dabgent_agent", "dabgent_cli", "dabgent_mq", "dabgent_sandbox", "dabgent_fastapi", "dabgent_integrations", "dabgent_mcp", "dabgent_templates"]
+members = ["dabgent_agent", "dabgent_cli", "dabgent_mq", "dabgent_sandbox", "dabgent_integrations", "dabgent_mcp", "dabgent_templates"]
 
 [profile.dev]
 opt-level = 0
