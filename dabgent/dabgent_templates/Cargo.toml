@@ -1,0 +1,7 @@
+[package]
+name = "dabgent_templates"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rust-embed = { version = "8.8.0", features = ["include-exclude"] }

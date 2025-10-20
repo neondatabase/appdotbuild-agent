@@ -1,13 +1,14 @@
 use dabgent_integrations::ToolResultDisplay;
 use dabgent_sandbox::dagger::{ConnectOpts, Logger};
 use dabgent_sandbox::{DaggerSandbox, Sandbox};
+use dabgent_templates::TemplateTRPC;
 use eyre::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
 };
-use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler};
+use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::io::ErrorKind;
@@ -21,12 +22,6 @@ pub enum Template {
 }
 
 impl Template {
-    fn path(&self) -> &'static str {
-        match self {
-            Template::Trpc => "../../dataapps/template_trpc",
-        }
-    }
-
     fn description(&self) -> &'static str {
         match self {
             Template::Trpc => include_str!("../../templates/trpc_guidelines.md"),
@@ -66,7 +61,11 @@ impl ToolResultDisplay for InitiateProjectResult {
     fn display(&self) -> String {
         format!(
             "Successfully copied {} files from {} template to {}\n\nTemplate: {}\n\n{}",
-            self.files_copied, self.template_name, self.work_dir, self.template_name, self.template_description
+            self.files_copied,
+            self.template_name,
+            self.work_dir,
+            self.template_name,
+            self.template_description
         )
     }
 }
@@ -107,7 +106,6 @@ impl ToolResultDisplay for ValidateProjectResult {
     }
 }
 
-
 #[tool_router]
 impl IOProvider {
     pub fn new() -> Result<Self> {
@@ -124,18 +122,6 @@ impl IOProvider {
         template: Template,
         force_rewrite: bool,
     ) -> Result<InitiateProjectResult> {
-        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let template_path = manifest_dir.join(template.path());
-
-        // validate template directory exists
-        if !template_path.exists() {
-            eyre::bail!("template directory does not exist: {}", template_path.display());
-        }
-
-        if !template_path.is_dir() {
-            eyre::bail!("template path is not a directory: {}", template_path.display());
-        }
-
         // handle force rewrite
         if force_rewrite {
             match std::fs::remove_dir_all(work_dir) {
@@ -155,13 +141,15 @@ impl IOProvider {
         })?;
 
         // collect and copy files using git ls-files
-        let files = collect_template_files(&template_path, work_dir)?;
+        let template_name = template.name().to_string();
+        let template_description = template.description().to_string();
+        let files = collect_template_files(template, work_dir)?;
 
         Ok(InitiateProjectResult {
             files_copied: files.len(),
             work_dir: work_dir.display().to_string(),
-            template_name: template.name().to_string(),
-            template_description: template.description().to_string(),
+            template_name,
+            template_description,
         })
     }
 
@@ -186,11 +174,14 @@ impl IOProvider {
             ));
         }
 
-        let result = Self::initiate_project_impl(&work_path, Template::Trpc, args.force_rewrite).map_err(|e| {
-            ErrorData::internal_error(format!("failed to initiate project: {}", e), None)
-        })?;
+        let result = Self::initiate_project_impl(&work_path, Template::Trpc, args.force_rewrite)
+            .map_err(|e| {
+                ErrorData::internal_error(format!("failed to initiate project: {}", e), None)
+            })?;
 
-        Ok(CallToolResult::success(vec![Content::text(result.display())]))
+        Ok(CallToolResult::success(vec![Content::text(
+            result.display(),
+        )]))
     }
 
     /// Core logic for validating a project
@@ -292,7 +283,9 @@ impl IOProvider {
             ErrorData::internal_error(format!("failed to validate project: {}", e), None)
         })?;
 
-        Ok(CallToolResult::success(vec![Content::text(result.display())]))
+        Ok(CallToolResult::success(vec![Content::text(
+            result.display(),
+        )]))
     }
 }
 
@@ -370,29 +363,33 @@ async fn run_tests(sandbox: &mut DaggerSandbox) -> Result<(), ValidationDetails>
     Ok(())
 }
 
-fn collect_template_files(template_path: &Path, work_path: &Path) -> Result<Vec<PathBuf>> {
-    use std::process::Command;
-
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(template_path)
-        .arg("ls-files")
-        .output()?;
-
-    if !output.status.success() {
-        eyre::bail!("git ls-files failed");
+fn extract_files(template: Template) -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    match template {
+        Template::Trpc => {
+            for path in TemplateTRPC::iter() {
+                if let Some(file) = TemplateTRPC::get(path.as_ref()) {
+                    files.push((
+                        path.to_string(),
+                        String::from_utf8_lossy(&file.data).into_owned(),
+                    ));
+                }
+            }
+        }
     }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files
+}
 
-    let files_list = String::from_utf8(output.stdout)?;
+fn collect_template_files(template: Template, work_path: &Path) -> Result<Vec<PathBuf>> {
+    let template_files = extract_files(template);
     let mut copied_files = Vec::new();
-
-    for relative_path in files_list.lines() {
-        if relative_path.is_empty() {
+    for (template_path, contents) in template_files.iter() {
+        if template_path.is_empty() {
             continue;
         }
 
-        let source_file = template_path.join(relative_path);
-        let target_file = work_path.join(relative_path);
+        let target_file = work_path.join(template_path);
 
         // ensure parent directory exists
         if let Some(parent) = target_file.parent() {
@@ -400,21 +397,16 @@ fn collect_template_files(template_path: &Path, work_path: &Path) -> Result<Vec<
                 eyre::eyre!(
                     "failed to create directory '{}' for file '{}': {}",
                     parent.display(),
-                    relative_path,
+                    target_file.display(),
                     e
                 )
             })?;
         }
 
-        // copy file
-        std::fs::copy(&source_file, &target_file).map_err(|e| {
-            eyre::eyre!(
-                "failed to copy file '{}' to '{}': {}",
-                source_file.display(),
-                target_file.display(),
-                e
-            )
-        })?;
+        // write file
+        std::fs::write(&target_file, contents)
+            .map_err(|e| eyre::eyre!("failed to write file '{}': {}", target_file.display(), e))?;
+
         copied_files.push(target_file);
     }
 

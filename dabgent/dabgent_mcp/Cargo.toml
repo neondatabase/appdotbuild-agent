@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "dabgent-mcp"
+name = "dabgent_mcp"
 path = "src/main.rs"
 
 [[example]]
@@ -27,7 +27,13 @@ schemars = "1"
 dabgent_integrations = { path = "../dabgent_integrations" }
 dabgent_agent = { path = "../dabgent_agent" }
 dabgent_sandbox = { path = "../dabgent_sandbox" }
+dabgent_templates = { path = "../dabgent_templates" }
 
 [dev-dependencies]
 rmcp-in-process-transport = "0.2.0"
 tempfile = "3"
+
+[build-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "process", "sync"] }
+dabgent_sandbox = { path = "../dabgent_sandbox" }
+dabgent_templates = { path = "../dabgent_templates" }

@@ -159,7 +159,7 @@ This ensures the appbuild agent delegates to dataresearch instead of using Datab
 
 When ready for customers:
 
-1. Build `dabgent-mcp` as static binary
+1. Build `dabgent_mcp` as static binary
 2. Update `plugin.json` to point to binary instead of `cargo run`
 3. Package plugin directory
 4. Distribute via marketplace or direct download
