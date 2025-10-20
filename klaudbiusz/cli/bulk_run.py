@@ -113,7 +113,7 @@ def run_single_generation(app_name: str, prompt: str, wipe_db: bool = False, use
         }
 
 
-def main(wipe_db: bool = False, n_jobs: int = -1, use_subagents: bool = False, screenshot_concurrency: int = 5) -> None:
+def main(wipe_db: bool = False, n_jobs: int = -1, use_subagents: bool = False, screenshot_concurrency: int = 5, screenshot_wait_time: int = 120000) -> None:
     # validate required environment variables
     if not os.environ.get("DATABRICKS_HOST") or not os.environ.get("DATABRICKS_TOKEN"):
         raise ValueError("DATABRICKS_HOST and DATABRICKS_TOKEN environment variables must be set")
@@ -151,7 +151,7 @@ def main(wipe_db: bool = False, n_jobs: int = -1, use_subagents: bool = False, s
             print(f"{'=' * 80}\n")
 
             try:
-                screenshot_apps(apps_dir, concurrency=screenshot_concurrency)
+                screenshot_apps(apps_dir, concurrency=screenshot_concurrency, wait_time=screenshot_wait_time)
             except Exception as e:
                 print(f"Screenshot batch failed: {e}")
 
