@@ -1,6 +1,11 @@
 import fire
 from datetime import datetime
+from dotenv import load_dotenv
+
 from codegen import AppBuilder
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def run(prompt: str, app_name: str | None = None, wipe_db: bool = True, suppress_logs: bool = False, use_subagents: bool = False):

@@ -1,1 +1,5 @@
+# Generated apps (cleaned between runs)
 app/
+
+# Evaluation results (cleaned between runs, preserved in archive/)
+app-eval/

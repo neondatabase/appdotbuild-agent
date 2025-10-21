@@ -99,8 +99,11 @@ export class ScreenshotSidecar {
   ): Promise<Directory> {
     const targetPort = port || 8000
 
+    // exclude node_modules to prevent copying host binaries (macOS vs Linux)
+    const filteredSource = appSource.filter({ exclude: ["**/node_modules", "**/.git"] })
+
     // build container from Dockerfile
-    let appContainer = appSource.dockerBuild()
+    let appContainer = filteredSource.dockerBuild()
 
     // parse and apply environment variables
     if (envVars) {
@@ -140,15 +143,19 @@ export class ScreenshotSidecar {
     const wait = waitTime || 60000
     const parallelism = concurrency || 3
 
-    // build app containers with controlled concurrency
-    console.log(`Building ${appSources.length} apps with concurrency ${parallelism}`)
+    // build and validate app containers with controlled concurrency
+    console.log(`Building and validating ${appSources.length} apps with concurrency ${parallelism}`)
 
     const appServices = await processWithConcurrency(
       appSources,
       parallelism,
       async (appSource, i): Promise<Service | null> => {
         try {
-          let appContainer = appSource.dockerBuild()
+          // exclude node_modules to prevent copying host binaries
+          const filteredSource = appSource.filter({ exclude: ["**/node_modules", "**/.git"] })
+
+          // build container from Dockerfile
+          let appContainer = filteredSource.dockerBuild()
 
           // parse and apply environment variables
           if (envVars) {
@@ -163,11 +170,23 @@ export class ScreenshotSidecar {
 
           // force evaluation by syncing - this will throw if build fails
           await appContainer.sync()
-
           console.log(`[app-${i}] Build successful`)
-          return appContainer.withExposedPort(targetPort).asService()
+
+          // validate that service can start without crashing
+          const service = appContainer.withExposedPort(targetPort).asService()
+
+          // test by connecting to the service - if it crashes immediately, this will fail
+          await dag
+            .container()
+            .from("alpine:3.18")
+            .withServiceBinding("test-app", service)
+            .withExec(["sh", "-c", `sleep 3`])
+            .sync()
+
+          console.log(`[app-${i}] Service starts successfully`)
+          return service
         } catch (error) {
-          console.error(`[app-${i}] Build failed: ${error instanceof Error ? error.message : String(error)}`)
+          console.error(`[app-${i}] Failed (will skip): ${error instanceof Error ? error.message : String(error)}`)
           return null
         }
       }

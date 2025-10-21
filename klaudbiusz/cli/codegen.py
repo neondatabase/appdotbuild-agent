@@ -342,8 +342,7 @@ Use up to 10 tools per call to speed up the process.\n"""
                 case ToolUseBlock(name="Task"):
                     await self._log_tool_use(block, truncate)
                 case ToolUseBlock(name="mcp__dabgent__scaffold_data_app"):
-                    # track scaffold call to capture app_dir from result
-                    if block.input and "work_dir" in block.input:
+                    if block.input is not None and "work_dir" in block.input:
                         self._pending_scaffold_calls[block.id] = block.input["work_dir"]
                     await self._log_generic_tool(block, truncate)
                 case ToolUseBlock():
@@ -355,9 +354,9 @@ Use up to 10 tools per call to speed up the process.\n"""
 
         for block in message.content:
             match block:
-                case ToolResultBlock(tool_use_id=tool_id, is_error=False) if tool_id in self._pending_scaffold_calls:
-                    # capture app_dir from successful scaffold_data_app result
-                    self.app_dir = self._pending_scaffold_calls.pop(tool_id)
+                case ToolResultBlock(tool_use_id=tool_id):
+                    if tool_id in self._pending_scaffold_calls and not block.is_error:
+                        self.app_dir = self._pending_scaffold_calls.pop(tool_id)
                     result_text = str(block.content)
                     if result_text:
                         if not self.suppress_logs:
@@ -367,12 +366,6 @@ Use up to 10 tools per call to speed up the process.\n"""
                     if not self.suppress_logs:
                         logger.warning(f"❌ Tool error: {truncate(str(block.content))}")
                     await self.tracker.log(self.run_id, "user", "tool_error", str(block.content))
-                case ToolResultBlock():
-                    result_text = str(block.content)
-                    if result_text:
-                        if not self.suppress_logs:
-                            logger.info(f"✅ Tool result: {truncate(result_text)}")
-                        await self.tracker.log(self.run_id, "user", "tool_result", result_text)
 
     async def _log_result_message(self, message: ResultMessage) -> None:
         def truncate(text: str, max_len: int = 300) -> str:
