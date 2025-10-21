@@ -342,7 +342,6 @@ Use up to 10 tools per call to speed up the process.\n"""
                 case ToolUseBlock(name="Task"):
                     await self._log_tool_use(block, truncate)
                 case ToolUseBlock(name="mcp__dabgent__scaffold_data_app"):
-                    # track scaffold call to capture app_dir from result
                     if block.input is not None and "work_dir" in block.input:
                         self._pending_scaffold_calls[block.id] = block.input["work_dir"]
                     await self._log_generic_tool(block, truncate)
@@ -355,12 +354,9 @@ Use up to 10 tools per call to speed up the process.\n"""
 
         for block in message.content:
             match block:
-                case ToolResultBlock(tool_use_id=tool_id, is_error=False):
-                    # check if this is a scaffold_data_app result
-                    if tool_id in self._pending_scaffold_calls:
-                        # capture app_dir from successful scaffold_data_app result
+                case ToolResultBlock(tool_use_id=tool_id):
+                    if tool_id in self._pending_scaffold_calls and not block.is_error:
                         self.app_dir = self._pending_scaffold_calls.pop(tool_id)
-                    # log the tool result
                     result_text = str(block.content)
                     if result_text:
                         if not self.suppress_logs:

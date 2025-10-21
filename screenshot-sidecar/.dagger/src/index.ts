@@ -82,9 +82,9 @@ export class ScreenshotSidecar {
   }
 
   /**
-   * Build and screenshot an app from a directory with a Dagger module
+   * Build and screenshot an app from a directory with a Dockerfile
    *
-   * @param appSource Directory containing the app source with .dagger/ module
+   * @param appSource Directory containing the app source and Dockerfile
    * @param envVars Optional environment variables as comma-separated KEY=VALUE pairs (e.g., "PORT=8000,DEBUG=true")
    * @param waitTime Maximum timeout to wait for network idle in ms (default: 60000)
    * @param port Port the app listens on (default: 8000)
@@ -102,10 +102,8 @@ export class ScreenshotSidecar {
     // exclude node_modules to prevent copying host binaries (macOS vs Linux)
     const filteredSource = appSource.filter({ exclude: ["**/node_modules", "**/.git"] })
 
-    // build container using app's Dagger module
-    const moduleSource = dag.moduleSource(filteredSource)
-    const module = moduleSource.asModule()
-    let appContainer = await module.template().container(filteredSource)
+    // build container from Dockerfile
+    let appContainer = filteredSource.dockerBuild()
 
     // parse and apply environment variables
     if (envVars) {
@@ -156,10 +154,8 @@ export class ScreenshotSidecar {
           // exclude node_modules to prevent copying host binaries
           const filteredSource = appSource.filter({ exclude: ["**/node_modules", "**/.git"] })
 
-          // build container using app's Dagger module
-          const moduleSource = dag.moduleSource(filteredSource)
-          const module = moduleSource.asModule()
-          let appContainer = await module.template().container(filteredSource)
+          // build container from Dockerfile
+          let appContainer = filteredSource.dockerBuild()
 
           // parse and apply environment variables
           if (envVars) {
