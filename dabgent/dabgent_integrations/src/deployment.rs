@@ -90,7 +90,7 @@ pub fn create_app(app_name: &str, description: &str) -> Result<AppInfo> {
 
 pub fn sync_workspace(app_info: &AppInfo, source_dir: &str) -> Result<()> {
     let output = Command::new("databricks")
-        .args(&["sync", ".", &app_info.source_path()])
+        .args(&["sync", "--include", "public", ".", &app_info.source_path()]) // specific for trpc template
         .current_dir(source_dir)
         .output()?;
 
