@@ -90,7 +90,8 @@ pub fn create_app(app_name: &str, description: &str) -> Result<AppInfo> {
 
 pub fn sync_workspace(app_info: &AppInfo, source_dir: &str) -> Result<()> {
     let output = Command::new("databricks")
-        .args(&["sync", source_dir, &app_info.source_path()])
+        .args(&["sync", ".", &app_info.source_path()])
+        .current_dir(source_dir)
         .output()?;
 
     if !output.status.success() {

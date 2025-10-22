@@ -1,8 +1,10 @@
 pub mod databricks;
+pub mod deployment;
 pub mod io;
 pub mod google_sheets;
 
 pub use databricks::DatabricksProvider;
+pub use deployment::DeploymentProvider;
 pub use io::{IOProvider, Template};
 pub use google_sheets::GoogleSheetsProvider;
 
@@ -17,6 +19,7 @@ use std::sync::Arc;
 
 enum TargetProvider {
     Databricks(Arc<DatabricksProvider>),
+    Deployment(Arc<DeploymentProvider>),
     GoogleSheets(Arc<GoogleSheetsProvider>),
     Io(Arc<IOProvider>),
 }
@@ -24,6 +27,7 @@ enum TargetProvider {
 #[derive(Clone)]
 pub struct CombinedProvider {
     databricks: Option<Arc<DatabricksProvider>>,
+    deployment: Option<Arc<DeploymentProvider>>,
     google_sheets: Option<Arc<GoogleSheetsProvider>>,
     io: Option<Arc<IOProvider>>,
 }
@@ -31,14 +35,16 @@ pub struct CombinedProvider {
 impl CombinedProvider {
     pub fn new(
         databricks: Option<DatabricksProvider>,
+        deployment: Option<DeploymentProvider>,
         google_sheets: Option<GoogleSheetsProvider>,
         io: Option<IOProvider>,
     ) -> Result<Self> {
-        if databricks.is_none() && google_sheets.is_none() && io.is_none() {
+        if databricks.is_none() && deployment.is_none() && google_sheets.is_none() && io.is_none() {
             return Err(eyre::eyre!("at least one provider must be available"));
         }
         Ok(Self {
             databricks: databricks.map(Arc::new),
+            deployment: deployment.map(Arc::new),
             google_sheets: google_sheets.map(Arc::new),
             io: io.map(Arc::new),
         })
@@ -65,6 +71,15 @@ impl CombinedProvider {
             return Ok(TargetProvider::GoogleSheets(provider));
         }
 
+        if let Some(deployment) = self.deployment.clone() {
+            match tool_name {
+                "deploy_databricks_app" => {
+                    return Ok(TargetProvider::Deployment(deployment));
+                }
+                _ => {}
+            }
+        }
+
         if let Some(io) = self.io.clone() {
             match tool_name {
                 "scaffold_data_app" | "validate_data_app" => {
@@ -77,6 +92,9 @@ impl CombinedProvider {
         let mut configured = Vec::new();
         if let Some(provider) = &self.databricks {
             configured.push(TargetProvider::Databricks(Arc::clone(provider)));
+        }
+        if let Some(provider) = &self.deployment {
+            configured.push(TargetProvider::Deployment(Arc::clone(provider)));
         }
         if let Some(provider) = &self.google_sheets {
             configured.push(TargetProvider::GoogleSheets(Arc::clone(provider)));
@@ -101,6 +119,9 @@ impl ServerHandler for CombinedProvider {
         let mut providers = Vec::new();
         if self.databricks.is_some() {
             providers.push("Databricks");
+        }
+        if self.deployment.is_some() {
+            providers.push("Deployment");
         }
         if self.google_sheets.is_some() {
             providers.push("Google Sheets");
@@ -133,6 +154,7 @@ impl ServerHandler for CombinedProvider {
     ) -> std::result::Result<CallToolResult, ErrorData> {
         match self.resolve_provider(&params.name)? {
             TargetProvider::Databricks(provider) => provider.call_tool(params, context).await,
+            TargetProvider::Deployment(provider) => provider.call_tool(params, context).await,
             TargetProvider::GoogleSheets(provider) => provider.call_tool(params, context).await,
             TargetProvider::Io(provider) => provider.call_tool(params, context).await,
         }
@@ -147,6 +169,12 @@ impl ServerHandler for CombinedProvider {
 
         if let Some(ref databricks) = self.databricks {
             if let Ok(result) = databricks.list_tools(params.clone(), context.clone()).await {
+                tools.extend(result.tools);
+            }
+        }
+
+        if let Some(ref deployment) = self.deployment {
+            if let Ok(result) = deployment.list_tools(params.clone(), context.clone()).await {
                 tools.extend(result.tools);
             }
         }

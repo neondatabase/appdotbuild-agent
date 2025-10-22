@@ -20,3 +20,4 @@ pub use google_sheets::{
     ReadRangeRequest, ReadRangeResult, SheetData, SheetMetadata, SpreadsheetData,
     SpreadsheetMetadata,
 };
+pub use deployment::{AppInfo, create_app, deploy_app, get_app_info, sync_workspace};
