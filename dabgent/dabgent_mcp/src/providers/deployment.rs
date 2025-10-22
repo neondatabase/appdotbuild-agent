@@ -88,20 +88,18 @@ impl DeploymentProvider {
         }
 
         // Install project dependencies
-        let output = std::process::Command::new("npm")
-            .args(&["install"])
-            .current_dir(&work_path)
-            .output()
-            .map_err(|err| eyre::eyre!("Failed to install dependencies: {}", err))?;
-        tracing::info!("npm install output: {:?}", output);
+        run_format_cmd(
+            std::process::Command::new("npm")
+                .args(&["install"])
+                .current_dir(&work_path),
+        )?;
 
         // Build frontend
-        let output = std::process::Command::new("npm")
-            .args(&["run", "build"])
-            .current_dir(&work_path)
-            .output()
-            .map_err(|err| eyre::eyre!("Failed to build project: {}", err))?;
-        tracing::info!("npm run build output: {:?}", output);
+        run_format_cmd(
+            std::process::Command::new("npm")
+                .args(&["run", "build"])
+                .current_dir(&work_path),
+        )?;
 
         // Get or create app
         let app_info: AppInfo = match get_app_info(name) {
@@ -192,13 +190,13 @@ impl ServerHandler for DeploymentProvider {
     }
 }
 
-pub async fn test_deploy_tool() {
-    let work_dir = "/Users/igor.rekun/Documents/agent/dabgent/dabgent_templates/template_trpc";
-    let result = DeploymentProvider::deploy_databricks_app_impl(
-        work_dir,
-        "agent-auto-deploy",
-        "test automatic deployment tool",
-    )
-    .await;
-    tracing::info!(?result, "deployment");
+fn run_format_cmd(command: &mut std::process::Command) -> Result<std::process::Output> {
+    let output = command.output().map_err(|e| eyre::eyre!("Error: {e}"))?;
+    if !output.status.success() {
+        return Err(eyre::eyre!(
+            "Error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(output)
 }

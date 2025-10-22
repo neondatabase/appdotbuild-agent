@@ -29,15 +29,16 @@ async fn main() -> Result<()> {
     let io = IOProvider::new().ok();
 
     // create combined provider with all available integrations
-    let provider = CombinedProvider::new(databricks, deployment, google_sheets, io).map_err(|_| {
-        eyre::eyre!(
-            "No integrations available. Configure at least one:\n\
+    let provider =
+        CombinedProvider::new(databricks, deployment, google_sheets, io).map_err(|_| {
+            eyre::eyre!(
+                "No integrations available. Configure at least one:\n\
              - Databricks: Set DATABRICKS_HOST and DATABRICKS_TOKEN\n\
-             - Deployment: Always available (requires DATABRICKS_HOST and DATABRICKS_TOKEN for deployment)\n\
+             - Deployment: Set DATABRICKS_HOST and DATABRICKS_TOKEN)\n\
              - Google Sheets: Place credentials at ~/.config/gspread/credentials.json\n\
              - I/O: Always available"
-        )
-    })?;
+            )
+        })?;
 
     let service = provider.serve(stdio()).await?;
     service.waiting().await?;
