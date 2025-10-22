@@ -21,7 +21,7 @@ pub struct DeploymentProvider {
 pub struct DeployDatabricksAppArgs {
     /// Absolute path to the work directory containing the app to deploy (e.g., /path/to/project)
     pub work_dir: String,
-    /// Name of the Databricks app
+    /// Name of the Databricks app (alphanumeric and dash characters only)
     pub name: String,
     /// Description of the Databricks app
     pub description: String,

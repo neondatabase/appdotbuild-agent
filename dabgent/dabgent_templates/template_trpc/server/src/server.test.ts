@@ -24,7 +24,7 @@ test("server starts and responds to healthcheck", async () => {
     const response = await fetch(`http://localhost:${port}/api/healthcheck`);
     assert.equal(response.status, 200);
 
-    const data = await response.json();
+    const data: any = await response.json();
     assert.equal(data.result.data.json.status, "ok");
     assert.ok(data.result.data.json.timestamp);
   } finally {

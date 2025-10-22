@@ -5,7 +5,8 @@ use rust_embed::Embed;
 #[exclude = ".git/**"]
 #[exclude = "**/node_modules/**"]
 #[exclude = "target/**"]
-#[exclude = "dist/**"]
+#[exclude = "**/dist/**"]
+#[exclude = "server/public"]
 #[exclude = "build/**"]
 #[exclude = "**/.DS_Store"]
 pub struct TemplateTRPC;

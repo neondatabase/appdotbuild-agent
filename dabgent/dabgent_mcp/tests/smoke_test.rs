@@ -16,7 +16,7 @@ async fn smoke_test_mcp_server() -> Result<()> {
     let io = IOProvider::new()?;
 
     // create provider (no need to try other providers for smoke test)
-    let provider = CombinedProvider::new(None, None, Some(io))?;
+    let provider = CombinedProvider::new(None, None, None, Some(io))?;
 
     // create in-process service
     let tokio_in_process = TokioInProcess::new(provider).await?;
@@ -32,17 +32,26 @@ async fn smoke_test_mcp_server() -> Result<()> {
 
     // list tools
     let tools_response = service.list_tools(Default::default()).await?;
-    assert!(!tools_response.tools.is_empty(), "Should have at least one tool");
+    assert!(
+        !tools_response.tools.is_empty(),
+        "Should have at least one tool"
+    );
 
     // verify scaffold_data_app tool is exposed
     assert!(
-        tools_response.tools.iter().any(|t| t.name == "scaffold_data_app"),
+        tools_response
+            .tools
+            .iter()
+            .any(|t| t.name == "scaffold_data_app"),
         "scaffold_data_app tool should be exposed"
     );
 
     // verify validate_data_app tool is exposed
     assert!(
-        tools_response.tools.iter().any(|t| t.name == "validate_data_app"),
+        tools_response
+            .tools
+            .iter()
+            .any(|t| t.name == "validate_data_app"),
         "validate_data_app tool should be exposed"
     );
 
