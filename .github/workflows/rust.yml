@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.89.0
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
 
@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.89.0
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -112,7 +112,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.89.0
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
@@ -122,10 +122,9 @@ jobs:
       - name: Build release binary
         run: |
           cd dabgent
+          ${{ matrix.platform == 'macos-arm64' && 'export CARGO_BUILD_JOBS=2' || '' }}
           cargo build --release -p dabgent_mcp
           ls -la target/release/
-        env:
-          CARGO_PROFILE_RELEASE_LTO: ${{ matrix.platform == 'macos-arm64' && 'false' || 'thin' }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
