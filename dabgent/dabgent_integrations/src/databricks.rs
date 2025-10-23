@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use log::{debug, info};
 use reqwest;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -82,7 +83,48 @@ fn apply_pagination<T>(items: Vec<T>, limit: usize, offset: usize) -> (Vec<T>, u
 }
 
 // ============================================================================
-// Request Types
+// Argument Types (shared between agent and MCP)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default)]
+pub struct DatabricksListCatalogsArgs {
+    // no parameters needed - lists all available catalogs
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DatabricksListSchemasArgs {
+    pub catalog_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DatabricksListTablesArgs {
+    pub catalog_name: String,
+    pub schema_name: String,
+    #[serde(default = "default_exclude_inaccessible")]
+    pub exclude_inaccessible: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DatabricksDescribeTableArgs {
+    pub table_full_name: String,
+    #[serde(default = "default_sample_size")]
+    pub sample_size: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DatabricksExecuteQueryArgs {
+    pub query: String,
+}
+
+// ============================================================================
+// Request Types (internal to client)
 // ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,70 +1,24 @@
 use super::agent::{Agent, AgentState, Command, Event};
 use crate::toolbox::ToolCallExt;
 use dabgent_integrations::{
-    DatabricksRestClient, DescribeTableRequest, ExecuteSqlRequest, ListSchemasRequest,
-    ListTablesRequest, ToolResultDisplay,
+    DatabricksDescribeTableArgs, DatabricksExecuteQueryArgs, DatabricksListCatalogsArgs,
+    DatabricksListSchemasArgs, DatabricksListTablesArgs, DatabricksRestClient,
+    DescribeTableRequest, ExecuteSqlRequest, ListSchemasRequest, ListTablesRequest,
+    ToolResultDisplay,
 };
 use dabgent_mq::{Envelope, EventHandler, EventStore, Handler};
 use dabgent_sandbox::FutureBoxed;
 use eyre::Result;
 use rig::message::{ToolCall, ToolResult};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::sync::Arc;
 
-// ============================================================================
-// Argument Structs
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(default)]
-pub struct DatabricksListCatalogsArgs {
-    // No parameters needed - lists all available catalogs
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DatabricksListSchemasArgs {
-    pub catalog_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filter: Option<String>,
-    #[serde(default = "default_limit")]
-    pub limit: usize,
-    #[serde(default)]
-    pub offset: usize,
-}
-
-fn default_limit() -> usize {
-    1000
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DatabricksListTablesArgs {
-    pub catalog_name: String,
-    pub schema_name: String,
-    #[serde(default = "default_exclude_inaccessible")]
-    pub exclude_inaccessible: bool,
-}
-
-fn default_exclude_inaccessible() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DatabricksDescribeTableArgs {
-    pub table_full_name: String,
-    #[serde(default = "default_sample_size")]
-    pub sample_size: usize,
-}
-
-fn default_sample_size() -> usize {
-    10
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DatabricksExecuteQueryArgs {
-    pub query: String,
-}
+// re-export for backward compatibility if needed
+pub use dabgent_integrations::{
+    DatabricksDescribeTableArgs, DatabricksExecuteQueryArgs, DatabricksListCatalogsArgs,
+    DatabricksListSchemasArgs, DatabricksListTablesArgs,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinishDelegationArgs {

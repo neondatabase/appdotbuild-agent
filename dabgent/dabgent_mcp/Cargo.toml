@@ -25,7 +25,6 @@ schemars = "1"
 
 # internal dependencies
 dabgent_integrations = { path = "../dabgent_integrations" }
-dabgent_agent = { path = "../dabgent_agent" }
 dabgent_sandbox = { path = "../dabgent_sandbox" }
 dabgent_templates = { path = "../dabgent_templates" }
 

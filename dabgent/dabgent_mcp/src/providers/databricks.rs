@@ -1,10 +1,8 @@
-use dabgent_agent::processor::databricks::{
-    DatabricksDescribeTableArgs, DatabricksExecuteQueryArgs, DatabricksListCatalogsArgs,
-    DatabricksListSchemasArgs, DatabricksListTablesArgs,
-};
 use dabgent_integrations::{
-    DatabricksRestClient, DescribeTableRequest, ExecuteSqlRequest, ListSchemasRequest,
-    ListTablesRequest, ToolResultDisplay,
+    DatabricksDescribeTableArgs, DatabricksExecuteQueryArgs, DatabricksListCatalogsArgs,
+    DatabricksListSchemasArgs, DatabricksListTablesArgs, DatabricksRestClient,
+    DescribeTableRequest, ExecuteSqlRequest, ListSchemasRequest, ListTablesRequest,
+    ToolResultDisplay,
 };
 use eyre::Result;
 use rmcp::handler::server::router::tool::ToolRouter;

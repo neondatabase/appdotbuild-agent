@@ -723,7 +723,6 @@ dependencies = [
 name = "dabgent_mcp"
 version = "0.1.0"
 dependencies = [
- "dabgent_agent",
  "dabgent_integrations",
  "dabgent_sandbox",
  "dabgent_templates",
