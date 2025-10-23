@@ -123,11 +123,11 @@ jobs:
         run: |
           cd dabgent
           cargo build --release -p dabgent_mcp
-          ls -la target/release/dabgent-mcp
+          ls -la target/release/
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: dabgent-mcp-${{ matrix.platform }}
-          path: dabgent/target/release/dabgent-mcp
+          path: dabgent/target/release/dabgent_mcp
           retention-days: 30
