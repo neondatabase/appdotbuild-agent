@@ -97,7 +97,7 @@ jobs:
   build-dabgent-mcp:
     name: Build dabgent_mcp (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     needs: [rust-checks, rust-tests, check-release-condition]
     if: needs.check-release-condition.outputs.should_build == 'true'
     strategy:
