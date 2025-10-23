@@ -14,12 +14,6 @@ use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::sync::Arc;
 
-// re-export for backward compatibility if needed
-pub use dabgent_integrations::{
-    DatabricksDescribeTableArgs, DatabricksExecuteQueryArgs, DatabricksListCatalogsArgs,
-    DatabricksListSchemasArgs, DatabricksListTablesArgs,
-};
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinishDelegationArgs {
     pub summary: String,
