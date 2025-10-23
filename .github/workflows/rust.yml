@@ -106,7 +106,7 @@ jobs:
           - platform: linux-x86_64
             runner: ubuntu-latest
           - platform: macos-arm64
-            runner: macos-15-xlarge
+            runner: macos-latest-xlarge
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
