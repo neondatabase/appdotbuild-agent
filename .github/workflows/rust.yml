@@ -67,11 +67,39 @@ jobs:
         # Run with single thread due to Dagger connection race conditions
         run: cargo nextest run --tests --workspace --test-threads=1
 
+  check-release-condition:
+    name: Check Release Condition
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+
+      - name: Check if release build needed
+        id: check
+        run: |
+          should_build="false"
+          # we check two commits because the first commit is the merge commit
+          if git log -2 --pretty=%s | tail -n 1 | grep -q "release"; then
+            should_build="true"
+            echo "Release build detected based on commit message."
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            should_build="true"
+            echo "Release build detected based on push to main branch."
+          fi
+
+          echo "should_build=${should_build}" >> $GITHUB_OUTPUT
+
   build-dabgent-mcp:
     name: Build dabgent_mcp (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
-    needs: [rust-checks, rust-tests]
+    needs: [rust-checks, rust-tests, check-release-condition]
+    if: needs.check-release-condition.outputs.should_build == 'true'
     strategy:
       matrix:
         include:
@@ -82,41 +110,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 2
-
-      - name: Determine if Release Build is Needed
-        id: check_release
-        run: |
-          is_release="false"
-          # we check two commits because the first commit is the merge commit
-          if git log -2 --pretty=%s | tail -n 1 | grep -q "release"; then
-            is_release="true"
-            echo "Release build detected based on commit message."
-          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            is_release="true"
-            echo "Release build detected based on push to main branch."
-          fi
-
-          echo "is_release=${is_release}" >> $GITHUB_OUTPUT
 
       - name: Setup Rust
-        if: steps.check_release.outputs.is_release == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo dependencies
-        if: steps.check_release.outputs.is_release == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: dabgent
 
       - name: Build release binary
-        if: steps.check_release.outputs.is_release == 'true'
         working-directory: ./dabgent
         run: cargo build --release -p dabgent_mcp
 
       - name: Upload binary artifact
-        if: steps.check_release.outputs.is_release == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dabgent-mcp-${{ matrix.platform }}
