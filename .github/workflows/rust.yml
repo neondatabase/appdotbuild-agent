@@ -71,6 +71,7 @@ jobs:
     name: Build dabgent_mcp (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    needs: [rust-checks, rust-tests]
     strategy:
       matrix:
         include:
