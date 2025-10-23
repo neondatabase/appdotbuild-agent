@@ -124,6 +124,8 @@ jobs:
           cd dabgent
           cargo build --release -p dabgent_mcp
           ls -la target/release/
+        env:
+          CARGO_BUILD_JOBS: ${{ matrix.platform == 'macos-arm64' && '2' || '' }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
