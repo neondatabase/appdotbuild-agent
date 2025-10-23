@@ -120,8 +120,10 @@ jobs:
           workspaces: dabgent
 
       - name: Build release binary
-        working-directory: ./dabgent
-        run: cargo build --release -p dabgent_mcp
+        run: |
+          cd dabgent
+          cargo build --release -p dabgent_mcp
+          ls -la target/release/dabgent-mcp
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
