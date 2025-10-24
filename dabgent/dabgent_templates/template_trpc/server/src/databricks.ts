@@ -13,6 +13,7 @@
 //   // result.rows is now validated and typed as MyTable[]
 
 import { DBSQLClient } from "@databricks/sql";
+import type { ConnectionOptions } from "@databricks/sql/dist/contracts/IDBSQLClient";
 import { z } from "zod";
 
 // Environment variables
@@ -28,22 +29,6 @@ const httpPath = `/sql/1.0/warehouses/${warehouseId}`;
 if (!serverHostname || !warehouseId) {
   console.error(`host: ${serverHostname}, warehouseId: ${warehouseId}`);
   throw new Error("Missing: DATABRICKS_HOST, DATABRICKS_WAREHOUSE_ID");
-}
-
-if (authMode === "pat") {
-  if (!token) {
-    throw new Error("Missing: DATABRICKS_TOKEN");
-  }
-} else if (authMode === "app") {
-  if (!clientId || !clientSecret) {
-    throw new Error(
-      "Missing DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET",
-    );
-  }
-} else {
-  throw new Error(
-    `Invalid DATABRICKS_AUTH_MODE: ${authMode}. Must be "pat" or "app"`,
-  );
 }
 
 // Default schema for untyped queries - accepts any valid SQL value
@@ -65,28 +50,44 @@ export interface QueryResult<T = SqlRow> {
 }
 
 export class DatabricksClient {
+  private connectOptions: ConnectionOptions;
+
+  constructor() {
+    if (!serverHostname || !warehouseId) {
+      console.error(`host: ${serverHostname}, warehouseId: ${warehouseId}`);
+      throw new Error("Missing: DATABRICKS_HOST, DATABRICKS_WAREHOUSE_ID");
+    }
+    if (authMode === "pat") {
+      if (!token) {
+        throw new Error("Missing: DATABRICKS_TOKEN");
+      }
+      this.connectOptions = {
+        host: serverHostname,
+        path: httpPath,
+        token: token,
+      };
+    } else if (authMode === "app") {
+      this.connectOptions = {
+        authType: "databricks-oauth" as const,
+        host: serverHostname,
+        path: httpPath,
+        oauthClientId: clientId,
+        oauthClientSecret: clientSecret,
+      };
+    } else {
+      throw new Error(
+        `Invalid DATABRICKS_AUTH_MODE: ${authMode}. Must be "pat" or "app"`,
+      );
+    }
+  }
+
   async executeQuery<T extends z.ZodTypeAny = typeof defaultRowSchema>(
     sql: string,
     schema?: T,
   ): Promise<QueryResult<z.infer<T>>> {
     try {
       const client = new DBSQLClient();
-      const connectOptions =
-        authMode === "pat"
-          ? {
-              host: serverHostname,
-              path: httpPath,
-              token: token,
-            }
-          : {
-              authType: "databricks-oauth" as const,
-              host: serverHostname,
-              path: httpPath,
-              oauthClientId: clientId,
-              oauthClientSecret: clientSecret,
-            };
-
-      const connection = await client.connect(connectOptions);
+      const connection = await client.connect(this.connectOptions);
       const session = await connection.openSession();
       const operation = await session.executeStatement(sql, {
         runAsync: true,
