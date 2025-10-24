@@ -122,8 +122,8 @@ jobs:
       - name: Build release binary
         run: |
           cd dabgent
-          ${{ matrix.platform == 'macos-arm64' && 'cargo build --release -p dabgent_mcp --no-default-features -v -j 1' || 'cargo build --release -p dabgent_mcp' }}
-          ls -la target/release/
+          ${{ matrix.platform == 'macos-arm64' && 'cargo build -p dabgent_mcp' || 'cargo build --release -p dabgent_mcp' }}
+          ls -la target/${{ matrix.platform == 'macos-arm64' && 'debug' || 'release' }}/
         env:
           CARGO_PROFILE_RELEASE_LTO: ${{ matrix.platform == 'macos-arm64' && 'off' || 'thin' }}
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
@@ -133,5 +133,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dabgent-mcp-${{ matrix.platform }}
-          path: dabgent/target/release/dabgent_mcp
+          path: dabgent/target/${{ matrix.platform == 'macos-arm64' && 'debug' || 'release' }}/dabgent_mcp
           retention-days: 30
