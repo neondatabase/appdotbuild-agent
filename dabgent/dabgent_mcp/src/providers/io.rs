@@ -219,6 +219,10 @@ impl IOProvider {
                 if let Ok(token) = std::env::var("DATABRICKS_TOKEN") {
                     container = container.with_env_variable("DATABRICKS_TOKEN", token);
                 }
+                if let Ok(warehouse_id) = std::env::var("DATABRICKS_WAREHOUSE_ID") {
+                    container =
+                        container.with_env_variable("DATABRICKS_WAREHOUSE_ID", warehouse_id);
+                }
 
                 // copy work directory to container
                 let host_dir = client.host().directory(work_dir_str.clone());

@@ -56,6 +56,74 @@ impl AppInfo {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Permission {
+    #[default]
+    CanUse,
+    CanManage,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Warehouse {
+    pub id: String,
+    pub permission: Permission,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Resources {
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql_warehouse: Option<Warehouse>,
+}
+
+impl Resources {
+    pub fn from_env() -> Self {
+        let mut resources = Self::default();
+        if let Ok(warehouse_id) = std::env::var("DATABRICKS_WAREHOUSE_ID") {
+            resources.sql_warehouse = Some(Warehouse {
+                id: warehouse_id,
+                permission: Permission::CanUse,
+            })
+        }
+        resources
+    }
+}
+
+impl Default for Resources {
+    fn default() -> Self {
+        Self {
+            name: "base".to_string(),
+            description: "template resources".to_string(),
+            sql_warehouse: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateApp {
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<Resources>,
+}
+
+impl CreateApp {
+    pub fn new(name: &str, description: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            description: description.to_string(),
+            resources: Vec::new(),
+        }
+    }
+
+    pub fn with_resources(mut self, resources: Resources) -> Self {
+        self.resources.push(resources);
+        self
+    }
+}
+
 pub fn get_app_info(app_name: &str) -> Result<AppInfo> {
     let output = Command::new("databricks")
         .args(&["apps", "get", app_name])
@@ -73,9 +141,10 @@ pub fn get_app_info(app_name: &str) -> Result<AppInfo> {
     Ok(app_info)
 }
 
-pub fn create_app(app_name: &str, description: &str) -> Result<AppInfo> {
+pub fn create_app(app: &CreateApp) -> Result<AppInfo> {
+    let json = serde_json::to_string(app)?;
     let output = Command::new("databricks")
-        .args(&["apps", "create", app_name, "--description", description])
+        .args(&["apps", "create", "--json", &json])
         .output()?;
 
     if !output.status.success() {
@@ -85,7 +154,7 @@ pub fn create_app(app_name: &str, description: &str) -> Result<AppInfo> {
         ));
     }
 
-    get_app_info(app_name)
+    get_app_info(&app.name)
 }
 
 pub fn sync_workspace(app_info: &AppInfo, source_dir: &str) -> Result<()> {
@@ -123,4 +192,26 @@ pub fn deploy_app(app_info: &AppInfo) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_warehouse_serde() {
+        let resources = Resources {
+            name: "".to_string(),
+            description: "".to_string(),
+            sql_warehouse: Some(Warehouse {
+                id: "1".to_string(),
+                permission: Permission::CanUse,
+            }),
+        };
+        let json = serde_json::to_string(&resources).unwrap();
+        assert_eq!(
+            &json,
+            "{\"name\":\"\",\"description\":\"\",\"sql_warehouse\":{\"id\":\"1\",\"permission\":\"CAN_USE\"}}"
+        );
+    }
 }
