@@ -122,13 +122,12 @@ jobs:
       - name: Build release binary
         run: |
           cd dabgent
-          cargo build --release -p dabgent_mcp -vv
+          ${{ matrix.platform == 'macos-arm64' && 'cargo build --release -p dabgent_mcp -vv -j 1' || 'cargo build --release -p dabgent_mcp -vv' }}
           ls -la target/release/
         env:
           CARGO_PROFILE_RELEASE_LTO: ${{ matrix.platform == 'macos-arm64' && 'off' || 'thin' }}
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ matrix.platform == 'macos-arm64' && '16' || '1' }}
           CARGO_PROFILE_RELEASE_OPT_LEVEL: ${{ matrix.platform == 'macos-arm64' && '0' || '3' }}
-          CARGO_BUILD_JOBS: ${{ matrix.platform == 'macos-arm64' && '1' || '' }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
