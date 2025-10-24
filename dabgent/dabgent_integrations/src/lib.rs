@@ -1,6 +1,5 @@
 pub mod databricks;
 pub mod deployment;
-#[cfg(feature = "google-sheets")]
 pub mod google_sheets;
 
 // ============================================================================
@@ -18,7 +17,6 @@ pub use databricks::{
     ListCatalogsResult, ListSchemasRequest, ListSchemasResult, ListTablesRequest,
     ListTablesResult, TableDetails, TableInfo,
 };
-#[cfg(feature = "google-sheets")]
 pub use google_sheets::{
     FetchSpreadsheetDataRequest, GetSpreadsheetMetadataRequest, GoogleSheetsClient,
     ReadRangeRequest, ReadRangeResult, SheetData, SheetMetadata, SpreadsheetData,

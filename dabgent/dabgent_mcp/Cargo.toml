@@ -11,10 +11,6 @@ path = "src/main.rs"
 name = "client"
 path = "examples/client.rs"
 
-[features]
-default = ["google-sheets"]
-google-sheets = ["dabgent_integrations/google-sheets"]
-
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "process", "sync"] }
 serde = { version = "1", features = ["derive"] }
