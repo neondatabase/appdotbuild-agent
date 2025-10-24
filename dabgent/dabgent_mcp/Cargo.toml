@@ -19,8 +19,7 @@ eyre = "0.6"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 thiserror = "2.0"
-rmcp = { version = "0.6", features = ["server", "client", "transport-io", "transport-child-process"] }
-# update rmcp when rmcp-in-process-transport will support newer rmcp version
+rmcp = { version = "0.8", features = ["server", "client", "transport-io", "transport-child-process"] }
 schemars = "1"
 
 # internal dependencies
@@ -29,7 +28,7 @@ dabgent_sandbox = { path = "../dabgent_sandbox" }
 dabgent_templates = { path = "../dabgent_templates" }
 
 [dev-dependencies]
-rmcp-in-process-transport = "0.2.0"
+rmcp-in-process-transport = "0.3.0"
 tempfile = "3"
 
 [build-dependencies]
