@@ -24,7 +24,7 @@ rmcp = { version = "0.6", features = ["server", "client", "transport-io", "trans
 schemars = "1"
 
 # internal dependencies
-dabgent_integrations = { path = "../dabgent_integrations" }
+dabgent_integrations = { path = "../dabgent_integrations", features = ["google-sheets"] }
 dabgent_sandbox = { path = "../dabgent_sandbox" }
 dabgent_templates = { path = "../dabgent_templates" }
 
