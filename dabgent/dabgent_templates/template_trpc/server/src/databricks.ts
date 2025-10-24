@@ -25,12 +25,6 @@ const clientId: string = process.env["DATABRICKS_CLIENT_ID"] || "";
 const clientSecret: string = process.env["DATABRICKS_CLIENT_SECRET"] || "";
 const httpPath = `/sql/1.0/warehouses/${warehouseId}`;
 
-// Validate required environment variables based on auth mode
-if (!serverHostname || !warehouseId) {
-  console.error(`host: ${serverHostname}, warehouseId: ${warehouseId}`);
-  throw new Error("Missing: DATABRICKS_HOST, DATABRICKS_WAREHOUSE_ID");
-}
-
 // Default schema for untyped queries - accepts any valid SQL value
 export const sqlValueSchema = z.union([
   z.string(),
