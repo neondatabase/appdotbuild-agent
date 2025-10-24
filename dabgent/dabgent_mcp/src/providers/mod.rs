@@ -1,11 +1,13 @@
 pub mod databricks;
 pub mod deployment;
 pub mod io;
+#[cfg(feature = "google-sheets")]
 pub mod google_sheets;
 
 pub use databricks::DatabricksProvider;
 pub use deployment::DeploymentProvider;
 pub use io::{IOProvider, Template};
+#[cfg(feature = "google-sheets")]
 pub use google_sheets::GoogleSheetsProvider;
 
 use eyre::Result;
@@ -20,6 +22,7 @@ use std::sync::Arc;
 enum TargetProvider {
     Databricks(Arc<DatabricksProvider>),
     Deployment(Arc<DeploymentProvider>),
+    #[cfg(feature = "google-sheets")]
     GoogleSheets(Arc<GoogleSheetsProvider>),
     Io(Arc<IOProvider>),
 }
@@ -28,6 +31,7 @@ enum TargetProvider {
 pub struct CombinedProvider {
     databricks: Option<Arc<DatabricksProvider>>,
     deployment: Option<Arc<DeploymentProvider>>,
+    #[cfg(feature = "google-sheets")]
     google_sheets: Option<Arc<GoogleSheetsProvider>>,
     io: Option<Arc<IOProvider>>,
 }
@@ -36,15 +40,28 @@ impl CombinedProvider {
     pub fn new(
         databricks: Option<DatabricksProvider>,
         deployment: Option<DeploymentProvider>,
+        #[cfg(feature = "google-sheets")]
         google_sheets: Option<GoogleSheetsProvider>,
         io: Option<IOProvider>,
     ) -> Result<Self> {
-        if databricks.is_none() && deployment.is_none() && google_sheets.is_none() && io.is_none() {
+        #[cfg(feature = "google-sheets")]
+        let all_none = databricks.is_none()
+            && deployment.is_none()
+            && google_sheets.is_none()
+            && io.is_none();
+
+        #[cfg(not(feature = "google-sheets"))]
+        let all_none = databricks.is_none()
+            && deployment.is_none()
+            && io.is_none();
+
+        if all_none {
             return Err(eyre::eyre!("at least one provider must be available"));
         }
         Ok(Self {
             databricks: databricks.map(Arc::new),
             deployment: deployment.map(Arc::new),
+            #[cfg(feature = "google-sheets")]
             google_sheets: google_sheets.map(Arc::new),
             io: io.map(Arc::new),
         })
@@ -61,6 +78,7 @@ impl CombinedProvider {
             return Ok(TargetProvider::Databricks(provider));
         }
 
+        #[cfg(feature = "google-sheets")]
         if tool_name.starts_with("google_sheets_") {
             let provider = self.google_sheets.clone().ok_or_else(|| {
                 ErrorData::invalid_params(
@@ -96,6 +114,7 @@ impl CombinedProvider {
         if let Some(provider) = &self.deployment {
             configured.push(TargetProvider::Deployment(Arc::clone(provider)));
         }
+        #[cfg(feature = "google-sheets")]
         if let Some(provider) = &self.google_sheets {
             configured.push(TargetProvider::GoogleSheets(Arc::clone(provider)));
         }
@@ -123,6 +142,7 @@ impl ServerHandler for CombinedProvider {
         if self.deployment.is_some() {
             providers.push("Deployment");
         }
+        #[cfg(feature = "google-sheets")]
         if self.google_sheets.is_some() {
             providers.push("Google Sheets");
         }
@@ -155,6 +175,7 @@ impl ServerHandler for CombinedProvider {
         match self.resolve_provider(&params.name)? {
             TargetProvider::Databricks(provider) => provider.call_tool(params, context).await,
             TargetProvider::Deployment(provider) => provider.call_tool(params, context).await,
+            #[cfg(feature = "google-sheets")]
             TargetProvider::GoogleSheets(provider) => provider.call_tool(params, context).await,
             TargetProvider::Io(provider) => provider.call_tool(params, context).await,
         }
@@ -179,6 +200,7 @@ impl ServerHandler for CombinedProvider {
             }
         }
 
+        #[cfg(feature = "google-sheets")]
         if let Some(ref google_sheets) = self.google_sheets {
             if let Ok(result) = google_sheets.list_tools(params.clone(), context.clone()).await {
                 tools.extend(result.tools);

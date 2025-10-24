@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "client"
 path = "examples/client.rs"
 
+[features]
+default = ["google-sheets"]
+google-sheets = ["dabgent_integrations/google-sheets"]
+
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "process", "sync"] }
 serde = { version = "1", features = ["derive"] }
@@ -23,7 +27,7 @@ rmcp = { version = "0.8", features = ["server", "client", "transport-io", "trans
 schemars = "1"
 
 # internal dependencies
-dabgent_integrations = { path = "../dabgent_integrations", features = ["google-sheets"] }
+dabgent_integrations = { path = "../dabgent_integrations" }
 dabgent_sandbox = { path = "../dabgent_sandbox" }
 dabgent_templates = { path = "../dabgent_templates" }
 
