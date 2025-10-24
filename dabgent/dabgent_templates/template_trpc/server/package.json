@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tcc -p tsconfig.json --noEmit",
+    "check": "tsc -p tsconfig.json --noEmit",
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "db:push": "drizzle-kit push --force",
