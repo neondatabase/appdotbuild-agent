@@ -28,6 +28,30 @@ async fn main() -> Result<()> {
     let google_sheets = GoogleSheetsProvider::new().await.ok();
     let io = IOProvider::new().ok();
 
+    // print startup banner to stderr (won't interfere with stdio MCP transport)
+    let mut providers_list = Vec::new();
+    if databricks.is_some() {
+        providers_list.push("Databricks");
+    }
+    if deployment.is_some() {
+        providers_list.push("Deployment");
+    }
+    if google_sheets.is_some() {
+        providers_list.push("Google Sheets");
+    }
+    if io.is_some() {
+        providers_list.push("I/O");
+    }
+
+    eprintln!(
+        "🚀 Dabgent MCP Server v{} - build data apps deployable on Databricks Apps platform \n\
+         Configured providers: {}\n\
+         Got questions? eng-appbuild@databricks.com\n\
+         Server running on stdio transport...",
+        env!("CARGO_PKG_VERSION"),
+        providers_list.join(", ")
+    );
+
     // create combined provider with all available integrations
     let provider = CombinedProvider::new(databricks, deployment, google_sheets, io).map_err(
         |_| {

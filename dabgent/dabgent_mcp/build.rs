@@ -5,7 +5,7 @@ use dabgent_templates::TemplateTRPC;
 fn main() {
     // skip Dagger warmup in CI - it's only useful for local dev
     if std::env::var("CI").is_ok() {
-        println!("cargo:warning=Skipping Dagger warmup in CI");
+        println!("cargo:info=Skipping Dagger warmup in CI");
         return;
     }
 
