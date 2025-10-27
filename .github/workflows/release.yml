@@ -124,18 +124,20 @@ jobs:
 
           CI_URL="https://github.com/${{ github.repository }}/actions/runs/${{ needs.validate-and-tag.outputs.run_id }}"
 
-          RELEASE_NOTES="$NOTES
+          cat > release_notes.md <<EOF
+          $NOTES
 
----
-**Build Verification:**
-- Built from commit: \`${{ inputs.commit_sha }}\`
-- CI Run: $CI_URL
-- Artifacts can be verified against the CI build"
+          ---
+          **Build Verification:**
+          - Built from commit: \`${{ inputs.commit_sha }}\`
+          - CI Run: $CI_URL
+          - Artifacts can be verified against the CI build
+          EOF
 
           gh release create "${{ inputs.version }}" \
             --repo "${{ github.repository }}" \
             --title "${{ inputs.version }}" \
-            --notes "$RELEASE_NOTES" \
+            --notes-file release_notes.md \
             release/*
 
       - name: Output release URL
