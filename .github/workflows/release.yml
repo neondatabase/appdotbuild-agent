@@ -17,6 +17,10 @@ on:
         type: string
         default: ""
 
+permissions:
+  contents: write
+  actions: read
+
 jobs:
   validate-and-tag:
     name: Validate and Create Tag
