@@ -1,1 +1,6 @@
 command: ["npm", "run", "start"]
+env:
+  - name: "DATABRICKS_AUTH_MODE"
+    value: "app"
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: base

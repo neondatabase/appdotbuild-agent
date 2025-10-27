@@ -1,5 +1,6 @@
 use dabgent_integrations::{
-    AppInfo, ToolResultDisplay, create_app, deploy_app, get_app_info, sync_workspace,
+    AppInfo, CreateApp, Resources, ToolResultDisplay, create_app, deploy_app, get_app_info,
+    sync_workspace,
 };
 use eyre::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -109,8 +110,9 @@ impl DeploymentProvider {
             }
             Err(_) => {
                 tracing::info!("App not found, creating new app: {}", name);
-                create_app(name, description)
-                    .map_err(|e| eyre::eyre!("Failed to create app: {}", e))?
+                let command =
+                    CreateApp::new(name, description).with_resources(Resources::from_env());
+                create_app(&command).map_err(|e| eyre::eyre!("Failed to create app: {}", e))?
             }
         };
 
