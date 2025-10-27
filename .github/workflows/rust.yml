@@ -125,9 +125,8 @@ jobs:
           cargo build --release -p dabgent_mcp
           ls -la target/release/
         env:
+          # Disable LTO on macOS for faster builds (still optimized with opt-level=3)
           CARGO_PROFILE_RELEASE_LTO: ${{ matrix.platform == 'macos-arm64' && 'off' || 'thin' }}
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
-          CARGO_PROFILE_RELEASE_OPT_LEVEL: 3
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
