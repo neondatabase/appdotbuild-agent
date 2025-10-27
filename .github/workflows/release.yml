@@ -1,21 +1,21 @@
-name: Release
+name: Release MCP server
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g., v0.0.1)'
+        description: "Version tag (e.g., v0.0.1)"
         required: true
         type: string
       commit_sha:
-        description: 'Commit SHA to release'
+        description: "Commit SHA to release"
         required: true
         type: string
       release_notes:
-        description: 'Release notes'
+        description: "Release notes"
         required: false
         type: string
-        default: ''
+        default: ""
 
 jobs:
   validate-and-tag:
