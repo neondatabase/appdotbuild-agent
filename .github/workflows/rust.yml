@@ -134,3 +134,36 @@ jobs:
           name: dabgent-mcp-${{ matrix.platform }}
           path: dabgent/target/release/dabgent_mcp
           retention-days: 30
+
+  smoke-test-mcp:
+    name: Smoke Test MCP Binary (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    needs: build-dabgent-mcp
+    strategy:
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-latest
+          - platform: macos-arm64
+            runner: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dabgent-mcp-${{ matrix.platform }}
+          path: ./binary
+
+      - name: Make binary executable
+        run: chmod +x ./binary/dabgent_mcp
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Run smoke test
+        run: python3 scripts/smoke_test_mcp.py ./binary/dabgent_mcp

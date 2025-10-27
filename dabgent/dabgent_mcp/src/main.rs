@@ -1,10 +1,53 @@
 use dabgent_mcp::providers::{
     CombinedProvider, DatabricksProvider, DeploymentProvider, IOProvider, GoogleSheetsProvider,
 };
+use dabgent_sandbox::dagger::{ConnectOpts, Logger};
+use dabgent_sandbox::{DaggerSandbox, Sandbox};
 use eyre::Result;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use tracing_subscriber;
+
+/// check if docker is available by running 'docker ps'
+async fn check_docker_available() -> Result<()> {
+    let output = tokio::process::Command::new("docker")
+        .arg("ps")
+        .output()
+        .await;
+
+    match output {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(_) => Err(eyre::eyre!(
+            "docker command found but not responding (is the daemon running?)"
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(eyre::eyre!("docker command not found"))
+        }
+        Err(e) => Err(eyre::eyre!("failed to check docker: {}", e)),
+    }
+}
+
+/// warmup sandbox by pre-pulling node image and creating a test container
+async fn warmup_sandbox() -> Result<()> {
+    let opts = ConnectOpts::default()
+        .with_logger(Logger::Silent)
+        .with_execute_timeout(Some(600));
+
+    opts.connect(|client| async move {
+        let container = client
+            .container()
+            .from("node:20-alpine3.22")
+            .with_exec(vec!["mkdir", "-p", "/app"]);
+        let sandbox = DaggerSandbox::from_container(container, client);
+        // force evaluation to ensure image is pulled
+        let _ = sandbox.list_directory("/app").await?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| eyre::eyre!("dagger connect failed: {}", e))?;
+
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,6 +63,21 @@ async fn main() -> Result<()> {
         tracing_subscriber::fmt()
             .with_writer(move || log_file.try_clone().unwrap())
             .init();
+    }
+
+    // check if docker is available before initializing providers
+    let docker_available = check_docker_available().await.is_ok();
+    if !docker_available {
+        eprintln!("⚠️  Warning: docker not available - you may have issues with sandbox operations\n");
+    }
+
+    // spawn non-blocking warmup task if docker is available
+    if docker_available {
+        tokio::spawn(async {
+            if let Err(e) = warmup_sandbox().await {
+                eprintln!("⚠️  Sandbox warmup failed: {}", e);
+            }
+        });
     }
 
     // initialize all available providers
