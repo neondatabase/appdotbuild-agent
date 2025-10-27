@@ -84,12 +84,12 @@ jobs:
         run: |
           should_build="false"
           # we check two commits because the first commit is the merge commit
-          if git log -2 --pretty=%s | tail -n 1 | grep -q "release"; then
+          if git log -2 --pretty=%s | tail -n 1 | grep -q "build-rust"; then
             should_build="true"
-            echo "Release build detected based on commit message."
+            echo "Rust build detected based on commit message."
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
             should_build="true"
-            echo "Release build detected based on push to main branch."
+            echo "Rust build detected based on push to main branch."
           fi
 
           echo "should_build=${should_build}" >> $GITHUB_OUTPUT
@@ -97,7 +97,7 @@ jobs:
   build-dabgent-mcp:
     name: Build dabgent_mcp (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 15
     needs: [rust-checks, rust-tests, check-release-condition]
     if: needs.check-release-condition.outputs.should_build == 'true'
     strategy:
@@ -125,7 +125,7 @@ jobs:
           cargo build --release -p dabgent_mcp
           ls -la target/release/
         env:
-          # Disable LTO on macOS for faster builds (still optimized with opt-level=3)
+          # Disable LTO on macOS for faster builds
           CARGO_PROFILE_RELEASE_LTO: ${{ matrix.platform == 'macos-arm64' && 'off' || 'thin' }}
 
       - name: Upload binary artifact
