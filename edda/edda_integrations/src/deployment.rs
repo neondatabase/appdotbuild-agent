@@ -124,6 +124,40 @@ impl CreateApp {
     }
 }
 
+/*
+*
+* {
+  "active":true,
+  "displayName":"Igor Rekun",
+  "emails": [
+    {
+      "primary":true,
+      "type":"work",
+      "value":"igor.rekun@databricks.com"
+    }
+  ],
+  "id":"6531731465109444",
+  "name": {
+    "familyName":"Rekun",
+    "givenName":"Igor"
+  },
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:User",
+    "urn:ietf:params:scim:schemas:extension:workspace:2.0:User"
+  ],
+  "userName":"igor.rekun@databricks.com"
+}
+*/
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserInfo {
+    pub id: String,
+    pub active: bool,
+    pub display_name: String,
+    pub user_name: String,
+}
+
 pub fn get_app_info(app_name: &str) -> Result<AppInfo> {
     let output = Command::new("databricks")
         .args(&["apps", "get", app_name])
@@ -192,6 +226,22 @@ pub fn deploy_app(app_info: &AppInfo) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn get_user_info() -> Result<UserInfo> {
+    let output = Command::new("databricks")
+        .args(&["current-user", "me"])
+        .output()?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to get user info: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let json_str = String::from_utf8(output.stdout)?;
+    let user_info: UserInfo = serde_json::from_str(&json_str)?;
+    Ok(user_info)
 }
 
 #[cfg(test)]

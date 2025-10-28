@@ -1,7 +1,7 @@
 use crate::state;
 use edda_integrations::{
     AppInfo, CreateApp, Resources, ToolResultDisplay, create_app, deploy_app, get_app_info,
-    sync_workspace,
+    get_user_info, sync_workspace,
 };
 use eyre::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -27,6 +27,8 @@ pub struct DeployDatabricksAppArgs {
     pub name: String,
     /// Description of the Databricks app
     pub description: String,
+    /// Force re-deployment if the app already exists
+    pub force: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -68,6 +70,7 @@ impl DeploymentProvider {
         work_dir: &str,
         name: &str,
         description: &str,
+        force: bool,
     ) -> Result<DeployDatabricksAppResult> {
         let start_time = std::time::Instant::now();
         // Validate work directory exists
@@ -154,6 +157,15 @@ impl DeploymentProvider {
         let app_info: AppInfo = match get_app_info(name) {
             Ok(info) => {
                 tracing::info!("Found existing app: {}", name);
+                let user_info =
+                    get_user_info().map_err(|e| eyre::eyre!("Failed to get user info: {}", e))?;
+                if (!force) && (info.creator != user_info.user_name) {
+                    return Err(eyre::eyre!(
+                        "App '{}' already exists and was created by another user: {}. Use 'force' option to override.",
+                        name,
+                        info.creator
+                    ));
+                }
                 info
             }
             Err(_) => {
@@ -216,12 +228,14 @@ impl DeploymentProvider {
             ));
         }
 
-        let result =
-            Self::deploy_databricks_app_impl(&args.work_dir, &args.name, &args.description)
-                .await
-                .map_err(|e| {
-                    ErrorData::internal_error(format!("Failed to deploy app: {}", e), None)
-                })?;
+        let result = Self::deploy_databricks_app_impl(
+            &args.work_dir,
+            &args.name,
+            &args.description,
+            args.force.unwrap_or(false),
+        )
+        .await
+        .map_err(|e| ErrorData::internal_error(format!("Failed to deploy app: {}", e), None))?;
 
         if result.success {
             Ok(CallToolResult::success(vec![Content::text(

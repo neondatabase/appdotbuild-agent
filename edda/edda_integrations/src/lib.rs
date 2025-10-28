@@ -18,7 +18,8 @@ pub use databricks::{
     ListTablesResult, TableDetails, TableInfo,
 };
 pub use deployment::{
-    AppInfo, CreateApp, Resources, create_app, deploy_app, get_app_info, sync_workspace,
+    AppInfo, CreateApp, Resources, create_app, deploy_app, get_app_info, get_user_info,
+    sync_workspace,
 };
 pub use google_sheets::{
     FetchSpreadsheetDataRequest, GetSpreadsheetMetadataRequest, GoogleSheetsClient,
