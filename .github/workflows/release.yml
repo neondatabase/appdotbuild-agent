@@ -75,18 +75,14 @@ jobs:
           echo "Found CI run: $RUN_ID"
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
 
-      - name: Create and push tag
+      - name: Verify commit for tagging
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          NOTES="${{ inputs.release_notes }}"
-          if [ -z "$NOTES" ]; then
-            NOTES="Release ${{ inputs.version }}"
-          fi
-
-          git tag -a "${{ inputs.version }}" "${{ inputs.commit_sha }}" -m "$NOTES"
-          git push origin "${{ inputs.version }}"
+          # Verify commit exists and is in the repository
+          git rev-parse --verify "${{ inputs.commit_sha }}"
+          echo "Commit ${{ inputs.commit_sha }} verified for release"
 
   create-release:
     name: Create GitHub Release
@@ -142,6 +138,8 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "${{ inputs.version }}" \
             --notes-file release_notes.md \
+            --target "${{ inputs.commit_sha }}" \
+            --verify-tag \
             release/*
 
       - name: Output release URL
