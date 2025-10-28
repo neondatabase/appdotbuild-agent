@@ -6,9 +6,13 @@ on:
       - main
     paths:
       - "agent/**"
+      - "klaudbiusz/**"
+      - "scripts/**"
   pull_request:
     paths:
       - "agent/**"
+      - "klaudbiusz/**"
+      - "scripts/**"
 
 env:
   CONTAINER_NAME: agent-apiserver-1
@@ -37,7 +41,55 @@ jobs:
         with:
           version: ">=0.11.5"
           args: check .
-        continue-on-error: true
+
+      - name: Show fix instructions on failure
+        if: failure()
+        run: |
+          echo "❌ Ruff checks failed!"
+          echo ""
+          echo "To fix automatically, run:"
+          echo "  uv run ruff check . --fix"
+          echo ""
+          echo "To check specific directories:"
+          echo "  uv run ruff check klaudbiusz/ --extend-exclude='node_modules'"
+          echo "  uv run ruff check scripts/"
+
+  type-check:
+    name: Type Check (Pyright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.7.3"
+
+      - name: Type check agent
+        working-directory: ./agent/
+        run: uv run pyright .
+
+      - name: Type check klaudbiusz
+        working-directory: ./klaudbiusz/
+        run: uv run pyright .
+
+      - name: Type check scripts
+        working-directory: ./
+        run: uv run pyright scripts/
+
+      - name: Show fix instructions on failure
+        if: failure()
+        run: |
+          echo "❌ Pyright type checks failed!"
+          echo ""
+          echo "To check types locally, run:"
+          echo "  cd agent && uv run pyright ."
+          echo "  cd klaudbiusz && uv run pyright ."
+          echo "  uv run pyright scripts/"
+          echo ""
+          echo "Fix type errors by adding proper type annotations or type: ignore comments."
 
   rust-checks:
     name: Rust Checks
@@ -70,7 +122,6 @@ jobs:
       - name: Run cargo clippy
         working-directory: ./dabgent
         run: cargo clippy -- -W warnings
-        continue-on-error: true
 
   rust-tests:
     name: Rust Tests
@@ -97,12 +148,10 @@ jobs:
       - name: Run unit tests
         working-directory: ./dabgent
         run: cargo test --lib --all
-        continue-on-error: true
 
       - name: Run integration tests (excluding e2e)
         working-directory: ./dabgent
         run: cargo test --all --test '*' -- --skip e2e_generation
-        continue-on-error: true
 
   # E2E tests disabled until e2e_generation.rs is properly implemented
   # rust-e2e-tests:
@@ -317,6 +366,7 @@ jobs:
         health-check,
         e2e-tests,
         lint,
+        type-check,
         rust-checks,
         rust-tests,
       ]

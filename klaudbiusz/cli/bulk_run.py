@@ -68,11 +68,12 @@ def enrich_results_with_screenshots(results: list[RunResult]) -> None:
         result["screenshot_path"] = str(screenshot_path) if screenshot_path.exists() else None
 
         # check if logs exist and are non-empty
-        has_logs = False
         if logs_path.exists():
             try:
-                has_logs = logs_path.stat().st_size > 0
-                result["browser_logs_path"] = str(logs_path)
+                if logs_path.stat().st_size > 0:
+                    result["browser_logs_path"] = str(logs_path)
+                else:
+                    result["browser_logs_path"] = None
             except Exception:
                 result["browser_logs_path"] = None
         else:
@@ -81,7 +82,7 @@ def enrich_results_with_screenshots(results: list[RunResult]) -> None:
 
 def run_single_generation(app_name: str, prompt: str, wipe_db: bool = False, use_subagents: bool = False) -> RunResult:
     def timeout_handler(signum, frame):
-        raise TimeoutError(f"Generation timed out after 900 seconds")
+        raise TimeoutError("Generation timed out after 900 seconds")
 
     try:
         # set 15 minute timeout for entire generation

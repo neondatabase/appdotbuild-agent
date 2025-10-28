@@ -158,10 +158,10 @@ dev = [
     { name = "coloredlogs" },
     { name = "docker" },
     { name = "pdbpp" },
+    { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "ruff" },
-    { name = "streamlit" },
 ]
 
 [package.metadata]
@@ -175,10 +175,10 @@ dev = [
     { name = "coloredlogs", specifier = ">=15.0.1" },
     { name = "docker", specifier = ">=7.1.0" },
     { name = "pdbpp", specifier = ">=0.10.3" },
+    { name = "pyright", specifier = ">=1.1.406" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
     { name = "ruff", specifier = ">=0.11.5" },
-    { name = "streamlit", specifier = ">=1.45.1" },
 ]
 
 [[package]]
@@ -1069,6 +1069,7 @@ name = "klaudbiusz"
 version = "0.1.0"
 source = { virtual = "klaudbiusz" }
 dependencies = [
+    { name = "anthropic" },
     { name = "asyncpg" },
     { name = "claude-agent-sdk" },
     { name = "coloredlogs" },
@@ -1085,6 +1086,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", specifier = ">=0.40.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "claude-agent-sdk", specifier = ">=0.1.0" },
     { name = "coloredlogs", specifier = ">=15.0.1" },

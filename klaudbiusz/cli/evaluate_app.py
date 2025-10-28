@@ -18,15 +18,16 @@ Usage:
 import json
 import os
 import subprocess
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+
+# load environment variables from .env file
+load_dotenv()
 
 # Load environment variables from .env file
 try:
@@ -46,9 +47,9 @@ except ImportError:
     print("Warning: python-dotenv not installed, relying on system environment variables")
 
 try:
-    import anthropic
+    import anthropic  # type: ignore[import-untyped]
 except ImportError:
-    anthropic = None
+    anthropic = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -351,7 +352,7 @@ ISSUES: [list issues or "None"]""",
             ],
         )
 
-        response_text = message.content[0].text
+        response_text = message.content[0].text  # type: ignore[union-attr]
         score = 0
         issues = "Unknown"
 
@@ -435,7 +436,7 @@ Respond with ONLY one word: PASS or FAIL""",
             ],
         )
 
-        response_text = message.content[0].text.strip().upper()
+        response_text = message.content[0].text  # type: ignore[union-attr].strip().upper()
 
         # Binary check: PASS or FAIL
         if "PASS" in response_text:

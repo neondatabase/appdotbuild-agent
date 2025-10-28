@@ -12,6 +12,8 @@ from pathlib import Path
 
 def send_request(process: subprocess.Popen, request: dict) -> dict:
     """send JSON-RPC request and read response"""
+    assert process.stdin is not None
+    assert process.stdout is not None
     request_line = json.dumps(request) + "\n"
     process.stdin.write(request_line.encode())
     process.stdin.flush()
@@ -69,6 +71,7 @@ def main() -> None:
 
         # send initialized notification (no response expected)
         print("\n2. Sending initialized notification...")
+        assert process.stdin is not None
         notification = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
         process.stdin.write(notification.encode())
         process.stdin.flush()
@@ -106,6 +109,7 @@ def main() -> None:
 
     except Exception as e:
         print(f"\n❌ Smoke test failed: {e}")
+        assert process.stderr is not None
         stderr = process.stderr.read().decode()
         if stderr:
             print(f"\nServer stderr:\n{stderr}")

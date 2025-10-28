@@ -13,16 +13,17 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 import time
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+
+# load environment variables from .env file
+load_dotenv()
 
 # Load environment variables
 try:
@@ -39,10 +40,11 @@ except ImportError:
     pass
 
 try:
-    import anthropic
+    import anthropic  # type: ignore[import-untyped]
     ANTHROPIC_AVAILABLE = True
 except ImportError:
     ANTHROPIC_AVAILABLE = False
+    anthropic = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -221,7 +223,7 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
                 import base64
                 image_data = base64.standard_b64encode(screenshot_path.read_bytes()).decode("utf-8")
 
-                client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+                client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))  # type: ignore[union-attr]
                 message = client.messages.create(
                     model="claude-sonnet-4-5-20250929",
                     max_tokens=100,
@@ -266,7 +268,6 @@ Respond with ONLY one word: PASS or FAIL""",
 
     # Metric 8: Local runability
     local_score = 0
-    local_details = []
     readme = app_dir / "README.md"
     if readme.exists() and any(w in readme.read_text().lower() for w in ["setup", "installation"]):
         local_score += 1
@@ -285,8 +286,8 @@ Respond with ONLY one word: PASS or FAIL""",
             local_score += 1
             if "start" in pkg_data.get("scripts", {}):
                 local_score += 1
-        except Exception as e:
-            # Silently fail but at least we tried
+        except Exception:
+            # silently fail but at least we tried
             pass
     if (app_dir / "server" / "src" / "index.ts").exists():
         local_score += 1
@@ -902,7 +903,7 @@ def main():
     print(f"  8. Local Runability:      {metrics['local_runability_avg']:.1f}/5 ⭐")
     print(f"  9. Deployability:         {metrics['deployability_avg']:.1f}/5 ⭐")
 
-    print(f"\nQuality Distribution:")
+    print("\nQuality Distribution:")
     qual = summary["quality_distribution"]
     print(f"  🟢 Excellent: {len(qual['excellent'])}")
     print(f"  🟡 Good:      {len(qual['good'])}")

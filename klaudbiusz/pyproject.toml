@@ -11,6 +11,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "tqdm>=4.66.0",
     "joblib>=1.4.0",
+    "anthropic>=0.40.0",
 ]
 
 [tool.ruff]
