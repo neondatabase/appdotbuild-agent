@@ -2,6 +2,14 @@ TypeScript full-stack template with tRPC for type-safe API communication between
 - server/: Node.js backend with tRPC API
 - client/: React frontend with tRPC client
 
+## Project State Management:
+This project uses a state file (`.dabgent_state`) managed by dabgent MCP to enforce the correct workflow order:
+1. **Scaffold** (Initial → Scaffolded): `scaffold_data_app` creates project structure from template
+2. **Validate** (Scaffolded → Validated): `validate_data_app` runs build + tests in sandbox, computes BLAKE3 checksum of package.json and all .ts/.tsx files
+3. **Deploy** (Validated → Deployed): `deploy_databricks_app` deploys to Databricks Apps, but ONLY if checksum hasn't changed since validation
+
+Re-validation is allowed (Deployed → Validated) to update the checksum after intentional changes. The dabgent MCP tools enforce these FSM transitions and prevent invalid state changes.
+
 ## Workflow:
 - Projects MUST end with validate_project to verify build + tests pass
 - Bias towards backend code when the task allows implementation in multiple places

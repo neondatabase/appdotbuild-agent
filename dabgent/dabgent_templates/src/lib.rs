@@ -10,3 +10,9 @@ use rust_embed::Embed;
 #[exclude = "build/**"]
 #[exclude = "**/.DS_Store"]
 pub struct TemplateTRPC;
+
+impl TemplateTRPC {
+    pub fn guidelines() -> &'static str {
+        include_str!("../template_trpc/CLAUDE.md")
+    }
+}

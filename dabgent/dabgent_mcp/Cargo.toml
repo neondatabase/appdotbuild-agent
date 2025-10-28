@@ -21,6 +21,8 @@ tracing-subscriber = "0.3"
 thiserror = "2.0"
 rmcp = { version = "0.8", features = ["server", "client", "transport-io", "transport-child-process"] }
 schemars = "1"
+blake3 = "1.5"
+chrono = { version = "0.4", features = ["serde"] }
 
 # internal dependencies
 dabgent_integrations = { path = "../dabgent_integrations" }

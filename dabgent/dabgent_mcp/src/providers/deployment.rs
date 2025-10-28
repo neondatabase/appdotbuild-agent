@@ -1,3 +1,4 @@
+use crate::state;
 use dabgent_integrations::{
     AppInfo, CreateApp, Resources, ToolResultDisplay, create_app, deploy_app, get_app_info,
     sync_workspace,
@@ -88,6 +89,52 @@ impl DeploymentProvider {
             });
         }
 
+        // load and verify state
+        let project_state = match state::load_state(&work_path)? {
+            Some(state) => state,
+            None => {
+                return Ok(DeployDatabricksAppResult {
+                    success: false,
+                    message: "Project must be scaffolded before deployment".to_string(),
+                    app_url: None,
+                    app_name: name.to_string(),
+                });
+            }
+        };
+
+        // verify checksum hasn't changed since validation
+        let expected_checksum = match project_state.checksum() {
+            Some(checksum) => checksum,
+            None => {
+                return Ok(DeployDatabricksAppResult {
+                    success: false,
+                    message: "Project must be validated before deployment. Run validate_data_app first.".to_string(),
+                    app_url: None,
+                    app_name: name.to_string(),
+                });
+            }
+        };
+
+        match state::verify_checksum(&work_path, expected_checksum) {
+            Ok(true) => {},
+            Ok(false) => {
+                return Ok(DeployDatabricksAppResult {
+                    success: false,
+                    message: "Project files changed since validation. Re-run validate_data_app before deployment.".to_string(),
+                    app_url: None,
+                    app_name: name.to_string(),
+                });
+            },
+            Err(e) => {
+                return Ok(DeployDatabricksAppResult {
+                    success: false,
+                    message: format!("Failed to verify project checksum: {}", e),
+                    app_url: None,
+                    app_name: name.to_string(),
+                });
+            }
+        }
+
         // Install project dependencies
         run_format_cmd(
             std::process::Command::new("npm")
@@ -126,6 +173,10 @@ impl DeploymentProvider {
         tracing::info!("Deploying app: {}", name);
         deploy_app(&app_info).map_err(|e| eyre::eyre!("Failed to deploy app: {}", e))?;
 
+        // transition to deployed state
+        let project_state = project_state.deploy()?;
+        state::save_state(&work_path, &project_state)?;
+
         Ok(DeployDatabricksAppResult {
             success: true,
             message: "Deployment completed successfully".to_string(),
@@ -136,7 +187,7 @@ impl DeploymentProvider {
 
     #[tool(
         name = "deploy_databricks_app",
-        description = "Deploy a generated app to Databricks Apps. Creates the app if it doesn't exist, syncs local files to workspace, and deploys the app. Returns deployment status and app URL."
+        description = "Deploy a generated app to Databricks Apps. App should be validated first. Creates the app if it doesn't exist, syncs local files to workspace, and deploys the app. Returns deployment status and app URL."
     )]
     pub async fn deploy_databricks_app(
         &self,

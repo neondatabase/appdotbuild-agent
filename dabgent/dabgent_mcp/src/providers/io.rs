@@ -1,3 +1,4 @@
+use crate::state;
 use dabgent_integrations::ToolResultDisplay;
 use dabgent_sandbox::dagger::{ConnectOpts, Logger};
 use dabgent_sandbox::{DaggerSandbox, Sandbox};
@@ -24,7 +25,7 @@ pub enum Template {
 impl Template {
     fn description(&self) -> &'static str {
         match self {
-            Template::Trpc => include_str!("../../templates/trpc_guidelines.md"),
+            Template::Trpc => TemplateTRPC::guidelines(),
         }
     }
 
@@ -179,6 +180,16 @@ impl IOProvider {
                 ErrorData::internal_error(format!("failed to initiate project: {}", e), None)
             })?;
 
+        // transition to scaffolded state
+        let project_state = state::load_state(&work_path)
+            .map_err(|e| ErrorData::internal_error(format!("failed to load state: {}", e), None))?
+            .unwrap_or_else(|| state::ProjectState::new());
+        let project_state = project_state.scaffold()
+            .map_err(|e| ErrorData::internal_error(format!("failed to transition to scaffolded state: {}", e), None))?;
+        state::save_state(&work_path, &project_state).map_err(|e| {
+            ErrorData::internal_error(format!("failed to save project state: {}", e), None)
+        })?;
+
         Ok(CallToolResult::success(vec![Content::text(
             result.display(),
         )]))
@@ -194,6 +205,15 @@ impl IOProvider {
         if !work_dir.is_dir() {
             eyre::bail!("work path is not a directory: {}", work_dir.display());
         }
+
+        // load project state
+        let project_state = match state::load_state(work_dir)? {
+            Some(state) => state,
+            None => {
+                tracing::warn!("Project not scaffolded by dabgent, but proceeding with validation");
+                state::ProjectState::new()
+            }
+        };
 
         // use channel to pass validation result out of dagger connection callback
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -247,15 +267,25 @@ impl IOProvider {
             .map_err(|_| eyre::eyre!("validation task was cancelled"))?;
 
         let result = match validation_result {
-            Ok(_) => ValidateProjectResult {
-                success: true,
-                message: "All validations passed (build + tests)".to_string(),
-                details: None,
+            Ok(_) => {
+                // compute checksum and transition to validated state
+                let checksum = state::compute_checksum(work_dir)?;
+                let project_state = project_state.validate(checksum)?;
+                state::save_state(work_dir, &project_state)?;
+
+                ValidateProjectResult {
+                    success: true,
+                    message: "All validations passed (build + tests)".to_string(),
+                    details: None,
+                }
             },
-            Err(details) => ValidateProjectResult {
-                success: false,
-                message: "Validation failed".to_string(),
-                details: Some(details),
+            Err(details) => {
+                // failed validation - don't update state
+                ValidateProjectResult {
+                    success: false,
+                    message: "Validation failed".to_string(),
+                    details: Some(details),
+                }
             },
         };
 
@@ -264,7 +294,7 @@ impl IOProvider {
 
     #[tool(
         name = "validate_data_app",
-        description = "Validate a project by copying files to a sandbox and running TypeScript compilation check and tests. Returns validation result with success status and details."
+        description = "Validate a project by copying files to a sandbox and running TypeScript compilation check and tests. Project should be scaffolded first. Returns validation result with success status and details."
     )]
     pub async fn validate_data_app(
         &self,
