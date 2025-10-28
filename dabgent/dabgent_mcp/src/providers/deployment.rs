@@ -187,7 +187,7 @@ impl DeploymentProvider {
 
     #[tool(
         name = "deploy_databricks_app",
-        description = "Deploy a generated app to Databricks Apps. App should be validated first. Creates the app if it doesn't exist, syncs local files to workspace, and deploys the app. Returns deployment status and app URL."
+        description = "Deploy a generated app to Databricks Apps. Creates the app if it doesn't exist, syncs local files to workspace, and deploys the app. Returns deployment status and app URL. Only use after direct user request and running validation."
     )]
     pub async fn deploy_databricks_app(
         &self,

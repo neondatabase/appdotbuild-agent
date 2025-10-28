@@ -180,16 +180,6 @@ impl IOProvider {
                 ErrorData::internal_error(format!("failed to initiate project: {}", e), None)
             })?;
 
-        // transition to scaffolded state
-        let project_state = state::load_state(&work_path)
-            .map_err(|e| ErrorData::internal_error(format!("failed to load state: {}", e), None))?
-            .unwrap_or_else(|| state::ProjectState::new());
-        let project_state = project_state.scaffold()
-            .map_err(|e| ErrorData::internal_error(format!("failed to transition to scaffolded state: {}", e), None))?;
-        state::save_state(&work_path, &project_state).map_err(|e| {
-            ErrorData::internal_error(format!("failed to save project state: {}", e), None)
-        })?;
-
         Ok(CallToolResult::success(vec![Content::text(
             result.display(),
         )]))

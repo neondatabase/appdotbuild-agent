@@ -9,7 +9,6 @@ const STATE_FILE_NAME: &str = ".dabgent_state";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", content = "data")]
 pub enum ProjectState {
-    Initial,
     Scaffolded,
     Validated {
         validated_at: DateTime<Utc>,
@@ -24,14 +23,7 @@ pub enum ProjectState {
 
 impl ProjectState {
     pub fn new() -> Self {
-        Self::Initial
-    }
-
-    pub fn scaffold(self) -> Result<Self> {
-        match self {
-            Self::Initial => Ok(Self::Scaffolded),
-            _ => Err(eyre!("cannot scaffold: project already in state {:?}", self)),
-        }
+        Self::Scaffolded
     }
 
     pub fn validate(self, checksum: String) -> Result<Self> {
@@ -42,7 +34,6 @@ impl ProjectState {
                     checksum,
                 })
             }
-            Self::Initial => Err(eyre!("cannot validate: project not scaffolded")),
         }
     }
 
@@ -53,7 +44,6 @@ impl ProjectState {
                 checksum,
                 deployed_at: Utc::now(),
             }),
-            Self::Initial => Err(eyre!("cannot deploy: project not scaffolded")),
             Self::Scaffolded => Err(eyre!("cannot deploy: project not validated")),
             Self::Deployed { .. } => Err(eyre!("cannot deploy: project already deployed (re-validate first)")),
         }
