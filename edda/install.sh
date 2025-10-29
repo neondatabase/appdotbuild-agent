@@ -251,6 +251,22 @@ download_and_install() {
 
 print_claude_instructions() {
     local _install_path="$1"
+    local _ostype
+    _ostype="$(uname -s)"
+
+    # Determine Claude Desktop config path based on OS
+    local _claude_desktop_config
+    case "$_ostype" in
+        Darwin)
+            _claude_desktop_config="~/Library/Application Support/Claude/claude_desktop_config.json"
+            ;;
+        Linux)
+            _claude_desktop_config="~/.config/Claude/claude_desktop_config.json"
+            ;;
+        *)
+            _claude_desktop_config="<see Claude Desktop documentation for your OS>"
+            ;;
+    esac
 
     echo ""
     echo "${GREEN}✓${RESET} ${BOLD}Done!${RESET} 🎉"
@@ -269,7 +285,7 @@ print_claude_instructions() {
     # Claude Desktop section
     echo "${BOLD}For Claude Desktop:${RESET}"
     echo ""
-    echo "  Add this to ${DIM}~/Library/Application Support/Claude/claude_desktop_config.json${RESET}"
+    echo "  Add this to ${DIM}$_claude_desktop_config${RESET}"
     echo ""
     cat <<EOF
   ${CYAN}{
@@ -283,6 +299,26 @@ print_claude_instructions() {
 EOF
     echo ""
     echo "  Then restart Claude Desktop"
+    echo ""
+    echo ""
+
+    # Cursor section
+    echo "${BOLD}For Cursor:${RESET}"
+    echo ""
+    echo "  Add this to ${DIM}~/.cursor/mcp.json${RESET}"
+    echo ""
+    cat <<EOF
+  ${CYAN}{
+    "mcpServers": {
+      "dabgent": {
+        "command": "$_install_path",
+        "args": []
+      }
+    }
+  }${RESET}
+EOF
+    echo ""
+    echo "  Then restart Cursor"
     echo ""
 }
 
