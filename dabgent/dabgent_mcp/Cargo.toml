@@ -23,6 +23,7 @@ rmcp = { version = "0.8", features = ["server", "client", "transport-io", "trans
 schemars = "1"
 blake3 = "1.5"
 chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5.50", features = ["derive"] }
 
 # internal dependencies
 dabgent_integrations = { path = "../dabgent_integrations" }

@@ -1,5 +1,6 @@
+use clap::{Parser, Subcommand};
 use dabgent_mcp::providers::{
-    CombinedProvider, DatabricksProvider, DeploymentProvider, IOProvider, GoogleSheetsProvider,
+    CombinedProvider, DatabricksProvider, DeploymentProvider, GoogleSheetsProvider, IOProvider,
 };
 use dabgent_sandbox::dagger::{ConnectOpts, Logger};
 use dabgent_sandbox::{DaggerSandbox, Sandbox};
@@ -7,6 +8,20 @@ use eyre::Result;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use tracing_subscriber;
+
+#[derive(Parser)]
+#[command(name = "dabgent_mcp")]
+#[command(about = "Databricks Agent MCP Server", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Placeholder yell command
+    Yell,
+}
 
 /// check if docker is available by running 'docker ps'
 async fn check_docker_available() -> Result<()> {
@@ -51,6 +66,21 @@ async fn warmup_sandbox() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(Commands::Yell) => {
+            // Placeholder - does nothing for now
+            Ok(())
+        }
+        None => {
+            // Default behavior: launch MCP server
+            run_server().await
+        }
+    }
+}
+
+async fn run_server() -> Result<()> {
     // configure tracing to write to stderr only if RUST_LOG is set
     // this prevents interference with stdio MCP transport
     if std::env::var("RUST_LOG").is_ok() {
@@ -68,7 +98,9 @@ async fn main() -> Result<()> {
     // check if docker is available before initializing providers
     let docker_available = check_docker_available().await.is_ok();
     if !docker_available {
-        eprintln!("⚠️  Warning: docker not available - you may have issues with sandbox operations\n");
+        eprintln!(
+            "⚠️  Warning: docker not available - you may have issues with sandbox operations\n"
+        );
     }
 
     // spawn non-blocking warmup task if docker is available
@@ -111,8 +143,8 @@ async fn main() -> Result<()> {
     );
 
     // create combined provider with all available integrations
-    let provider = CombinedProvider::new(databricks, deployment, google_sheets, io).map_err(
-        |_| {
+    let provider =
+        CombinedProvider::new(databricks, deployment, google_sheets, io).map_err(|_| {
             eyre::eyre!(
                 "No integrations available. Configure at least one:\n\
              - Databricks: Set DATABRICKS_HOST and DATABRICKS_TOKEN\n\
@@ -120,8 +152,7 @@ async fn main() -> Result<()> {
              - Google Sheets: Place credentials at ~/.config/gspread/credentials.json\n\
              - I/O: Always available"
             )
-        },
-    )?;
+        })?;
 
     let service = provider.serve(stdio()).await?;
     service.waiting().await?;
