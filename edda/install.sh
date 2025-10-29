@@ -47,17 +47,63 @@ SUPPORTED PLATFORMS:
 EOF
 }
 
+# Color and formatting
+BOLD=$(tput bold 2>/dev/null || echo '')
+RESET=$(tput sgr0 2>/dev/null || echo '')
+RED=$(tput setaf 1 2>/dev/null || echo '')
+GREEN=$(tput setaf 2 2>/dev/null || echo '')
+YELLOW=$(tput setaf 3 2>/dev/null || echo '')
+BLUE=$(tput setaf 4 2>/dev/null || echo '')
+CYAN=$(tput setaf 6 2>/dev/null || echo '')
+DIM=$(tput dim 2>/dev/null || echo '')
+
 say() {
     echo "$1"
 }
 
+info() {
+    echo "${CYAN}▸${RESET} $1"
+}
+
+success() {
+    echo "${GREEN}✓${RESET} $1"
+}
+
+warn() {
+    echo "${YELLOW}⚠${RESET} $1"
+}
+
 err() {
-    local red
-    local reset
-    red=$(tput setaf 1 2>/dev/null || echo '')
-    reset=$(tput sgr0 2>/dev/null || echo '')
-    say "${red}ERROR${reset}: $1" >&2
+    echo "${RED}✗ ERROR${RESET}: $1" >&2
     exit 1
+}
+
+header() {
+    echo ""
+    echo "${BOLD}$1${RESET}"
+    echo ""
+}
+
+# Simple spinner for long operations
+spinner() {
+    local pid=$1
+    local message=$2
+    local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local delay=0.1
+
+    printf "${CYAN}▸${RESET} %s " "$message"
+
+    while kill -0 "$pid" 2>/dev/null; do
+        local temp=${spinstr#?}
+        printf "[%c]" "$spinstr"
+        spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b"
+    done
+
+    printf "   \b\b\b"
+    wait "$pid"
+    return $?
 }
 
 need_cmd() {
@@ -77,15 +123,23 @@ ensure() {
     fi
 }
 
-# Download using curl or wget
+# Download using curl or wget with progress
 downloader() {
     local _url="$1"
     local _file="$2"
 
     if check_cmd curl; then
-        ensure curl -sSfL "$_url" -o "$_file"
+        info "Downloading..."
+        curl -fL --progress-bar "$_url" -o "$_file" 2>&1
+        if [ ! -f "$_file" ]; then
+            return 1
+        fi
     elif check_cmd wget; then
-        ensure wget "$_url" -O "$_file"
+        info "Downloading..."
+        wget --quiet --show-progress "$_url" -O "$_file"
+        if [ ! -f "$_file" ]; then
+            return 1
+        fi
     else
         err "need 'curl' or 'wget' to download files"
     fi
@@ -141,10 +195,14 @@ download_and_install() {
         esac
     done
 
+    # Print banner
+    echo ""
+    echo "${BOLD}${CYAN}edda MCP Server${RESET}"
+    echo ""
+
     # Detect architecture
     local _arch
     _arch="$(get_architecture)"
-    say "Detected platform: $_arch"
 
     # Construct download URL
     local _binary_name="${APP_NAME}-${_arch}"
@@ -155,20 +213,19 @@ download_and_install() {
     _tmpdir="$(ensure mktemp -d)" || return 1
     local _tmpfile="$_tmpdir/$APP_NAME"
 
-    say "Downloading ${APP_NAME}..."
-    say "  from: $_download_url"
+    # Download
+    info "Platform: ${BOLD}$_arch${RESET}"
+    echo "  ${DIM}$_download_url${RESET}"
+    echo ""
 
     if ! downloader "$_download_url" "$_tmpfile"; then
-        say "Failed to download from $_download_url"
-        say "This may indicate a network error or that no release exists for your platform."
-        exit 1
+        err "Failed to download"
     fi
 
     # Determine installation directory
     local _install_dir="${INFERRED_HOME}/.local/bin"
     local _install_path="${_install_dir}/${APP_NAME}"
 
-    say "Installing to $_install_dir..."
     ensure mkdir -p "$_install_dir"
     ensure mv "$_tmpfile" "$_install_path"
     ensure chmod +x "$_install_path"
@@ -176,24 +233,16 @@ download_and_install() {
     # Clean up
     ensure rm -rf "$_tmpdir"
 
-    say ""
-    say "Installation complete!"
-    say ""
-    say "Binary installed at: $_install_path"
+    echo ""
+    success "Installed to ${BOLD}$_install_path${RESET}"
 
     # Check if install dir is on PATH
     case ":${PATH}:" in
         *:"$_install_dir":*)
-            say "$_install_dir is already on your PATH"
             ;;
         *)
-            say ""
-            say "NOTE: $_install_dir is not on your PATH."
-            say "Add it by running:"
-            say ""
-            say "    export PATH=\"\$HOME/.local/bin:\$PATH\""
-            say ""
-            say "Add this line to your shell profile (~/.bashrc, ~/.zshrc, etc.) to make it permanent."
+            echo ""
+            warn "Add to PATH: ${BOLD}export PATH=\"\$HOME/.local/bin:\$PATH\"${RESET}"
             ;;
     esac
 
@@ -203,44 +252,38 @@ download_and_install() {
 print_claude_instructions() {
     local _install_path="$1"
 
-    say ""
-    say "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    say "To use edda with Claude Code:"
-    say "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    say ""
-    say "Run the following command to add the MCP server:"
-    say ""
-    say "    claude mcp add --transport stdio edda -- $_install_path"
-    say ""
-    say "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    say ""
-    say "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    say "To use edda with Claude Desktop:"
-    say "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    say ""
-    say "Add the following to your Claude Desktop configuration:"
-    say ""
-    say "macOS: ~/Library/Application Support/Claude/claude_desktop_config.json"
-    say "Linux: ~/.config/Claude/claude_desktop_config.json"
-    say ""
-    say "Configuration:"
-    say ""
+    echo ""
+    echo "${GREEN}✓${RESET} ${BOLD}Done!${RESET} 🎉"
+    echo ""
+    echo ""
+    echo "${BOLD}Next steps:${RESET}"
+    echo ""
+
+    # Claude Code section
+    echo "${BOLD}For Claude Code:${RESET}"
+    echo ""
+    echo "  ${CYAN}claude mcp add --transport stdio edda -- $_install_path${RESET}"
+    echo ""
+    echo ""
+
+    # Claude Desktop section
+    echo "${BOLD}For Claude Desktop:${RESET}"
+    echo ""
+    echo "  Add this to ${DIM}~/Library/Application Support/Claude/claude_desktop_config.json${RESET}"
+    echo ""
     cat <<EOF
-{
-  "mcpServers": {
-    "edda": {
-      "command": "$_install_path",
-      "args": []
+  ${CYAN}{
+    "mcpServers": {
+      "edda": {
+        "command": "$_install_path",
+        "args": []
+      }
     }
-  }
-}
+  }${RESET}
 EOF
-    say ""
-    say "If you already have other MCP servers configured, add the"
-    say "\"edda\" entry to your existing \"mcpServers\" object."
-    say ""
-    say "After updating the config, restart Claude Desktop."
-    say "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  Then restart Claude Desktop"
+    echo ""
 }
 
 download_and_install "$@" || exit 1
