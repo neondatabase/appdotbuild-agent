@@ -310,7 +310,7 @@ EOF
     cat <<EOF
   ${CYAN}{
     "mcpServers": {
-      "dabgent": {
+      "edda": {
         "command": "$_install_path",
         "args": []
       }
