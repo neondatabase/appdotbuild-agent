@@ -81,6 +81,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run_server() -> Result<()> {
+    let config = dabgent_mcp::config::Config::load_from_dir();
     // configure tracing to write to stderr only if RUST_LOG is set
     // this prevents interference with stdio MCP transport
     if std::env::var("RUST_LOG").is_ok() {
@@ -129,7 +130,7 @@ async fn run_server() -> Result<()> {
     if google_sheets.is_some() {
         providers_list.push("Google Sheets");
     }
-    if io.is_some() {
+    if config.allow_deployment && io.is_some() {
         providers_list.push("I/O");
     }
 
