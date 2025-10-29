@@ -73,6 +73,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
+      is_main_branch: ${{ steps.check.outputs.is_main_branch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -83,16 +84,23 @@ jobs:
         id: check
         run: |
           should_build="false"
+          is_main_branch="false"
+
           # we check two commits because the first commit is the merge commit
           if git log -2 --pretty=%s | tail -n 1 | grep -q "build-rust"; then
             should_build="true"
             echo "Rust build detected based on commit message."
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
             should_build="true"
+            is_main_branch="true"
             echo "Rust build detected based on push to main branch."
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            should_build="true"
+            echo "Rust build detected based on pull request."
           fi
 
           echo "should_build=${should_build}" >> $GITHUB_OUTPUT
+          echo "is_main_branch=${is_main_branch}" >> $GITHUB_OUTPUT
 
   build-dabgent-mcp:
     name: Build dabgent_mcp (${{ matrix.platform }})
@@ -133,7 +141,7 @@ jobs:
         with:
           name: dabgent-mcp-${{ matrix.platform }}
           path: dabgent/target/release/dabgent_mcp
-          retention-days: 30
+          retention-days: ${{ needs.check-release-condition.outputs.is_main_branch == 'true' && 14 || 3 }}
 
   smoke-test-mcp:
     name: Smoke Test MCP Binary (${{ matrix.platform }})
