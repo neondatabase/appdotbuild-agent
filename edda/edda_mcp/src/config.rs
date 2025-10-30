@@ -9,23 +9,22 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn load_from_dir() -> Self {
-        let default_config = Self::default();
+    pub fn load_from_dir() -> eyre::Result<Self> {
+        let default_config = Ok(Self::default());
         let home_dir = match std::env::var("HOME") {
             Ok(dir) => dir,
             Err(_) => return default_config,
         };
 
         let config_path = format!("{}/.edda/config.json", home_dir);
-        let contents = match std::fs::read_to_string(&config_path) {
-            Ok(contents) => contents,
-            Err(_) => return default_config,
-        };
-
-        match serde_json::from_str::<Config>(&contents) {
-            Ok(config) => config,
-            Err(_) => default_config,
+        if !std::path::Path::new(&config_path).exists() {
+            let json = serde_json::to_string_pretty(&Self::default())?;
+            std::fs::create_dir_all(format!("{}/.edda", home_dir))?;
+            std::fs::write(&config_path, json)?;
         }
+
+        let contents = std::fs::read_to_string(&config_path)?;
+        serde_json::from_str::<Config>(&contents).map_err(Into::into)
     }
 }
 

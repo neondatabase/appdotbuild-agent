@@ -82,14 +82,10 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Yell { message }) => yell::run_yell(message),
         None => {
-            // Default behavior: launch MCP server
-            let mut config = edda_mcp::config::Config::load_from_dir();
-
-            // CLI flag overrides config file
+            let mut config = edda_mcp::config::Config::load_from_dir()?;
             if cli.disallow_deployment {
                 config.allow_deployment = false;
             }
-
             run_server(config).await
         }
     }
