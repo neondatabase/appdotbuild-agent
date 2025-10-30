@@ -133,6 +133,20 @@ pub struct UserInfo {
     pub user_name: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DeploymentMode {
+    Snapshot,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateDeployment {
+    #[serde(with = "uuid::serde::simple")]
+    pub deployment_id: uuid::Uuid,
+    pub mode: DeploymentMode,
+    pub source_code_path: String,
+}
+
 pub fn get_app_info(app_name: &str) -> Result<AppInfo> {
     let output = Command::new("databricks")
         .args(&["apps", "get", app_name])

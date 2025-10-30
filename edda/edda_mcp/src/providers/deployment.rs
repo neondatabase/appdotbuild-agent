@@ -112,7 +112,9 @@ impl DeploymentProvider {
             None => {
                 return Ok(DeployDatabricksAppResult {
                     success: false,
-                    message: "Project must be validated before deployment. Run validate_data_app first.".to_string(),
+                    message:
+                        "Project must be validated before deployment. Run validate_data_app first."
+                            .to_string(),
                     app_url: None,
                     app_name: name.to_string(),
                 });
@@ -120,7 +122,7 @@ impl DeploymentProvider {
         };
 
         match state::verify_checksum(&work_path, expected_checksum) {
-            Ok(true) => {},
+            Ok(true) => {}
             Ok(false) => {
                 return Ok(DeployDatabricksAppResult {
                     success: false,
@@ -128,7 +130,7 @@ impl DeploymentProvider {
                     app_url: None,
                     app_name: name.to_string(),
                 });
-            },
+            }
             Err(e) => {
                 return Ok(DeployDatabricksAppResult {
                     success: false,
@@ -186,9 +188,26 @@ impl DeploymentProvider {
         tracing::info!(duration = sync_duration, "Workspace sync completed");
 
         // Deploy app
+        const DEPLOY_RETRIES: usize = 3;
         let deploy_start = std::time::Instant::now();
         tracing::info!("Deploying app: {}", name);
-        deploy_app(&app_info).map_err(|e| eyre::eyre!("Failed to deploy app: {}", e))?;
+        let mut attempt = 0;
+        loop {
+            match deploy_app(&app_info) {
+                Ok(_) => break,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt >= DEPLOY_RETRIES {
+                        return Err(eyre::eyre!(
+                            "Failed to deploy app after {} attempts: {}",
+                            DEPLOY_RETRIES,
+                            e
+                        ));
+                    }
+                    tracing::warn!("Deploy attempt {} failed: {}. Retrying...", attempt, e);
+                }
+            }
+        }
         let deploy_duration = deploy_start.elapsed().as_secs_f64();
         tracing::info!(duration = deploy_duration, "App deployment completed");
 
