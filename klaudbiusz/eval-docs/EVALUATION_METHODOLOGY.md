@@ -76,6 +76,14 @@ This frames evaluation around practical functionality rather than abstract code 
 - ✅ "Are there visible errors?" → yes/no
 - ❌ "Is the UI well-designed?" → subjective, prohibited
 
+**LLM for objective command discovery:**
+- ✅ "What command installs dependencies?" → discovers from package.json/requirements.txt
+- ✅ "How do I run tests?" → analyzes project structure objectively
+- ✅ "What's the build command?" → reads configuration files
+- ❌ "Is this code well-structured?" → subjective, prohibited
+
+This maintains zero-bias while enabling stack-agnostic evaluation.
+
 ---
 
 ## The 9-Metric Framework
@@ -161,6 +169,66 @@ Our objective approach directly supports DevOps Research and Assessment (DORA) p
 - No dependency on local tool versions (Node.js, Python, etc.)
 - Reproducible results on any machine
 - Matches production deployment approach
+
+### Why Agentic Evaluation?
+
+**Decision:** Use an AI agent with bash tools to perform evaluation instead of hardcoded scripts.
+
+**Rationale:**
+- **Stack Agnostic**: Agent discovers how to build/test/run any framework
+- **Zero Maintenance**: No code updates needed for new frameworks
+- **Objective**: Agent reads actual files (package.json, requirements.txt, Dockerfile) and executes commands
+- **Reproducible**: Same app structure → same evaluation results
+- **Zero Bias**: Evaluates what the app *is*, not what we *assume* it should be
+- **Truly Agentic**: Agent makes decisions and uses tools, not hardcoded logic
+
+**Implementation:**
+```python
+EVAL_PROMPT = """
+Evaluate all applications in ../app directory using 9-metric framework.
+
+For each app:
+1. Read files to discover build/test/run commands
+2. Execute commands to verify build, runtime, tests
+3. Check for Dockerfile, README, tests, type safety
+4. Assign objective scores (binary PASS/FAIL, numeric 0-5)
+5. Generate JSON report
+
+Use ONLY bash tools to read files and execute commands.
+Be objective: no quality judgments, only measurable facts.
+"""
+
+query(EVAL_PROMPT, ClaudeAgentOptions(permission_mode="bypassPermissions"))
+```
+
+**Why this maintains zero-bias:**
+- Agent doesn't judge quality, only measures objective facts
+- Agent reads configuration files like a human would
+- Deterministic for same app structure
+- No subjective assessment involved
+- Agent uses standard tools (bash) to verify builds, tests, runs
+
+**Cost:** ~$0.02-0.05 per full evaluation run (all apps)
+
+### Agent SDK Integration
+
+**Technical Implementation:** The evaluation uses Claude Agent SDK for complementary agent-based metrics (build, run, test, deploy). Key implementation detail (`evaluate_apps.py` lines 18-21):
+
+```python
+# Ensure Claude CLI is in PATH for agent SDK
+if "/opt/homebrew/bin" not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = f"/opt/homebrew/bin:{os.environ.get('PATH', '')}"
+```
+
+This ensures the agent SDK can invoke the Claude CLI when running under `uv run`, which doesn't inherit Homebrew paths by default. Environment variables must be exported (not just sourced) to propagate to subprocess invocations.
+
+**Why this maintains methodology:**
+- Agent discovers build/run/test commands by reading project files (package.json, Dockerfile)
+- Objective measurement: Did the agent successfully complete the task? (binary)
+- No quality judgment - only verifies if an autonomous agent can deploy the app
+- Complements direct execution metrics with agentic evaluation
+
+For usage details, see [evals.md](evals.md).
 
 ### Why Checklist Scores for DevX?
 

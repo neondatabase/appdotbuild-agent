@@ -8,6 +8,7 @@ Usage:
     python evaluate_all.py
     python evaluate_all.py --output report.json
 """
+from __future__ import annotations
 
 import json
 import os
@@ -94,11 +95,125 @@ def run_command(cmd: list[str], cwd: str | None = None, timeout: int = 120) -> t
         return False, "", ""
 
 
+def discover_app_commands(app_dir: Path) -> dict[str, Any]:
+    """Use LLM to discover how to build, run, and test the app."""
+    if not ANTHROPIC_AVAILABLE:
+        return {
+            "build_cmd": None,
+            "run_cmd": None,
+            "test_cmd": None,
+            "install_deps_cmd": None,
+            "type_check_cmd": None,
+            "app_type": "unknown",
+        }
+
+    # Gather app structure and key files
+    structure = []
+    try:
+        for item in sorted(app_dir.rglob("*")):
+            if item.is_file() and not any(skip in str(item) for skip in ["node_modules", "__pycache__", ".git", "dist", "build"]):
+                rel_path = item.relative_to(app_dir)
+                if len(str(rel_path).split("/")) <= 3:  # Only show top 3 levels
+                    structure.append(str(rel_path))
+    except Exception:
+        pass
+
+    # Read key configuration files
+    config_files = {}
+    key_files = [
+        "package.json", "requirements.txt", "Dockerfile", "app.yaml",
+        "tsconfig.json", "pyproject.toml", "setup.py", "README.md",
+        "docker-compose.yml", "Makefile"
+    ]
+
+    for filename in key_files:
+        file_path = app_dir / filename
+        if file_path.exists():
+            try:
+                config_files[filename] = file_path.read_text()[:2000]  # Limit size
+            except Exception:
+                pass
+
+    # Also check server/ and client/ subdirectories
+    for subdir in ["server", "client"]:
+        for filename in ["package.json", "tsconfig.json"]:
+            file_path = app_dir / subdir / filename
+            if file_path.exists():
+                try:
+                    config_files[f"{subdir}/{filename}"] = file_path.read_text()[:2000]
+                except Exception:
+                    pass
+
+    # Build prompt for LLM
+    prompt = f"""Analyze this app directory and tell me how to build, run, and test it.
+
+## Directory Structure
+```
+{chr(10).join(structure[:50])}
+```
+
+## Configuration Files
+{chr(10).join([f"### {name}{chr(10)}```{chr(10)}{content[:500]}{chr(10)}```" for name, content in config_files.items()])}
+
+Based on the above, provide ONLY a JSON response with these exact fields:
+{{
+  "app_type": "streamlit|typescript-trpc|flask|fastapi|nextjs|other",
+  "install_deps_cmd": ["command", "arg1", "arg2"] or null,
+  "build_cmd": ["command", "arg1", "arg2"] or null,
+  "run_cmd": ["command", "arg1", "arg2"] or null,
+  "test_cmd": ["command", "arg1", "arg2"] or null,
+  "type_check_cmd": ["command", "arg1", "arg2"] or null,
+  "notes": "Brief explanation"
+}}
+
+For commands:
+- Use null if not applicable
+- Return command as JSON array: ["npm", "install"] not "npm install"
+- For multi-directory projects (server/client), provide commands for the main entrypoint
+- Assume commands run from the app root directory
+
+Respond with ONLY the JSON, no markdown formatting."""
+
+    try:
+        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+        message = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        response_text = message.content[0].text.strip()
+        # Remove markdown code blocks if present
+        if response_text.startswith("```"):
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+
+        result = json.loads(response_text)
+        return result
+    except Exception as e:
+        print(f"    ⚠️  LLM discovery failed: {e}")
+        return {
+            "build_cmd": None,
+            "run_cmd": None,
+            "test_cmd": None,
+            "install_deps_cmd": None,
+            "type_check_cmd": None,
+            "app_type": "unknown",
+        }
+
+
 def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
     """Run evaluation with all 9 metrics from evals.md."""
     metrics = FullMetrics()
     issues = []
     details_dict = {}
+
+    # Discover app structure and commands using LLM
+    print("  Analyzing app structure...")
+    app_commands = discover_app_commands(app_dir)
+    details_dict["app_type"] = app_commands.get("app_type", "unknown")
+    details_dict["discovered_commands"] = app_commands
 
     # Metric 1: Build Success (requires Docker - skip if not available)
     dockerfile = app_dir / "Dockerfile"
@@ -149,50 +264,53 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
             run_command(["docker", "stop", container_id], timeout=10)
             run_command(["docker", "rm", container_id], timeout=10)
 
-    # Install dependencies (needed for TypeScript and tests)
-    print("  Installing dependencies...")
-    server_deps_ok, _, _ = run_command(["npm", "install"], cwd=str(app_dir / "server"), timeout=180)
-    client_deps_ok, _, _ = run_command(["npm", "install"], cwd=str(app_dir / "client"), timeout=180)
-    deps_installed = server_deps_ok and client_deps_ok
+    # Install dependencies (use LLM-discovered command)
+    deps_installed = False
+    if app_commands.get("install_deps_cmd"):
+        print("  Installing dependencies...")
+        deps_ok, _, _ = run_command(app_commands["install_deps_cmd"], cwd=str(app_dir), timeout=180)
+        deps_installed = deps_ok
+        if not deps_ok:
+            issues.append("Dependencies installation failed")
 
-    if not deps_installed:
-        issues.append("Dependencies installation failed")
+    # Metric 3: Type Safety (use LLM-discovered command)
+    if app_commands.get("type_check_cmd"):
+        print("  Checking types...")
+        type_ok, _, _ = run_command(app_commands["type_check_cmd"], cwd=str(app_dir), timeout=60)
+        metrics.type_safety = type_ok
+        if not type_ok and not metrics.build_success:
+            issues.append("Type checking failed and prevented build")
 
-    # Metric 3: Type Safety (requires dependencies)
-    if deps_installed:
-        type_ok_server, _, _ = run_command(["npx", "tsc", "--noEmit"], cwd=str(app_dir / "server"), timeout=60)
-        type_ok_client, _, _ = run_command(["npx", "tsc", "--noEmit"], cwd=str(app_dir / "client"), timeout=60)
-        metrics.type_safety = type_ok_server and type_ok_client
-        # Only flag TS errors as issues if they cause build/runtime problems
-        # (Since apps use tsx which skips type checking, TS strictness is informational)
-        if not metrics.type_safety and not metrics.build_success:
-            issues.append("TypeScript compilation errors prevent build")
-
-    # Metric 4: Tests Pass (requires dependencies)
-    if deps_installed:
-        tests_ok, stdout, stderr = run_command(["npm", "test"], cwd=str(app_dir / "server"), timeout=120)
+    # Metric 4: Tests Pass (use LLM-discovered command)
+    if app_commands.get("test_cmd"):
+        print("  Running tests...")
+        tests_ok, stdout, stderr = run_command(app_commands["test_cmd"], cwd=str(app_dir), timeout=120)
         metrics.tests_pass = tests_ok
-        test_files = list((app_dir / "server" / "src").glob("*.test.ts")) + list((app_dir / "server" / "src").glob("**/*.test.ts"))
+        # Check for test files in common locations
+        test_patterns = ["**/*test*.py", "**/*test*.ts", "**/*test*.js", "**/test_*.py"]
+        test_files = []
+        for pattern in test_patterns:
+            test_files.extend(app_dir.glob(pattern))
         metrics.has_tests = len(test_files) > 0
         if not tests_ok:
             issues.append("Tests failed")
+        # Parse coverage from test output
+        output = stdout + stderr
     else:
-        # If dependencies failed, tests also fail
-        tests_ok = False
-        metrics.tests_pass = False
-        stdout = ""
-        stderr = ""
+        # No test command available
+        metrics.has_tests = False
+        output = ""
 
-    # Parse coverage
-    output = stdout + stderr
-    for line in output.split("\n"):
-        if "all files" in line.lower() and "%" in line:
-            parts = line.split("|")
-            if len(parts) >= 2:
-                try:
-                    metrics.test_coverage_pct = float(parts[1].strip().replace("%", ""))
-                except (ValueError, IndexError):
-                    pass
+    # Parse coverage if available
+    if output:
+        for line in output.split("\n"):
+            if "all files" in line.lower() and "%" in line:
+                parts = line.split("|")
+                if len(parts) >= 2:
+                    try:
+                        metrics.test_coverage_pct = float(parts[1].strip().replace("%", ""))
+                    except (ValueError, IndexError):
+                        pass
 
     if metrics.test_coverage_pct < 70:
         issues.append(f"Coverage below 70% ({metrics.test_coverage_pct:.1f}%)")

@@ -18,6 +18,56 @@ from screenshot import screenshot_apps
 load_dotenv()
 
 
+# Data context for vanilla Claude SDK mode (non-MCP)
+# This provides ONLY table schemas - no implementation hints
+DATA_CONTEXT = """
+## Application Requirements
+
+Build a web application deployable as a Databricks App (https://www.databricks.com/product/databricks-apps).
+
+Requirements:
+- Must be a web application with a UI (choose any stack: Streamlit, Dash, Flask+React, FastAPI+React, etc.)
+- Must include `app.yaml` configuration file for Databricks Apps deployment
+- Must connect to Databricks SQL using environment variables
+- Must be containerized (include Dockerfile)
+
+app.yaml format:
+```yaml
+command: ["python", "app.py"]  # or appropriate start command
+```
+
+## Databricks Connection
+
+Environment variables required:
+- DATABRICKS_HOST
+- DATABRICKS_TOKEN
+
+## Available Sample Tables
+
+### samples.tpch.*
+- **orders**: o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority
+- **customer**: c_custkey, c_name, c_address, c_nationkey, c_phone, c_acctbal, c_mktsegment
+- **lineitem**: l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate
+- **part**: p_partkey, p_name, p_mfgr, p_brand, p_type, p_size, p_container, p_retailprice
+- **supplier**: s_suppkey, s_name, s_address, s_nationkey, s_phone, s_acctbal
+
+### samples.tpcds_sf1.*
+- **store_sales**: ss_sold_date_sk, ss_sold_time_sk, ss_item_sk, ss_customer_sk, ss_store_sk, ss_quantity, ss_sales_price, ss_net_paid, ss_net_profit
+- **web_sales**: ws_sold_date_sk, ws_item_sk, ws_bill_customer_sk, ws_quantity, ws_sales_price, ws_net_paid, ws_net_profit
+- **catalog_sales**: cs_sold_date_sk, cs_item_sk, cs_bill_customer_sk, cs_quantity, cs_sales_price, cs_net_paid, cs_net_profit
+- **store_returns**: sr_returned_date_sk, sr_item_sk, sr_customer_sk, sr_return_quantity, sr_return_amt
+- **customer**: c_customer_sk, c_customer_id, c_first_name, c_last_name, c_email_address, c_birth_year, c_preferred_cust_flag
+- **customer_address**: ca_address_sk, ca_street_number, ca_street_name, ca_city, ca_county, ca_state, ca_zip, ca_location_type
+- **date_dim**: d_date_sk, d_date, d_month_seq, d_week_seq, d_quarter_seq, d_year, d_dow, d_moy, d_dom, d_qoy
+- **item**: i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category, i_brand, i_manager_id
+- **promotion**: p_promo_sk, p_promo_id, p_promo_name, p_start_date_sk, p_end_date_sk, p_cost, p_response_target, p_channel_dmail, p_channel_email, p_channel_tv
+
+### samples.nyctaxi.trips
+- **trips**: tpep_pickup_datetime, tpep_dropoff_datetime, passenger_count, trip_distance, fare_amount, extra, tip_amount, tolls_amount, total_amount, payment_type, pickup_location_id, dropoff_location_id
+
+"""
+
+
 class RunResult(TypedDict):
     prompt: str
     success: bool
@@ -26,6 +76,7 @@ class RunResult(TypedDict):
     app_dir: str | None
     screenshot_path: str | None
     browser_logs_path: str | None
+    enable_mcp: bool  # Track which mode was used for this generation
 
 
 PROMPTS = {
@@ -50,6 +101,90 @@ PROMPTS = {
     "customer-ltv-cohorts": "Calculate customer LTV by acquisition cohort: average revenue per customer at 12, 24, 36 months. Show retention curves.",
     "promotion-roi-analysis": "Measure promotion ROI: incremental revenue during promo vs cost, with 7-day post-promotion lift. Flag underperforming promotions.",
 }
+
+# Table hints for vanilla SDK mode - ONLY lists relevant tables, NO implementation guidance
+PROMPT_TABLE_HINTS = {
+    "churn-risk-dashboard": """
+Relevant tables: samples.tpcds_sf1.customer, samples.tpcds_sf1.store_sales, samples.tpcds_sf1.web_sales, samples.tpcds_sf1.catalog_sales, samples.tpcds_sf1.date_dim""",
+
+    "revenue-by-channel": """
+Relevant tables: samples.tpcds_sf1.store_sales, samples.tpcds_sf1.web_sales, samples.tpcds_sf1.catalog_sales, samples.tpcds_sf1.date_dim""",
+
+    "customer-rfm-segments": """
+Relevant tables: samples.tpch.orders, samples.tpch.customer""",
+
+    "taxi-trip-metrics": """
+Relevant tables: samples.nyctaxi.trips""",
+
+    "slow-moving-inventory": """
+Relevant tables: samples.tpcds_sf1.item, samples.tpcds_sf1.store_sales, samples.tpcds_sf1.web_sales""",
+
+    "customer-360-view": """
+Relevant tables: samples.tpcds_sf1.customer, samples.tpcds_sf1.store_sales, samples.tpcds_sf1.web_sales, samples.tpcds_sf1.catalog_sales, samples.tpcds_sf1.item""",
+
+    "product-pair-analysis": """
+Relevant tables: samples.tpch.lineitem, samples.tpch.part, samples.tpch.orders""",
+
+    "revenue-forecast-quarterly": """
+Relevant tables: samples.tpcds_sf1.store_sales, samples.tpcds_sf1.web_sales, samples.tpcds_sf1.catalog_sales, samples.tpcds_sf1.date_dim""",
+
+    "data-quality-metrics": """
+Relevant tables: samples.tpcds_sf1.store_sales, samples.tpch.orders""",
+
+    "channel-conversion-comparison": """
+Relevant tables: samples.tpcds_sf1.store_sales, samples.tpcds_sf1.web_sales, samples.tpcds_sf1.catalog_sales, samples.tpcds_sf1.customer""",
+
+    "customer-churn-analysis": """
+Relevant tables: samples.tpch.orders, samples.tpch.customer""",
+
+    "pricing-impact-analysis": """
+Relevant tables: samples.tpcds_sf1.item, samples.tpcds_sf1.store_sales""",
+
+    "supplier-scorecard": """
+Relevant tables: samples.tpch.supplier, samples.tpch.lineitem""",
+
+    "sales-density-heatmap": """
+Relevant tables: samples.tpcds_sf1.customer_address, samples.tpcds_sf1.customer, samples.tpcds_sf1.store_sales, samples.tpcds_sf1.web_sales""",
+
+    "cac-by-channel": """
+Relevant tables: samples.tpcds_sf1.promotion, samples.tpcds_sf1.store_sales, samples.tpcds_sf1.web_sales""",
+
+    "subscription-tier-optimization": """
+Relevant tables: samples.tpcds_sf1.customer, samples.tpcds_sf1.store_sales, samples.tpcds_sf1.web_sales, samples.tpcds_sf1.catalog_sales""",
+
+    "product-profitability": """
+Relevant tables: samples.tpcds_sf1.item, samples.tpcds_sf1.store_sales, samples.tpcds_sf1.store_returns""",
+
+    "warehouse-efficiency": """
+Relevant tables: samples.tpch.orders, samples.tpch.lineitem""",
+
+    "customer-ltv-cohorts": """
+Relevant tables: samples.tpch.orders, samples.tpch.customer""",
+
+    "promotion-roi-analysis": """
+Relevant tables: samples.tpcds_sf1.promotion, samples.tpcds_sf1.store_sales, samples.tpcds_sf1.web_sales, samples.tpcds_sf1.date_dim""",
+}
+
+
+def get_prompt_with_context(app_name: str, base_prompt: str, enable_mcp: bool = True) -> str:
+    """Get the appropriate prompt based on MCP enablement.
+
+    Args:
+        app_name: Name of the app
+        base_prompt: Base prompt text
+        enable_mcp: If True (default), use prompt as-is (MCP provides Databricks access).
+                   If False, enrich prompt with Databricks context and table schemas.
+
+    Returns:
+        Prompt string ready to use
+    """
+    if enable_mcp:
+        # MCP mode - use prompt as-is, MCP will provide Databricks access
+        return base_prompt
+    else:
+        # Pure SDK mode - add Databricks context and table hints to prompt
+        table_hint = PROMPT_TABLE_HINTS.get(app_name, "")
+        return f"{DATA_CONTEXT}\n{base_prompt}\n{table_hint}"
 
 
 def enrich_results_with_screenshots(results: list[RunResult]) -> None:
@@ -79,7 +214,9 @@ def enrich_results_with_screenshots(results: list[RunResult]) -> None:
             result["browser_logs_path"] = None
 
 
-def run_single_generation(app_name: str, prompt: str, wipe_db: bool = False, use_subagents: bool = False, mcp_binary: str | None = None) -> RunResult:
+def run_single_generation(
+    app_name: str, prompt: str, wipe_db: bool = False, use_subagents: bool = False, enable_mcp: bool = True, mcp_binary: str | None = None
+) -> RunResult:
     def timeout_handler(signum, frame):
         raise TimeoutError(f"Generation timed out after 900 seconds")
 
@@ -88,20 +225,36 @@ def run_single_generation(app_name: str, prompt: str, wipe_db: bool = False, use
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.alarm(900)
 
-        codegen = AppBuilder(app_name=app_name, wipe_db=wipe_db, suppress_logs=True, use_subagents=use_subagents, mcp_binary=mcp_binary)
-        metrics = codegen.run(prompt, wipe_db=wipe_db)
+        # Get the appropriate prompt based on MCP enablement
+        final_prompt = get_prompt_with_context(app_name, prompt, enable_mcp)
+
+        # Log mode for this app
+        mode_str = "MCP" if enable_mcp else "SDK"
+        print(f"[{mode_str}] Generating {app_name}...", flush=True)
+
+        # Configure AppBuilder based on MCP enablement
+        codegen = AppBuilder(
+            app_name=app_name,
+            wipe_db=wipe_db,
+            suppress_logs=True,
+            use_subagents=use_subagents,
+            use_mcp=enable_mcp,
+            mcp_binary=mcp_binary,
+        )
+        metrics = codegen.run(final_prompt, wipe_db=wipe_db)
         app_dir = metrics.get("app_dir") if metrics else None
 
         signal.alarm(0)  # cancel timeout
 
         return {
-            "prompt": prompt,
+            "prompt": prompt,  # Store original prompt for reporting
             "success": True,
             "metrics": metrics,
             "error": None,
             "app_dir": app_dir,
             "screenshot_path": None,  # filled in later by enrichment
             "browser_logs_path": None,  # filled in later by enrichment
+            "enable_mcp": enable_mcp,  # Track which mode was used
         }
     except TimeoutError as e:
         signal.alarm(0)  # cancel timeout
@@ -114,6 +267,7 @@ def run_single_generation(app_name: str, prompt: str, wipe_db: bool = False, use
             "app_dir": None,
             "screenshot_path": None,
             "browser_logs_path": None,
+            "enable_mcp": enable_mcp,
         }
 
 
@@ -123,22 +277,41 @@ def main(
     use_subagents: bool = False,
     screenshot_concurrency: int = 5,
     screenshot_wait_time: int = 120000,
+    enable_mcp: bool = True,
     mcp_binary: str | None = None,
 ) -> None:
+    """Run bulk generation of apps from prompts.
+
+    Args:
+        wipe_db: Whether to wipe the database before running
+        n_jobs: Number of parallel jobs (-1 for all CPUs)
+        use_subagents: Whether to use subagents in generation
+        screenshot_concurrency: Number of concurrent screenshot processes
+        screenshot_wait_time: Wait time for screenshots in ms
+        enable_mcp: Enable MCP server for Databricks access (default: True).
+                   If False, uses pure Claude SDK with embedded Databricks context in prompts.
+    """
     # validate required environment variables
     if not os.environ.get("DATABRICKS_HOST") or not os.environ.get("DATABRICKS_TOKEN"):
         raise ValueError("DATABRICKS_HOST and DATABRICKS_TOKEN environment variables must be set")
 
     print(f"Starting bulk generation for {len(PROMPTS)} prompts...")
+    print(f"MCP enabled: {enable_mcp}")
     print(f"Parallel jobs: {n_jobs}")
     print(f"Wipe DB: {wipe_db}")
     print(f"Use subagents: {use_subagents}")
     print(f"MCP binary: {mcp_binary if mcp_binary else 'cargo run (default)'}")
     print(f"Screenshot concurrency: {screenshot_concurrency}\n")
 
+    if enable_mcp:
+        print("Running with MCP - Databricks access via MCP server\n")
+    else:
+        print("Running in pure SDK mode - prompts will include Databricks table schemas\n")
+
     # generate all apps
     results: list[RunResult] = Parallel(n_jobs=n_jobs, verbose=10)(  # type: ignore[assignment]
-        delayed(run_single_generation)(app_name, prompt, wipe_db, use_subagents, mcp_binary) for app_name, prompt in PROMPTS.items()
+        delayed(run_single_generation)(app_name, prompt, wipe_db, use_subagents, enable_mcp, mcp_binary)
+        for app_name, prompt in PROMPTS.items()
     )
 
     # separate successful and failed generations
@@ -202,6 +375,8 @@ def main(
     print(f"\n{'=' * 80}")
     print("Bulk Generation Summary")
     print(f"{'=' * 80}")
+    mode_str = "MCP (Databricks tools)" if enable_mcp else "Pure SDK (embedded context)"
+    print(f"Mode: {mode_str}")
     print(f"Total prompts: {len(PROMPTS)}")
     print(f"Successful: {len(successful)}")
     print(f"Failed: {len(failed)}")

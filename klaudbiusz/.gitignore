@@ -1,5 +1,14 @@
+# Environment variables
+.env
+
 # Generated apps (cleaned between runs)
 app/
 
 # Evaluation results (cleaned between runs, preserved in archive/)
 app-eval/
+results_*/
+results_latest
+evaluation_report.json
+EVALUATION_REPORT.md
+run_metadata.json
+evaluation_viewer.html

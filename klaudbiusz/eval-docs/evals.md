@@ -2,38 +2,38 @@
 
 **Implementation details for the 9-metric framework. For design philosophy, see [EVALUATION_METHODOLOGY.md](EVALUATION_METHODOLOGY.md).**
 
+**Agentic Evaluation**: An AI agent with bash tools evaluates apps by reading files, executing commands, and measuring objective metrics. No hardcoded logic - the agent discovers how to build, run, and test each app regardless of framework.
+
 ---
 
 ## The 9 Metrics
 
 ### 1. BUILD SUCCESS (Binary)
-`docker build` exits with code 0
+Agent discovers build command from app files (package.json, Dockerfile, etc.), executes it, checks exit code 0
 
 ### 2. RUNTIME SUCCESS (Binary)
-Container starts, health check responds within 30s
+Agent discovers run command, starts app, verifies it runs without immediate errors
 
 ### 3. TYPE SAFETY (Binary)
-`npx tsc --noEmit` passes with zero errors
+Agent checks if app has type checking (tsc, mypy), runs it if present, reports pass/fail or N/A
 
 ### 4. TESTS PASS (Binary + Coverage %)
-All tests pass, coverage reported (target: ≥70%)
+Agent checks if app has tests (npm test, pytest), runs them if present, reports pass/fail or N/A
 
 ### 5. DATABRICKS CONNECTIVITY (Binary)
-App connects to Databricks, executes queries without errors
+Agent verifies app uses Databricks SQL connector and environment variables correctly
 
 ### 6. DATA RETURNED (Binary)
-**Status:** Not implemented (requires app-specific tRPC procedures)
+**Status:** Not implemented
 
-### 7. UI RENDERS (Binary) ✅
-**VLM check:** Screenshot shows content, no errors, page not blank
-- Requires: Screenshot + `ANTHROPIC_API_KEY`
-- Cost: ~$0.001 per check
+### 7. UI RENDERS (Binary)
+**Status:** Not implemented (requires screenshot)
 
 ### 8. LOCAL RUNABILITY (Score 0-5)
-Checklist: README, .env.example, npm install, npm start, local startup
+Checklist: README (1), .env.example (1), install works (1), run works (1), starts successfully (1)
 
 ### 9. DEPLOYABILITY (Score 0-5)
-Checklist: Dockerfile, multi-stage, health check, no secrets, deploy config
+Checklist: Dockerfile (1), multi-stage build (1), health check (1), no hardcoded secrets (1), app.yaml (1)
 
 ---
 
@@ -77,48 +77,222 @@ Automatically tracked during `bulk_run.py`:
 
 ## Usage
 
+### Quick Start
+
 ```bash
-# Generate apps
-uv run python cli/bulk_run.py
+# 1. Verify integration (RECOMMENDED - runs in ~3 minutes)
+./verify_agent_integration.sh
 
-# Evaluate all apps
-uv run python cli/evaluate_all.py
+# 2. Run evaluation with proper environment loading
+./run_eval_with_env.sh
 
-# View results
-open app-eval/evaluation_viewer.html
+# 3. View results
+open evaluation_viewer.html
+```
+
+### Available Scripts
+
+**verify_agent_integration.sh** - Verify agent SDK integration
+- Checks Claude CLI accessibility
+- Verifies PATH fix in evaluate_apps.py
+- Runs quick agent SDK test
+- **Run this first before full evaluations**
+
+**run_eval_with_env.sh** - Run evaluation with proper environment loading
+- Loads .env variables correctly for agent SDK and VLM
+- Uses unbuffered output for real-time logging
+- Full metrics: direct + VLM + agent-based
+
+**run_vanilla_eval.sh** - Full pipeline for Vanilla SDK mode (Streamlit apps)
+- Archive previous run
+- Generate apps (no MCP)
+- Run evaluation with all metrics
+- Generate HTML viewer
+
+**run_mcp_eval.sh** - Full pipeline for MCP mode (TypeScript/tRPC apps)
+- Archive previous run
+- Generate apps (MCP enabled)
+- Run evaluation with all metrics
+- Generate HTML viewer
+
+**run_all_evals.sh** - Run both Vanilla and MCP evaluations sequentially
+- Complete Vanilla SDK evaluation
+- Archive results to results/<run_id>/
+- Complete MCP evaluation
+- Comprehensive summary
+
+### Environment Variables Required
+
+```bash
+# Required for agent SDK and VLM metrics
+ANTHROPIC_API_KEY=<your-key>
+
+# Required for app functionality
+DATABRICKS_HOST=<your-host>
+DATABRICKS_TOKEN=<your-token>
+
+# Optional MLflow tracking
+MLFLOW_EXPERIMENT_NAME=/Shared/klaudbiusz-evaluations
+```
+
+**Critical:** Use `export $(grep -v '^#' .env | xargs)` to ensure variables are exported to subprocesses (required for agent SDK).
+
+### Manual Evaluation
+
+```bash
+# Load and EXPORT environment variables
+export $(grep -v '^#' .env | xargs)
+export EVAL_MODE="vanilla_sdk"  # or "mcp"
+export PYTHONUNBUFFERED=1
+
+# Run evaluation with unbuffered output
+uv run python3 -u evaluate_apps.py
+```
+
+### Monitoring Progress
+
+```bash
+# Watch evaluation log in real-time
+tail -f evaluation_complete.log
+
+# Check agent invocation details
+grep -A 5 "Agent" evaluation_complete.log
 ```
 
 ---
 
 ## Cost & Time
 
-**Evaluation per app:**
-- Time: 15-20 min (Docker build, tests, npm install)
-- Cost: ~$0.001 (VLM check only, if screenshot exists)
+**With Agent Metrics (Current):**
+- Time: ~2-3 minutes per app
+- 16 apps total: ~30-45 minutes
+- Cost per app: ~$0.22 ($3.50-$4.50 total for 16 apps)
+- Breakdown: 4 agent calls/app × ~$0.05/call
+
+**Without Agent Metrics:**
+- Time: ~5-10 seconds per app
+- Cost: Minimal (VLM only, ~$0.001/app)
 
 **Generation per app (tracked):**
-- Average: $0.74
-- Turns: ~93
-- Tokens/turn: ~173
+- MCP mode: $0.74, ~115 turns
+- Vanilla SDK mode: $0.27, ~33 turns
+
+**Agent Configuration:**
+- Model: Claude Sonnet 4.5 (`claude-sonnet-4-5-20250929`)
+- Turn limit: 15 turns per invocation
+- Timeout: 5 minutes per task
+- Tools: Full access (Read, Bash, Edit, etc.)
+
+---
+
+## MLflow Tracking
+
+### Overview
+
+Klaudbiusz integrates with **Databricks Managed MLflow** for comprehensive evaluation tracking:
+- Historical tracking of evaluation runs
+- Comparison of MCP vs Vanilla SDK modes
+- Quality trend monitoring
+- Cost analysis over time
+
+### Setup
+
+Set MLflow experiment in `.env`:
+```bash
+MLFLOW_EXPERIMENT_NAME=/Shared/klaudbiusz-evaluations
+```
+
+### Usage
+
+MLflow tracking happens automatically when using run scripts:
+```bash
+./run_eval_with_env.sh    # Auto-tracks to MLflow
+./run_vanilla_eval.sh      # Auto-tracks to MLflow
+./run_mcp_eval.sh          # Auto-tracks to MLflow
+```
+
+### Viewing Results
+
+**In Databricks UI:**
+1. Navigate to **Machine Learning** → **Experiments**
+2. Find experiment: `/Shared/klaudbiusz-evaluations`
+3. Browse runs, compare metrics, view artifacts
+
+**Command Line:**
+```bash
+# Compare recent runs
+uv run cli/mlflow_compare.py
+```
+
+### Tracked Metrics
+
+**Success Rates:**
+- `build_success_rate`: % apps that build successfully
+- `runtime_success_rate`: % apps that start without crashing
+- `tests_pass_rate`: % apps with passing tests
+- `databricks_connectivity_rate`: % with proper DB connectivity
+
+**Aggregate Metrics:**
+- `total_apps`: Number of apps evaluated
+- `avg_local_runability_score`: Average score (0-5) for local setup
+- `avg_deployability_score`: Average score (0-5) for deployment
+- `overall_quality_score`: Composite quality (0-1)
+
+### Tracked Artifacts
+
+Each run includes:
+- `evaluation_report.json`: Full structured data
+- `EVALUATION_REPORT.md`: Human-readable report
+
+### Run Naming
+
+Convention: `eval_{mode}_{timestamp}`
+- Example: `eval_vanilla_sdk_2025-10-24T12:34:56Z`
+- Tags: `framework=klaudbiusz`, `mode=vanilla_sdk|mcp`
+
+### Troubleshooting MLflow
+
+**MLflow tracking disabled:**
+```
+⚠️  MLflow tracking disabled: DATABRICKS_HOST or DATABRICKS_TOKEN not set
+```
+Solution: Set environment variables in `.env`
+
+**Cannot find experiment:**
+- The tracker creates `/Shared/klaudbiusz-evaluations` automatically
+- Or create manually in Databricks UI: Machine Learning → Create Experiment
 
 ---
 
 ## Troubleshooting
 
-**Missing dependencies error:**
-- Evaluation runs `npm install` automatically
-
-**VLM check fails:**
+**Evaluation agent fails:**
 - Ensure `ANTHROPIC_API_KEY` is set
-- Screenshot must exist at `app_dir/screenshot_output/screenshot.png`
+- Ensure `DATABRICKS_HOST` and `DATABRICKS_TOKEN` are set
+- Check agent has permission to execute bash commands
+- Review agent output for specific errors
+
+**Apps not found:**
+- Verify apps exist in ../app/ directory
+- Check that bulk_run.py completed successfully
 
 **Generation metrics missing:**
-- Check `bulk_run_results_*.json` exists
+- Check `bulk_run_results_*.json` exists in app/ directory
 - Verify `PROMPTS` dict in `bulk_run.py`
+
+**VLM metrics showing "N/A Anthropic client not available":**
+- Environment variables not properly exported to subprocesses
+- Use `export $(grep -v '^#' .env | xargs)` instead of `source .env`
+- The run_eval_with_env.sh script handles this correctly
+
+**Agent SDK errors:**
+- See EVALUATION_METHODOLOGY.md for Agent SDK integration details
+- Run `./verify_agent_integration.sh` to diagnose issues
 
 ---
 
 For detailed implementation, see:
-- `cli/evaluate_all.py` - Batch evaluation
-- `cli/evaluate_app.py` - Single app evaluation
+- `cli/evaluate_all_agent.py` - Agentic evaluation script (~150 lines)
 - `cli/bulk_run.py` - App generation with metrics tracking
+- `cli/mlflow_tracker.py` - MLflow integration module
+- `eval-docs/EVALUATION_METHODOLOGY.md` - Zero-bias methodology

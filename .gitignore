@@ -184,3 +184,4 @@ edda/edda_agent/output/**
 
 # klaudbiusz - all archives stored locally
 klaudbiusz/archive/**
+klaudbiusz/results/**
