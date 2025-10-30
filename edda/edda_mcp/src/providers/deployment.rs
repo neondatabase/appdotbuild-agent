@@ -172,8 +172,7 @@ impl DeploymentProvider {
             }
             Err(_) => {
                 tracing::info!("App not found, creating new app: {}", name);
-                let resources = Resources::from_env()
-                    .map_err(|e| eyre::eyre!("{}", e))?;
+                let resources = Resources::from_env().map_err(|e| eyre::eyre!("{}", e))?;
                 let command = CreateApp::new(name, description).with_resources(resources);
                 create_app(&command).map_err(|e| eyre::eyre!("Failed to create app: {}", e))?
             }

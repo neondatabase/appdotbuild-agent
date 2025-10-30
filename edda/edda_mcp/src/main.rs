@@ -203,6 +203,10 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
             )
         })?;
 
+    provider
+        .check_availability(&config.required_providers)
+        .map_err(|e| eyre::eyre!(e))?;
+
     // wrap with trajectory tracking in binary mode
     match session_id {
         Some(session_id) => {

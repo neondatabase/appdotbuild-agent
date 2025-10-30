@@ -1,12 +1,12 @@
 pub mod databricks;
 pub mod deployment;
-pub mod io;
 pub mod google_sheets;
+pub mod io;
 
 pub use databricks::DatabricksProvider;
 pub use deployment::DeploymentProvider;
-pub use io::{IOProvider, Template};
 pub use google_sheets::GoogleSheetsProvider;
+pub use io::{IOProvider, Template};
 
 use eyre::Result;
 use rmcp::model::{
@@ -15,7 +15,16 @@ use rmcp::model::{
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+pub enum ProviderType {
+    Databricks,
+    Deployment,
+    GoogleSheets,
+    Io,
+}
 
 enum TargetProvider {
     Databricks(Arc<DatabricksProvider>),
@@ -39,11 +48,7 @@ impl CombinedProvider {
         google_sheets: Option<GoogleSheetsProvider>,
         io: Option<IOProvider>,
     ) -> Result<Self> {
-        if databricks.is_none()
-            && deployment.is_none()
-            && google_sheets.is_none()
-            && io.is_none()
-        {
+        if databricks.is_none() && deployment.is_none() && google_sheets.is_none() && io.is_none() {
             return Err(eyre::eyre!("at least one provider must be available"));
         }
         Ok(Self {
@@ -116,6 +121,40 @@ impl CombinedProvider {
             None,
         ))
     }
+
+    pub fn check_availability(&self, required: &[ProviderType]) -> Result<()> {
+        for provider in required {
+            match provider {
+                ProviderType::Databricks => {
+                    if self.databricks.is_none() {
+                        return Err(eyre::eyre!(
+                            "Databricks provider is required but not configured."
+                        ));
+                    }
+                }
+                ProviderType::Deployment => {
+                    if self.deployment.is_none() {
+                        return Err(eyre::eyre!(
+                            "Deployment provider is required but not configured."
+                        ));
+                    }
+                }
+                ProviderType::GoogleSheets => {
+                    if self.google_sheets.is_none() {
+                        return Err(eyre::eyre!(
+                            "Google Sheets provider is required but not configured."
+                        ));
+                    }
+                }
+                ProviderType::Io => {
+                    if self.io.is_none() {
+                        return Err(eyre::eyre!("I/O provider is required but not configured."));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl ServerHandler for CombinedProvider {
@@ -184,7 +223,10 @@ impl ServerHandler for CombinedProvider {
         }
 
         if let Some(ref google_sheets) = self.google_sheets {
-            if let Ok(result) = google_sheets.list_tools(params.clone(), context.clone()).await {
+            if let Ok(result) = google_sheets
+                .list_tools(params.clone(), context.clone())
+                .await
+            {
                 tools.extend(result.tools);
             }
         }

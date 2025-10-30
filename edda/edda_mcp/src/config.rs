@@ -1,9 +1,11 @@
+use crate::providers::ProviderType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
     pub allow_deployment: bool,
+    pub required_providers: Vec<ProviderType>,
 }
 
 impl Config {
@@ -31,6 +33,11 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             allow_deployment: true,
+            required_providers: vec![
+                ProviderType::Databricks,
+                ProviderType::Deployment,
+                ProviderType::Io,
+            ],
         }
     }
 }
