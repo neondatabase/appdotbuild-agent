@@ -80,11 +80,12 @@ pub struct Resources {
 
 impl Resources {
     pub fn from_env() -> Result<Self> {
-        let warehouse_id = std::env::var("DATABRICKS_WAREHOUSE_ID")
-            .map_err(|_| anyhow::anyhow!(
+        let warehouse_id = std::env::var("DATABRICKS_WAREHOUSE_ID").map_err(|_| {
+            anyhow::anyhow!(
                 "DATABRICKS_WAREHOUSE_ID environment variable is required for app deployment. \
                  Set this to your Databricks SQL warehouse ID."
-            ))?;
+            )
+        })?;
 
         let mut resources = Self::default();
         resources.sql_warehouse = Some(Warehouse {
@@ -186,7 +187,15 @@ pub fn create_app(app: &CreateApp) -> Result<AppInfo> {
 
 pub fn sync_workspace(app_info: &AppInfo, source_dir: &str) -> Result<()> {
     let output = Command::new("databricks")
-        .args(&["sync", "--include", "public", ".", &app_info.source_path()]) // specific for trpc template
+        .args(&[
+            "sync",
+            "--include",
+            "public",
+            "--exclude",
+            "node_modules",
+            ".",
+            &app_info.source_path(),
+        ]) // specific for trpc template
         .current_dir(source_dir)
         .output()?;
 
