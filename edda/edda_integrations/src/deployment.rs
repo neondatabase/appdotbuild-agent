@@ -124,31 +124,6 @@ impl CreateApp {
     }
 }
 
-/*
-*
-* {
-  "active":true,
-  "displayName":"Igor Rekun",
-  "emails": [
-    {
-      "primary":true,
-      "type":"work",
-      "value":"igor.rekun@databricks.com"
-    }
-  ],
-  "id":"6531731465109444",
-  "name": {
-    "familyName":"Rekun",
-    "givenName":"Igor"
-  },
-  "schemas": [
-    "urn:ietf:params:scim:schemas:core:2.0:User",
-    "urn:ietf:params:scim:schemas:extension:workspace:2.0:User"
-  ],
-  "userName":"igor.rekun@databricks.com"
-}
-*/
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserInfo {
