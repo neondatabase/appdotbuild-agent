@@ -1,8 +1,8 @@
 use edda_mcp::providers::{CombinedProvider, IOProvider};
 use edda_mcp::trajectory::{TrajectoryEntry, TrajectoryTrackingProvider};
 use eyre::Result;
-use rmcp::model::CallToolRequestParam;
 use rmcp::ServiceExt;
+use rmcp::model::CallToolRequestParam;
 use rmcp_in_process_transport::in_process::TokioInProcess;
 use std::fs;
 use tempfile::TempDir;
@@ -12,12 +12,15 @@ async fn test_trajectory_tracking_records_tool_calls() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let history_path = temp_dir.path().join("history.jsonl");
 
-    let io = IOProvider::new()?;
+    let io = IOProvider::new(None)?;
     let provider = CombinedProvider::new(None, None, None, Some(io))?;
 
     let session_id = "test-session-123".to_string();
-    let tracking_provider =
-        TrajectoryTrackingProvider::new_with_path(provider, session_id.clone(), history_path.clone())?;
+    let tracking_provider = TrajectoryTrackingProvider::new_with_path(
+        provider,
+        session_id.clone(),
+        history_path.clone(),
+    )?;
 
     let tokio_in_process = TokioInProcess::new(tracking_provider).await?;
     let service = ().serve(tokio_in_process).await?;
@@ -66,10 +69,13 @@ async fn test_trajectory_tracking_multiple_calls() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let history_path = temp_dir.path().join("history.jsonl");
 
-    let io = IOProvider::new()?;
+    let io = IOProvider::new(None)?;
     let provider = CombinedProvider::new(None, None, None, Some(io))?;
-    let tracking_provider =
-        TrajectoryTrackingProvider::new_with_path(provider, "multi-test".to_string(), history_path.clone())?;
+    let tracking_provider = TrajectoryTrackingProvider::new_with_path(
+        provider,
+        "multi-test".to_string(),
+        history_path.clone(),
+    )?;
 
     let tokio_in_process = TokioInProcess::new(tracking_provider).await?;
     let service = ().serve(tokio_in_process).await?;
@@ -99,9 +105,9 @@ async fn test_trajectory_tracking_multiple_calls() -> Result<()> {
 
     // verify all lines are valid JSON
     assert!(
-        content.lines().all(|line| {
-            serde_json::from_str::<TrajectoryEntry>(line).is_ok()
-        }),
+        content
+            .lines()
+            .all(|line| { serde_json::from_str::<TrajectoryEntry>(line).is_ok() }),
         "All lines should be valid TrajectoryEntry JSON"
     );
 
@@ -115,10 +121,13 @@ async fn test_trajectory_entry_format() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let history_path = temp_dir.path().join("history.jsonl");
 
-    let io = IOProvider::new()?;
+    let io = IOProvider::new(None)?;
     let provider = CombinedProvider::new(None, None, None, Some(io))?;
-    let tracking_provider =
-        TrajectoryTrackingProvider::new_with_path(provider, "format-test".to_string(), history_path.clone())?;
+    let tracking_provider = TrajectoryTrackingProvider::new_with_path(
+        provider,
+        "format-test".to_string(),
+        history_path.clone(),
+    )?;
 
     let tokio_in_process = TokioInProcess::new(tracking_provider).await?;
     let service = ().serve(tokio_in_process).await?;
@@ -164,10 +173,13 @@ async fn test_trajectory_tracking_error_case() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let history_path = temp_dir.path().join("history.jsonl");
 
-    let io = IOProvider::new()?;
+    let io = IOProvider::new(None)?;
     let provider = CombinedProvider::new(None, None, None, Some(io))?;
-    let tracking_provider =
-        TrajectoryTrackingProvider::new_with_path(provider, "error-test".to_string(), history_path.clone())?;
+    let tracking_provider = TrajectoryTrackingProvider::new_with_path(
+        provider,
+        "error-test".to_string(),
+        history_path.clone(),
+    )?;
 
     let tokio_in_process = TokioInProcess::new(tracking_provider).await?;
     let service = ().serve(tokio_in_process).await?;

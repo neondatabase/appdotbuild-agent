@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     let databricks = DatabricksProvider::new().ok();
     let deployment = DeploymentProvider::new().ok();
     let google_sheets = GoogleSheetsProvider::new().await.ok();
-    let io = IOProvider::new().ok();
+    let io = IOProvider::new(None).ok();
 
     let provider =
         CombinedProvider::new(databricks, deployment, google_sheets, io).map_err(|_| {
