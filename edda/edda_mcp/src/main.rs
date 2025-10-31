@@ -21,6 +21,10 @@ struct Cli {
     #[arg(long)]
     disallow_deployment: bool,
 
+    /// Override I/O config with JSON (e.g., '{"template":"Trpc"}' or '{"template":{"Custom":{"path":"/path"}}}')
+    #[arg(long)]
+    io_config: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -85,6 +89,11 @@ async fn main() -> Result<()> {
             let mut config = edda_mcp::config::Config::load_from_dir()?;
             if cli.disallow_deployment {
                 config.allow_deployment = false;
+            }
+            if let Some(io_config_json) = cli.io_config {
+                let io_config: edda_mcp::config::IoConfig = serde_json::from_str(&io_config_json)
+                    .map_err(|e| eyre::eyre!("Failed to parse --io_config JSON: {}", e))?;
+                config.io_config = Some(io_config);
             }
             run_server(config).await
         }
@@ -159,7 +168,7 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
         None
     };
     let google_sheets = GoogleSheetsProvider::new().await.ok();
-    let io = IOProvider::new().ok();
+    let io = IOProvider::new(config.io_config.clone()).ok();
 
     // print startup banner to stderr (won't interfere with stdio MCP transport)
     let mut providers_list = Vec::new();
