@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["edda_agent", "edda_cli", "edda_mq", "edda_sandbox", "edda_integrations", "edda_mcp", "edda_screenshot", "edda_templates"]
+members = ["edda_agent", "edda_cli", "edda_mq", "edda_sandbox", "edda_integrations", "edda_mcp", "edda_screenshot", "edda_templates", "edda_transpiler"]
 
 [profile.dev]
 opt-level = 0
