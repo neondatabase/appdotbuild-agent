@@ -195,7 +195,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
+          fetch-depth: 2
 
       - name: Extract version from Cargo.toml
         id: extract
@@ -254,7 +254,7 @@ jobs:
         if: steps.check.outputs.should_release == 'true'
         run: |
           VERSION="${{ steps.extract.outputs.version }}"
-          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+          if git ls-remote --tags origin | grep -q "refs/tags/v$VERSION$"; then
             echo "Error: Tag v$VERSION already exists!"
             echo "Please bump the version in edda/edda_mcp/Cargo.toml before releasing."
             exit 1
