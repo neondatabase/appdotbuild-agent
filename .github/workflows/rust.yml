@@ -327,11 +327,21 @@ jobs:
           \`\`\`
           EOF
 
+          # Determine release flags based on version and branch
+          RELEASE_FLAGS=""
+          if [[ "$VERSION" =~ -dev ]]; then
+            # Dev versions are pre-releases, not latest
+            RELEASE_FLAGS="--prerelease"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # Main branch releases are marked as latest
+            RELEASE_FLAGS="--latest"
+          fi
+
           gh release create "v$VERSION" \
             --repo "${{ github.repository }}" \
             --title "v$VERSION" \
             --notes-file release_notes.md \
-            --latest \
+            $RELEASE_FLAGS \
             release/*
 
       - name: Output release URL
