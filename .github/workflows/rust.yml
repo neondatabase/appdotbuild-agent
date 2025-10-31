@@ -186,7 +186,8 @@ jobs:
   detect-release:
     name: Detect Version and Validate
     runs-on: ubuntu-latest
-    needs: smoke-test-mcp
+    needs: [check-release-condition, smoke-test-mcp]
+    if: needs.check-release-condition.outputs.should_build == 'true'
     outputs:
       version: ${{ steps.extract.outputs.version }}
       should_release: ${{ steps.check.outputs.should_release }}
