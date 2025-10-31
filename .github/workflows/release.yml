@@ -44,7 +44,8 @@ jobs:
 
           # Check if this is a PR - require [release] keyword
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            if git log -1 --pretty=%B | grep -q "\[release\]"; then
+            # Check all commits in the PR, not just the merge commit
+            if git log --format=%B origin/${{ github.base_ref }}..HEAD | grep -q "\[release\]"; then
               echo "PR with [release] keyword detected"
               should_release="true"
             else
