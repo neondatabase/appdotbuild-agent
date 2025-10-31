@@ -83,13 +83,21 @@ jobs:
         id: check
         run: |
           should_build="false"
-          # we check two commits because the first commit is the merge commit
-          if git log -2 --pretty=%s | tail -n 1 | grep -q "build-rust"; then
+
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # Always build on push to main
             should_build="true"
-            echo "Rust build detected based on commit message."
-          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            should_build="true"
-            echo "Rust build detected based on push to main branch."
+            echo "Rust build detected: push to main branch"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # For PRs: check if edda_mcp Cargo.toml changed AND has [release] keyword
+            if git diff --name-only origin/${{ github.base_ref }}..HEAD | grep -q "edda/edda_mcp/Cargo.toml"; then
+              if git log --format=%B origin/${{ github.base_ref }}..HEAD | grep -q "\[release\]"; then
+                should_build="true"
+                echo "Rust build detected: Cargo.toml change + [release] keyword in PR"
+              else
+                echo "Cargo.toml changed but no [release] keyword - skipping build"
+              fi
+            fi
           fi
 
           echo "should_build=${should_build}" >> $GITHUB_OUTPUT
