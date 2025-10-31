@@ -11,6 +11,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "tqdm>=4.66.0",
     "joblib>=1.4.0",
+    "litellm>=1.79.0",
+    "mcp>=1.17.0",
 ]
 
 [tool.ruff]
@@ -31,4 +33,5 @@ venv = ".venv"
 [dependency-groups]
 dev = [
     "pyright>=1.1.406",
+    "ruff>=0.14.3",
 ]
