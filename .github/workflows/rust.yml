@@ -310,8 +310,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ needs.detect-release.outputs.version }}"
-          COMMIT_SHA="${{ github.sha }}"
-          CI_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           # Generate checksums
           cd release
@@ -327,10 +325,6 @@ jobs:
           $LINUX_CHECKSUM  edda_mcp-linux-x86_64
           $MACOS_CHECKSUM  edda_mcp-macos-arm64
           \`\`\`
-
-          ---
-          - Built from commit: \`$COMMIT_SHA\`
-          - CI Run: $CI_URL
           EOF
 
           gh release create "v$VERSION" \
