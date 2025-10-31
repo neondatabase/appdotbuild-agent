@@ -6,6 +6,18 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub allow_deployment: bool,
     pub required_providers: Vec<ProviderType>,
+    pub io_config: Option<IoConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum TemplateConfig {
+    Trpc,
+    Custom { path: String },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct IoConfig {
+    pub template: TemplateConfig,
 }
 
 impl Config {
@@ -37,6 +49,9 @@ impl Default for Config {
                 ProviderType::Deployment,
                 ProviderType::Io,
             ],
+            io_config: Some(IoConfig {
+                template: TemplateConfig::Trpc,
+            }),
         }
     }
 }
