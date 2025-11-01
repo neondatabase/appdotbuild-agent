@@ -35,7 +35,7 @@ impl<T: RustEmbed> TemplateCore for T {
     }
 }
 
-fn write_file(work_dir: &Path, path: &str, content: &str) -> Result<PathBuf> {
+pub fn write_file(work_dir: &Path, path: &str, content: &str) -> Result<PathBuf> {
     let full_path = work_dir.join(path);
     if let Some(parent) = full_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {

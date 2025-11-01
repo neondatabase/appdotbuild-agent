@@ -1,9 +1,10 @@
-use edda_mcp::providers::{IOProvider, Template};
+use edda_mcp::providers::IOProvider;
+use edda_templates::TemplateTRPC;
 use std::path::Path;
 use tempfile::TempDir;
 
 fn initiate_project_for_tests(work_dir: &Path, force_rewrite: bool) {
-    IOProvider::initiate_project_impl(work_dir, Template::Trpc, force_rewrite).unwrap();
+    IOProvider::initiate_project_impl(work_dir, TemplateTRPC, force_rewrite).unwrap();
 }
 
 #[tokio::test]
@@ -39,14 +40,18 @@ async fn test_validate_with_typescript_error() {
     let broken_file = work_dir.join("server/src/index.ts");
     std::fs::write(
         &broken_file,
-        "const x: number = 'this is not a number'; // type error\n"
-    ).unwrap();
+        "const x: number = 'this is not a number'; // type error\n",
+    )
+    .unwrap();
 
     // validate should detect the error
     let result = IOProvider::validate_project_impl(work_dir).await.unwrap();
 
     // validation should fail due to type error
-    assert!(!result.success, "validation should fail with TypeScript type error");
+    assert!(
+        !result.success,
+        "validation should fail with TypeScript type error"
+    );
     assert!(result.details.is_some());
 }
 
@@ -63,7 +68,7 @@ async fn test_validate_with_failing_test() {
     let content = std::fs::read_to_string(&test_file).unwrap();
     let modified = content.replace(
         r#"assert.equal(data.result.data.json.status, "ok");"#,
-        r#"assert.equal(data.result.data.json.status, "broken");"#
+        r#"assert.equal(data.result.data.json.status, "broken");"#,
     );
     std::fs::write(&test_file, modified).unwrap();
 

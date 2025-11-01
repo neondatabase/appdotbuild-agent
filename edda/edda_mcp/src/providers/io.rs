@@ -1,8 +1,9 @@
+use crate::config::TemplateConfig;
 use crate::state;
 use edda_integrations::ToolResultDisplay;
 use edda_sandbox::dagger::{ConnectOpts, Logger};
 use edda_sandbox::{DaggerSandbox, Sandbox};
-use edda_templates::TemplateTRPC;
+use edda_templates::{LocalTemplate, Template, TemplateCore, TemplateTRPC};
 use eyre::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -14,27 +15,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-
-/// Internal template enum - not exposed via MCP protocol.
-/// Only public for testing purposes.
-#[doc(hidden)]
-pub enum Template {
-    Trpc,
-}
-
-impl Template {
-    fn description(&self) -> &'static str {
-        match self {
-            Template::Trpc => TemplateTRPC::guidelines(),
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        match self {
-            Template::Trpc => "tRPC TypeScript",
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct IOProvider {
@@ -118,17 +98,18 @@ impl IOProvider {
     }
 
     /// Get the template to use based on the config
-    fn get_template(&self) -> Template {
-        self.config
-            .as_ref()
-            .map(|cfg| match &cfg.template {
-                crate::config::TemplateConfig::Trpc => Template::Trpc,
-                crate::config::TemplateConfig::Custom { path: _ } => {
-                    // TODO: Support custom templates
-                    Template::Trpc
+    fn get_template(&self) -> TemplateFiles {
+        match self.config {
+            Some(ref cfg) => match &cfg.template {
+                TemplateConfig::Trpc => TemplateFiles::Trpc(TemplateTRPC),
+                TemplateConfig::Custom { name, path } => {
+                    let path = std::path::PathBuf::from(path);
+                    let template = LocalTemplate::from_dir(&name, &path).unwrap();
+                    TemplateFiles::Local(template)
                 }
-            })
-            .unwrap_or(Template::Trpc)
+            },
+            None => TemplateFiles::Trpc(TemplateTRPC),
+        }
     }
 
     /// Core logic for initiating a project from template.
@@ -136,7 +117,7 @@ impl IOProvider {
     #[doc(hidden)]
     pub fn initiate_project_impl(
         work_dir: &Path,
-        template: Template,
+        template: impl Template,
         force_rewrite: bool,
     ) -> Result<InitiateProjectResult> {
         // handle force rewrite
@@ -157,10 +138,9 @@ impl IOProvider {
             )
         })?;
 
-        // collect and copy files using git ls-files
         let template_name = template.name().to_string();
-        let template_description = template.description().to_string();
-        let files = collect_template_files(template, work_dir)?;
+        let template_description = template.description().unwrap_or("".to_string());
+        let files = template.extract(work_dir)?;
 
         Ok(InitiateProjectResult {
             files_copied: files.len(),
@@ -285,7 +265,7 @@ impl IOProvider {
                     message: "All validations passed (build + tests)".to_string(),
                     details: None,
                 }
-            },
+            }
             Err(details) => {
                 // failed validation - don't update state
                 ValidateProjectResult {
@@ -293,7 +273,7 @@ impl IOProvider {
                     message: "Validation failed".to_string(),
                     details: Some(details),
                 }
-            },
+            }
         };
 
         Ok(result)
@@ -325,8 +305,40 @@ impl IOProvider {
         })?;
 
         match result.success {
-            true => Ok(CallToolResult::success(vec![Content::text(result.display())])),
+            true => Ok(CallToolResult::success(vec![Content::text(
+                result.display(),
+            )])),
             false => Ok(CallToolResult::error(vec![Content::text(result.display())])),
+        }
+    }
+}
+
+enum TemplateFiles {
+    Trpc(TemplateTRPC),
+    Local(LocalTemplate),
+}
+
+impl Template for TemplateFiles {
+    fn name(&self) -> String {
+        match self {
+            TemplateFiles::Trpc(t) => t.name(),
+            TemplateFiles::Local(t) => t.name(),
+        }
+    }
+}
+
+impl TemplateCore for TemplateFiles {
+    fn description(&self) -> Option<String> {
+        match self {
+            TemplateFiles::Trpc(t) => t.description(),
+            TemplateFiles::Local(t) => t.description(),
+        }
+    }
+
+    fn extract(&self, work_dir: &Path) -> Result<Vec<PathBuf>> {
+        match self {
+            TemplateFiles::Trpc(t) => t.extract(work_dir),
+            TemplateFiles::Local(t) => t.extract(work_dir),
         }
     }
 }
@@ -435,56 +447,6 @@ async fn run_tests(sandbox: &mut DaggerSandbox) -> Result<(), ValidationDetails>
     let duration = start_time.elapsed().as_secs_f64();
     tracing::info!(duration, "Tests passed");
     Ok(())
-}
-
-fn extract_files(template: Template) -> Vec<(String, String)> {
-    let mut files = Vec::new();
-    match template {
-        Template::Trpc => {
-            for path in TemplateTRPC::iter() {
-                if let Some(file) = TemplateTRPC::get(path.as_ref()) {
-                    files.push((
-                        path.to_string(),
-                        String::from_utf8_lossy(&file.data).into_owned(),
-                    ));
-                }
-            }
-        }
-    }
-    files.sort_by(|a, b| a.0.cmp(&b.0));
-    files
-}
-
-fn collect_template_files(template: Template, work_path: &Path) -> Result<Vec<PathBuf>> {
-    let template_files = extract_files(template);
-    let mut copied_files = Vec::new();
-    for (template_path, contents) in template_files.iter() {
-        if template_path.is_empty() {
-            continue;
-        }
-
-        let target_file = work_path.join(template_path);
-
-        // ensure parent directory exists
-        if let Some(parent) = target_file.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                eyre::eyre!(
-                    "failed to create directory '{}' for file '{}': {}",
-                    parent.display(),
-                    target_file.display(),
-                    e
-                )
-            })?;
-        }
-
-        // write file
-        std::fs::write(&target_file, contents)
-            .map_err(|e| eyre::eyre!("failed to write file '{}': {}", target_file.display(), e))?;
-
-        copied_files.push(target_file);
-    }
-
-    Ok(copied_files)
 }
 
 #[tool_handler]

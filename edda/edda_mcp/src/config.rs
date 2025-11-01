@@ -12,7 +12,7 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum TemplateConfig {
     Trpc,
-    Custom { path: String },
+    Custom { name: String, path: String },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

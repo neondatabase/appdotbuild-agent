@@ -6,7 +6,7 @@ pub mod io;
 pub use databricks::DatabricksProvider;
 pub use deployment::DeploymentProvider;
 pub use google_sheets::GoogleSheetsProvider;
-pub use io::{IOProvider, Template};
+pub use io::IOProvider;
 
 use eyre::Result;
 use rmcp::model::{

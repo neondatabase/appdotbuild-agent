@@ -1,4 +1,5 @@
-use edda_mcp::providers::{IOProvider, Template};
+use edda_mcp::providers::IOProvider;
+use edda_templates::TemplateTRPC;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -32,7 +33,7 @@ fn test_optimistic() {
     let temp_dir = TempDir::new().unwrap();
     let work_dir = temp_dir.path().join("optimistic_test");
 
-    let result = IOProvider::initiate_project_impl(&work_dir, Template::Trpc, false).unwrap();
+    let result = IOProvider::initiate_project_impl(&work_dir, TemplateTRPC, false).unwrap();
 
     // verify result
     assert!(result.files_copied > 0);
@@ -49,7 +50,7 @@ fn test_force_rewrite() {
     let work_dir = temp_dir.path().join("force_rewrite_test");
 
     // initial copy
-    IOProvider::initiate_project_impl(&work_dir, Template::Trpc, false).unwrap();
+    IOProvider::initiate_project_impl(&work_dir, TemplateTRPC, false).unwrap();
 
     // read original .gitignore content
     let gitignore_path = work_dir.join(".gitignore");
@@ -61,7 +62,7 @@ fn test_force_rewrite() {
     assert!(work_dir.join("extra_file.txt").exists());
 
     // force rewrite
-    let result = IOProvider::initiate_project_impl(&work_dir, Template::Trpc, true).unwrap();
+    let result = IOProvider::initiate_project_impl(&work_dir, TemplateTRPC, true).unwrap();
 
     // verify result
     assert!(result.files_copied > 0);
@@ -87,7 +88,7 @@ fn test_force_rewrite_on_missing_directory() {
     let temp_dir = TempDir::new().unwrap();
     let work_dir = temp_dir.path().join("missing_force_rewrite");
 
-    let result = IOProvider::initiate_project_impl(&work_dir, Template::Trpc, true).unwrap();
+    let result = IOProvider::initiate_project_impl(&work_dir, TemplateTRPC, true).unwrap();
 
     assert!(result.files_copied > 0);
     verify_template_files(&work_dir);
@@ -109,7 +110,7 @@ fn test_pessimistic_no_write_access() {
         fs::set_permissions(&work_dir, perms).unwrap();
     }
 
-    let result = IOProvider::initiate_project_impl(&work_dir, Template::Trpc, false);
+    let result = IOProvider::initiate_project_impl(&work_dir, TemplateTRPC, false);
 
     // should fail with permission error
     assert!(result.is_err(), "should fail due to permission denied");
