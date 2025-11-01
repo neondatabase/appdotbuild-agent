@@ -8,7 +8,7 @@ use eyre::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    CallToolResult, Content, ServerInfo,
 };
 use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
@@ -452,19 +452,6 @@ async fn run_tests(sandbox: &mut DaggerSandbox) -> Result<(), ValidationDetails>
 #[tool_handler]
 impl ServerHandler for IOProvider {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "edda-mcp-io".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                title: Some("Edda MCP - I/O".to_string()),
-                website_url: None,
-                icons: None,
-            },
-            instructions: Some(
-                "MCP server providing I/O tools for project initialization, template management, and validation.".to_string(),
-            ),
-        }
+        crate::mcp_helpers::internal_server_info()
     }
 }

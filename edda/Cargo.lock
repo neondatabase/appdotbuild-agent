@@ -1065,6 +1065,8 @@ dependencies = [
  "eyre",
  "filetime",
  "flate2",
+ "glob",
+ "regex",
  "reqwest 0.12.24",
  "rmcp",
  "rmcp-in-process-transport",
@@ -1080,6 +1082,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]

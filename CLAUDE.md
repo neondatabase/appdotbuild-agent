@@ -229,6 +229,23 @@ Klaudbiusz uses edda's MCP server via Claude Agent SDK:
 - Use `gh` CLI for GitHub operations
 - Check `.edda_state` in klaudbiusz apps before committing
 
+### Release Workflow (edda_mcp)
+
+Automatic releases triggered when **both** conditions met:
+1. `edda/edda_mcp/Cargo.toml` version changed
+2. Last commit has `[release]` keyword (or push to main)
+
+**Version rules:**
+- PR releases: MUST use dev format (`0.0.3-dev.1`) → creates prerelease
+- Main releases: MUST use stable format (`0.0.4`) → creates latest release
+- Tag must not exist → fails if duplicate
+
+**Example workflow:**
+1. Change version to `0.0.5-dev.1` in Cargo.toml
+2. Commit with `[release] Add new feature`
+3. CI builds, tests, creates GitHub release v0.0.5-dev.1
+4. After merge to main, bump to `0.0.5` and commit (no `[release]` needed on main)
+
 ### Testing
 
 **Edda:**
@@ -246,3 +263,4 @@ Klaudbiusz uses edda's MCP server via Claude Agent SDK:
 - **edda/CLAUDE.md** - Edda-specific development guidance
 - **klaudbiusz/README.md** - Klaudbiusz overview and usage
 - **klaudbiusz/eval-docs/** - Evaluation framework documentation
+- remember how release logic works

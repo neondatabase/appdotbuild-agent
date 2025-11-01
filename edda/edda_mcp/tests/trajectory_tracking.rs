@@ -1,4 +1,5 @@
 use edda_mcp::providers::{CombinedProvider, IOProvider};
+use edda_mcp::session::SessionContext;
 use edda_mcp::trajectory::{TrajectoryEntry, TrajectoryTrackingProvider};
 use eyre::Result;
 use rmcp::ServiceExt;
@@ -13,7 +14,8 @@ async fn test_trajectory_tracking_records_tool_calls() -> Result<()> {
     let history_path = temp_dir.path().join("history.jsonl");
 
     let io = IOProvider::new(None)?;
-    let provider = CombinedProvider::new(None, None, None, Some(io))?;
+    let session_ctx = SessionContext::new(None);
+    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None)?;
 
     let session_id = "test-session-123".to_string();
     let tracking_provider = TrajectoryTrackingProvider::new_with_path(
@@ -70,7 +72,8 @@ async fn test_trajectory_tracking_multiple_calls() -> Result<()> {
     let history_path = temp_dir.path().join("history.jsonl");
 
     let io = IOProvider::new(None)?;
-    let provider = CombinedProvider::new(None, None, None, Some(io))?;
+    let session_ctx = SessionContext::new(None);
+    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None)?;
     let tracking_provider = TrajectoryTrackingProvider::new_with_path(
         provider,
         "multi-test".to_string(),
@@ -122,7 +125,8 @@ async fn test_trajectory_entry_format() -> Result<()> {
     let history_path = temp_dir.path().join("history.jsonl");
 
     let io = IOProvider::new(None)?;
-    let provider = CombinedProvider::new(None, None, None, Some(io))?;
+    let session_ctx = SessionContext::new(None);
+    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None)?;
     let tracking_provider = TrajectoryTrackingProvider::new_with_path(
         provider,
         "format-test".to_string(),
@@ -174,7 +178,8 @@ async fn test_trajectory_tracking_error_case() -> Result<()> {
     let history_path = temp_dir.path().join("history.jsonl");
 
     let io = IOProvider::new(None)?;
-    let provider = CombinedProvider::new(None, None, None, Some(io))?;
+    let session_ctx = SessionContext::new(None);
+    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None)?;
     let tracking_provider = TrajectoryTrackingProvider::new_with_path(
         provider,
         "error-test".to_string(),

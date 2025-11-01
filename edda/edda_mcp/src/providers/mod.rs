@@ -2,12 +2,15 @@ pub mod databricks;
 pub mod deployment;
 pub mod google_sheets;
 pub mod io;
+pub mod workspace;
 
 pub use databricks::DatabricksProvider;
 pub use deployment::DeploymentProvider;
 pub use google_sheets::GoogleSheetsProvider;
 pub use io::IOProvider;
+pub use workspace::WorkspaceTools;
 
+use crate::session::SessionContext;
 use eyre::Result;
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, Implementation, PaginatedRequestParam, ProtocolVersion,
@@ -24,6 +27,7 @@ pub enum ProviderType {
     Deployment,
     GoogleSheets,
     Io,
+    Workspace,
 }
 
 enum TargetProvider {
@@ -31,31 +35,43 @@ enum TargetProvider {
     Deployment(Arc<DeploymentProvider>),
     GoogleSheets(Arc<GoogleSheetsProvider>),
     Io(Arc<IOProvider>),
+    Workspace(Arc<WorkspaceTools>),
 }
 
 #[derive(Clone)]
 pub struct CombinedProvider {
+    session_ctx: SessionContext,
     databricks: Option<Arc<DatabricksProvider>>,
     deployment: Option<Arc<DeploymentProvider>>,
     google_sheets: Option<Arc<GoogleSheetsProvider>>,
     io: Option<Arc<IOProvider>>,
+    workspace: Option<Arc<WorkspaceTools>>,
 }
 
 impl CombinedProvider {
     pub fn new(
+        session_ctx: SessionContext,
         databricks: Option<DatabricksProvider>,
         deployment: Option<DeploymentProvider>,
         google_sheets: Option<GoogleSheetsProvider>,
         io: Option<IOProvider>,
+        workspace: Option<WorkspaceTools>,
     ) -> Result<Self> {
-        if databricks.is_none() && deployment.is_none() && google_sheets.is_none() && io.is_none() {
+        if databricks.is_none()
+            && deployment.is_none()
+            && google_sheets.is_none()
+            && io.is_none()
+            && workspace.is_none()
+        {
             return Err(eyre::eyre!("at least one provider must be available"));
         }
         Ok(Self {
+            session_ctx,
             databricks: databricks.map(Arc::new),
             deployment: deployment.map(Arc::new),
             google_sheets: google_sheets.map(Arc::new),
             io: io.map(Arc::new),
+            workspace: workspace.map(Arc::new),
         })
     }
 
@@ -95,6 +111,16 @@ impl CombinedProvider {
                     return Ok(TargetProvider::Io(io));
                 }
                 _ => {}
+            }
+        }
+
+        // check workspace tools
+        if let Some(workspace) = self.workspace.clone() {
+            if matches!(
+                tool_name,
+                "read_file" | "write_file" | "edit_file" | "bash" | "grep" | "glob"
+            ) {
+                return Ok(TargetProvider::Workspace(workspace));
             }
         }
 
@@ -151,6 +177,13 @@ impl CombinedProvider {
                         return Err(eyre::eyre!("I/O provider is required but not configured."));
                     }
                 }
+                ProviderType::Workspace => {
+                    if self.workspace.is_none() {
+                        return Err(eyre::eyre!(
+                            "Workspace provider is required but not configured."
+                        ));
+                    }
+                }
             }
         }
         Ok(())
@@ -171,6 +204,9 @@ impl ServerHandler for CombinedProvider {
         }
         if self.io.is_some() {
             providers.push("I/O");
+        }
+        if self.workspace.is_some() {
+            providers.push("Workspace");
         }
 
         ServerInfo {
@@ -195,11 +231,36 @@ impl ServerHandler for CombinedProvider {
         params: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> std::result::Result<CallToolResult, ErrorData> {
+        // intercept scaffold_data_app to set work_dir in session context
+        if params.name == "scaffold_data_app" {
+            if let Some(ref io) = self.io {
+                let result = io.call_tool(params.clone(), context.clone()).await?;
+
+                // extract work_dir from arguments and set it in session context
+                if let Some(args) = params.arguments {
+                    if let Some(work_dir) = args.get("work_dir").and_then(|v| v.as_str()) {
+                        let path = std::path::PathBuf::from(work_dir);
+
+                        // validate path exists and is directory
+                        if path.exists() && path.is_dir() {
+                            let mut work_dir_lock = self.session_ctx.work_dir.write().await;
+                            if work_dir_lock.is_none() {
+                                *work_dir_lock = Some(path);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(result);
+            }
+        }
+
         match self.resolve_provider(&params.name)? {
             TargetProvider::Databricks(provider) => provider.call_tool(params, context).await,
             TargetProvider::Deployment(provider) => provider.call_tool(params, context).await,
             TargetProvider::GoogleSheets(provider) => provider.call_tool(params, context).await,
             TargetProvider::Io(provider) => provider.call_tool(params, context).await,
+            TargetProvider::Workspace(provider) => provider.call_tool(params, context).await,
         }
     }
 
@@ -233,6 +294,12 @@ impl ServerHandler for CombinedProvider {
 
         if let Some(ref io) = self.io {
             if let Ok(result) = io.list_tools(params.clone(), context.clone()).await {
+                tools.extend(result.tools);
+            }
+        }
+
+        if let Some(ref workspace) = self.workspace {
+            if let Ok(result) = workspace.list_tools(params.clone(), context.clone()).await {
                 tools.extend(result.tools);
             }
         }

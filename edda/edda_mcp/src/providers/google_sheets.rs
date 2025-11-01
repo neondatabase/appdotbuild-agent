@@ -5,7 +5,7 @@ use edda_integrations::{
 use eyre::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo};
+use rmcp::model::{CallToolResult, Content, ServerInfo};
 use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler};
 use std::sync::Arc;
 
@@ -64,19 +64,6 @@ impl GoogleSheetsProvider {
 #[tool_handler]
 impl ServerHandler for GoogleSheetsProvider {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "edda-mcp-google-sheets".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                title: Some("Edda MCP - Google Sheets".to_string()),
-                website_url: None,
-                icons: None,
-            },
-            instructions: Some(
-                "MCP server providing Google Sheets integration tools for reading spreadsheet data and metadata.".to_string(),
-            ),
-        }
+        crate::mcp_helpers::internal_server_info()
     }
 }

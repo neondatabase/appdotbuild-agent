@@ -6,6 +6,7 @@
 //! - At least one provider is available
 
 use edda_mcp::providers::{CombinedProvider, IOProvider};
+use edda_mcp::session::SessionContext;
 use eyre::Result;
 use rmcp::ServiceExt;
 use rmcp_in_process_transport::in_process::TokioInProcess;
@@ -16,7 +17,8 @@ async fn smoke_test_mcp_server() -> Result<()> {
     let io = IOProvider::new(None)?;
 
     // create provider (no need to try other providers for smoke test)
-    let provider = CombinedProvider::new(None, None, None, Some(io))?;
+    let session_ctx = SessionContext::new(None);
+    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None)?;
 
     // create in-process service
     let tokio_in_process = TokioInProcess::new(provider).await?;

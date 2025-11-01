@@ -7,7 +7,7 @@ use eyre::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    CallToolResult, Content, ServerInfo,
 };
 use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
@@ -269,22 +269,11 @@ impl DeploymentProvider {
 #[tool_handler]
 impl ServerHandler for DeploymentProvider {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "edda-mcp-deployment".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                title: Some("Edda MCP - Deployment".to_string()),
-                website_url: None,
-                icons: None,
-            },
-            instructions: Some(
-                "MCP server providing deployment tools for Databricks Apps.".to_string(),
-            ),
-        }
+        crate::mcp_helpers::internal_server_info()
     }
 }
+
+
 
 fn run_format_cmd(command: &mut std::process::Command) -> Result<std::process::Output> {
     let output = command.output().map_err(|e| eyre::eyre!("Error: {e}"))?;

@@ -10,6 +10,7 @@
 use edda_mcp::providers::{
     CombinedProvider, DatabricksProvider, DeploymentProvider, GoogleSheetsProvider, IOProvider,
 };
+use edda_mcp::session::SessionContext;
 use eyre::Result;
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParam;
@@ -30,8 +31,9 @@ async fn main() -> Result<()> {
     let google_sheets = GoogleSheetsProvider::new().await.ok();
     let io = IOProvider::new(None).ok();
 
+    let session_ctx = SessionContext::new(None);
     let provider =
-        CombinedProvider::new(databricks, deployment, google_sheets, io).map_err(|_| {
+        CombinedProvider::new(session_ctx, databricks, deployment, google_sheets, io, None).map_err(|_| {
             eyre::eyre!(
                 "No integrations available. Configure at least one:\n\
              - Databricks: Set DATABRICKS_HOST and DATABRICKS_TOKEN\n\

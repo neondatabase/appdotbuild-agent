@@ -1,3 +1,8 @@
+// NOTE: These are sandbox-based tools for event-sourced agents.
+// For local I/O tools (used by MCP), see edda_mcp/src/providers/local_io.rs
+// TODO: Consider migrating to a shared edda_tools crate in the future for consistency,
+// though the sandbox vs. host filesystem difference may warrant keeping them separate.
+
 use super::{Tool, Validator, ValidatorDyn};
 use edda_sandbox::{DaggerSandbox, Sandbox};
 use eyre::Result;
