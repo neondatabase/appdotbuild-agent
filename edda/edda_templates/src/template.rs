@@ -2,19 +2,18 @@ use eyre::Result;
 use rust_embed::RustEmbed;
 use std::path::{Path, PathBuf};
 
-pub trait Template {
-    fn name(&self) -> Option<String>;
+pub trait Template: TemplateCore {
+    fn name(&self) -> String;
+}
+
+pub trait TemplateCore {
     fn description(&self) -> Option<String>;
     fn extract(&self, work_dir: &Path) -> Result<Vec<PathBuf>>;
 }
 
-impl<T: RustEmbed> Template for T {
-    fn name(&self) -> Option<String> {
-        None
-    }
-
+impl<T: RustEmbed> TemplateCore for T {
     fn description(&self) -> Option<String> {
-        None
+        Self::get("CLAUDE.md").map(|file| String::from_utf8_lossy(&file.data).to_string())
     }
 
     fn extract(&self, work_dir: &Path) -> Result<Vec<PathBuf>> {
