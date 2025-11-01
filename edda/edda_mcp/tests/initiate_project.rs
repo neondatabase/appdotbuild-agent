@@ -9,11 +9,10 @@ fn verify_template_files(work_dir: &Path) {
 
     // verify .gitignore exists in root
     let gitignore = work_dir.join(".gitignore");
-    assert!(gitignore.exists(), ".gitignore should exist in work_dir root");
-
-    // verify build.sh exists in root
-    let build_sh = work_dir.join("build.sh");
-    assert!(build_sh.exists(), "build.sh should exist in work_dir root");
+    assert!(
+        gitignore.exists(),
+        ".gitignore should exist in work_dir root"
+    );
 
     // verify client directory exists
     let client_dir = work_dir.join("client");

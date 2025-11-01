@@ -27,6 +27,10 @@ struct Cli {
     #[arg(long)]
     with_workspace_tools: bool,
 
+    /// Override I/O config with JSON (e.g., '{"template":"Trpc"}' or '{"template":{"Custom":{"path":"/path"}}}')
+    #[arg(long)]
+    io_config: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -95,6 +99,11 @@ async fn main() -> Result<()> {
             if cli.with_workspace_tools {
                 config.with_workspace_tools = true;
             }
+            if let Some(io_config_json) = cli.io_config {
+                let io_config: edda_mcp::config::IoConfig = serde_json::from_str(&io_config_json)
+                    .map_err(|e| eyre::eyre!("Failed to parse --io_config JSON: {}", e))?;
+                config.io_config = Some(io_config);
+            }
             run_server(config).await
         }
     }
@@ -160,6 +169,13 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
         });
     }
 
+    // spawn non-blocking version check
+    tokio::spawn(async {
+        if let Err(e) = edda_mcp::version_check::check_for_updates().await {
+            tracing::debug!("Version check failed: {}", e);
+        }
+    });
+
     // initialize all available providers
     let databricks = DatabricksProvider::new().ok();
     let deployment = if config.allow_deployment {
@@ -168,7 +184,7 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
         None
     };
     let google_sheets = GoogleSheetsProvider::new().await.ok();
-    let io = IOProvider::new().ok();
+    let io = IOProvider::new(config.io_config.clone()).ok();
 
     // create session context (session_id populated earlier)
     let session_ctx = SessionContext::new(session_id.clone());

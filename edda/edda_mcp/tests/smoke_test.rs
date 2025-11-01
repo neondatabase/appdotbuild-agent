@@ -13,7 +13,7 @@ use rmcp_in_process_transport::in_process::TokioInProcess;
 #[tokio::test]
 async fn smoke_test_mcp_server() -> Result<()> {
     // use IOProvider as it requires no credentials
-    let io = IOProvider::new()?;
+    let io = IOProvider::new(None)?;
 
     // create provider (no need to try other providers for smoke test)
     let provider = CombinedProvider::new(None, None, None, Some(io))?;

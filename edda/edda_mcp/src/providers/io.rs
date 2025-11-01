@@ -39,6 +39,7 @@ impl Template {
 #[derive(Clone)]
 pub struct IOProvider {
     tool_router: ToolRouter<Self>,
+    config: Option<crate::config::IoConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -109,10 +110,25 @@ impl ToolResultDisplay for ValidateProjectResult {
 
 #[tool_router]
 impl IOProvider {
-    pub fn new() -> Result<Self> {
+    pub fn new(config: Option<crate::config::IoConfig>) -> Result<Self> {
         Ok(Self {
             tool_router: Self::tool_router(),
+            config,
         })
+    }
+
+    /// Get the template to use based on the config
+    fn get_template(&self) -> Template {
+        self.config
+            .as_ref()
+            .map(|cfg| match &cfg.template {
+                crate::config::TemplateConfig::Trpc => Template::Trpc,
+                crate::config::TemplateConfig::Custom { path: _ } => {
+                    // TODO: Support custom templates
+                    Template::Trpc
+                }
+            })
+            .unwrap_or(Template::Trpc)
     }
 
     /// Core logic for initiating a project from template.
@@ -175,7 +191,8 @@ impl IOProvider {
             ));
         }
 
-        let result = Self::initiate_project_impl(&work_path, Template::Trpc, args.force_rewrite)
+        let template = self.get_template();
+        let result = Self::initiate_project_impl(&work_path, template, args.force_rewrite)
             .map_err(|e| {
                 ErrorData::internal_error(format!("failed to initiate project: {}", e), None)
             })?;

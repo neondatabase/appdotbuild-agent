@@ -76,20 +76,33 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 2
 
       - name: Check if release build needed
         id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           should_build="false"
-          # we check two commits because the first commit is the merge commit
-          if git log -2 --pretty=%s | tail -n 1 | grep -q "build-rust"; then
+
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # Always build on push to main
             should_build="true"
-            echo "Rust build detected based on commit message."
-          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            should_build="true"
-            echo "Rust build detected based on push to main branch."
+            echo "Rust build detected: push to main branch"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # For PRs: check if edda_mcp Cargo.toml changed AND has [release] keyword
+            PR_NUM=${{ github.event.pull_request.number }}
+
+            # Check if Cargo.toml in changed files
+            if gh pr diff $PR_NUM --name-only | grep -q "edda/edda_mcp/Cargo.toml"; then
+              # Check if the latest commit has [release] keyword
+              LAST_COMMIT_MSG=$(gh pr view $PR_NUM --json commits --jq '.commits[-1].messageHeadline')
+              if [[ "$LAST_COMMIT_MSG" == *"[release]"* ]]; then
+                should_build="true"
+                echo "Rust build detected: Cargo.toml change + [release] keyword in latest commit"
+              else
+                echo "Cargo.toml changed but no [release] keyword in latest commit - skipping build"
+              fi
+            fi
           fi
 
           echo "should_build=${should_build}" >> $GITHUB_OUTPUT
@@ -170,3 +183,172 @@ jobs:
         env:
           DATABRICKS_HOST: "dummy"
           DATABRICKS_TOKEN: "dummy"
+
+  detect-release:
+    name: Detect Version and Validate
+    runs-on: ubuntu-latest
+    needs: [check-release-condition, smoke-test-mcp]
+    if: needs.check-release-condition.outputs.should_build == 'true'
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+
+      - name: Extract version from Cargo.toml
+        id: extract
+        run: |
+          VERSION=$(grep '^version = ' edda/edda_mcp/Cargo.toml | head -n1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Extracted version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check release conditions
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          should_release="false"
+
+          # Check if Cargo.toml was changed
+          if git diff --name-only HEAD~1 HEAD | grep -q "edda/edda_mcp/Cargo.toml"; then
+            # For main branch, always release on Cargo.toml change
+            if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+              should_release="true"
+              echo "Release detected: Cargo.toml change on main"
+            elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              # For PRs, check for [release] keyword in latest commit
+              PR_NUM=${{ github.event.pull_request.number }}
+              LAST_COMMIT_MSG=$(gh pr view $PR_NUM --json commits --jq '.commits[-1].messageHeadline')
+              if [[ "$LAST_COMMIT_MSG" == *"[release]"* ]]; then
+                should_release="true"
+                echo "Release detected: Cargo.toml change + [release] keyword in latest commit"
+              fi
+            fi
+          fi
+
+          echo "should_release=$should_release" >> $GITHUB_OUTPUT
+
+      - name: Validate version format
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          VERSION="${{ steps.extract.outputs.version }}"
+
+          # Check if this is a PR or push to main
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # PR releases must have -dev prefix
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev ]]; then
+              echo "Error: PR releases must use dev version format (e.g., 0.0.3-dev.1)"
+              echo "Found: $VERSION"
+              exit 1
+            fi
+          else
+            # Main branch releases must NOT have any suffix
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Main branch releases must follow format 0.0.0 (no suffix)"
+              echo "Found: $VERSION"
+              exit 1
+            fi
+          fi
+
+      - name: Check if tag already exists (fail explicitly)
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          VERSION="${{ steps.extract.outputs.version }}"
+          if git ls-remote --tags origin | grep -q "refs/tags/v$VERSION$"; then
+            echo "Error: Tag v$VERSION already exists!"
+            echo "Please bump the version in edda/edda_mcp/Cargo.toml before releasing."
+            exit 1
+          fi
+          echo "Tag v$VERSION does not exist - proceeding with release"
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: detect-release
+    if: needs.detect-release.outputs.should_release == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: edda-mcp-linux-x86_64
+          path: artifacts/linux
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: edda-mcp-macos-arm64
+          path: artifacts/macos
+
+      - name: Prepare artifacts for release
+        run: |
+          mkdir -p release
+          mv artifacts/linux/edda_mcp release/edda_mcp-linux-x86_64
+          mv artifacts/macos/edda_mcp release/edda_mcp-macos-arm64
+          chmod +x release/*
+          ls -lh release/
+
+      - name: Create git tag
+        run: |
+          VERSION="${{ needs.detect-release.outputs.version }}"
+          COMMIT_SHA="${{ github.sha }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag "v$VERSION" "$COMMIT_SHA"
+          git push origin "v$VERSION"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.detect-release.outputs.version }}"
+
+          # Generate checksums
+          cd release
+          LINUX_CHECKSUM=$(sha256sum edda_mcp-linux-x86_64 | awk '{print $1}')
+          MACOS_CHECKSUM=$(sha256sum edda_mcp-macos-arm64 | awk '{print $1}')
+          cd ..
+
+          cat > release_notes.md <<EOF
+          Release v$VERSION
+
+          ## SHA256 Checksums
+          \`\`\`
+          $LINUX_CHECKSUM  edda_mcp-linux-x86_64
+          $MACOS_CHECKSUM  edda_mcp-macos-arm64
+          \`\`\`
+          EOF
+
+          # Determine release flags based on version and branch
+          RELEASE_FLAGS=""
+          if [[ "$VERSION" =~ -dev ]]; then
+            # Dev versions are pre-releases, not latest
+            RELEASE_FLAGS="--prerelease"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # Main branch releases are marked as latest
+            RELEASE_FLAGS="--latest"
+          fi
+
+          gh release create "v$VERSION" \
+            --repo "${{ github.repository }}" \
+            --title "v$VERSION" \
+            --notes-file release_notes.md \
+            $RELEASE_FLAGS \
+            release/*
+
+      - name: Output release URL
+        run: |
+          VERSION="${{ needs.detect-release.outputs.version }}"
+          echo "Release created successfully!"
+          echo "View at: https://github.com/${{ github.repository }}/releases/tag/v$VERSION"
