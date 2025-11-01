@@ -1,4 +1,5 @@
 use rust_embed::Embed;
+pub mod template;
 
 #[derive(Embed)]
 #[folder = "template_trpc"]

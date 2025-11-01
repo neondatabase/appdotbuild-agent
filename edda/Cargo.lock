@@ -1141,6 +1141,7 @@ dependencies = [
 name = "edda_templates"
 version = "0.1.0"
 dependencies = [
+ "eyre",
  "rust-embed",
 ]
 
