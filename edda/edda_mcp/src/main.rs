@@ -142,7 +142,14 @@ async fn check_environment(config: &edda_mcp::config::Config) -> Result<()> {
         for (var_name, required) in databricks_checks {
             print!("  {}... ", var_name);
             match std::env::var(var_name) {
-                Ok(value) if !value.is_empty() => println!("✓"),
+                Ok(value) if !value.is_empty() => {
+                    println!("✓");
+                    // warn if DATABRICKS_HOST starts with http
+                    if var_name == "DATABRICKS_HOST" && value.starts_with("http") {
+                        println!("    ⚠ Warning: DATABRICKS_HOST should not include protocol");
+                        println!("    Some clients may struggle with this format");
+                    }
+                }
                 _ => {
                     if required {
                         println!("✗\n    Error: {} environment variable not set", var_name);
