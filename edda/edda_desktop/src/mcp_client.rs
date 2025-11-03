@@ -51,13 +51,4 @@ impl McpClient {
 
         Ok(response.tools)
     }
-
-    pub async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> Result<Vec<mcp_client_rs::types::MessageContent>> {
-        let result = self.client
-            .call_tool(name, arguments)
-            .await
-            .context("Failed to call tool")?;
-
-        Ok(result.content)
-    }
 }
