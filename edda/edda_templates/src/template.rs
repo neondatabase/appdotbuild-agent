@@ -20,8 +20,7 @@ impl<T: RustEmbed> TemplateCore for T {
         let mut files = Vec::new();
         for path in Self::iter().filter(|p| !p.is_empty()) {
             if let Some(file) = Self::get(path.as_ref()) {
-                let content = String::from_utf8_lossy(&file.data);
-                files.push((path.to_string(), content.to_string()));
+                files.push((path.to_string(), file.data.to_owned()));
             }
         }
         files.sort_by(|a, b| a.0.cmp(&b.0));
@@ -35,7 +34,7 @@ impl<T: RustEmbed> TemplateCore for T {
     }
 }
 
-pub fn write_file(work_dir: &Path, path: &str, content: &str) -> Result<PathBuf> {
+pub fn write_file(work_dir: &Path, path: &str, content: &[u8]) -> Result<PathBuf> {
     let full_path = work_dir.join(path);
     if let Some(parent) = full_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {

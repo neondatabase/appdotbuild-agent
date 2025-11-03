@@ -44,11 +44,11 @@ impl TemplateCore for LocalTemplate {
 
     fn extract(&self, work_dir: &Path) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
-        for entry in Walk::new(work_dir) {
+        for entry in Walk::new(&self.template_dir) {
             if let Ok(entry) = entry {
                 if entry.file_type().map_or(false, |ft| ft.is_file()) {
                     let path = entry.path().strip_prefix(&self.template_dir)?;
-                    let content = std::fs::read_to_string(entry.path())?;
+                    let content = std::fs::read(entry.path())?;
                     files.push((path.to_string_lossy().to_string(), content));
                 }
             }
