@@ -1666,6 +1666,7 @@ dependencies = [
  "eframe",
  "egui",
  "mcp_client_rs",
+ "rig-core",
  "serde",
  "serde_json",
  "tokio",

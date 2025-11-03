@@ -13,6 +13,7 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 mcp_client_rs = { git = "https://github.com/darinkishore/mcp_client_rust" }
+rig-core = "0.19"
 
 [build-dependencies]
 anyhow = "1.0"
