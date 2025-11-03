@@ -7,9 +7,7 @@ use edda_templates::{LocalTemplate, Template, TemplateCore, TemplateTRPC};
 use eyre::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{
-    CallToolResult, Content, ServerInfo,
-};
+use rmcp::model::{CallToolResult, Content, ServerInfo};
 use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -112,6 +110,45 @@ impl IOProvider {
         }
     }
 
+    fn get_docker_image(&self) -> String {
+        if let Some(cfg) = &self.config {
+            if let Some(val_config) = &cfg.validation {
+                if let Some(docker_image) = &val_config.docker_image {
+                    return docker_image.clone();
+                }
+            }
+        }
+        "node:20-alpine3.22".to_string()
+    }
+
+    /// Get validation strategy based on template type and config
+    fn get_validation_strategy(&self) -> validation::ValidationStrategy {
+        match &self.config {
+            Some(cfg) => {
+                // Check if custom validation is configured
+                if let Some(val_config) = &cfg.validation {
+                    return validation::ValidationStrategy::Configurable {
+                        command: val_config.command.clone(),
+                        docker_image: val_config.docker_image.clone(),
+                    };
+                }
+
+                // Otherwise use template-specific default
+                match &cfg.template {
+                    TemplateConfig::Trpc => validation::ValidationStrategy::Trpc,
+                    TemplateConfig::Custom { .. } => {
+                        // Default for custom templates: assume npm-based
+                        validation::ValidationStrategy::Configurable {
+                            command: "npm run build && npm test".to_string(),
+                            docker_image: None,
+                        }
+                    }
+                }
+            }
+            None => validation::ValidationStrategy::Trpc,
+        }
+    }
+
     /// Core logic for initiating a project from template.
     /// Internal implementation - only public for testing purposes.
     #[doc(hidden)]
@@ -183,7 +220,10 @@ impl IOProvider {
     }
 
     /// Core logic for validating a project
-    pub async fn validate_project_impl(work_dir: &Path) -> Result<ValidateProjectResult> {
+    pub async fn validate_project_impl(
+        work_dir: &Path,
+        validation_strategy: Box<dyn validation::ValidationDyn>,
+    ) -> Result<ValidateProjectResult> {
         // validate work directory exists
         if !work_dir.exists() {
             eyre::bail!("work directory does not exist: {}", work_dir.display());
@@ -205,6 +245,7 @@ impl IOProvider {
         // use channel to pass validation result out of dagger connection callback
         let (tx, rx) = tokio::sync::oneshot::channel();
         let work_dir_str = work_dir.display().to_string();
+        let docker_image = self.get_docker_image();
 
         // create connection and run validation
         let opts = ConnectOpts::default()
@@ -213,10 +254,10 @@ impl IOProvider {
 
         let connect_result = opts
             .connect(move |client| async move {
-                // create base container with node image
+                // create base container with configured image
                 let mut container = client
                     .container()
-                    .from("node:20-alpine3.22")
+                    .from(self.get_docker_image())
                     .with_exec(vec!["mkdir", "-p", "/app"]);
 
                 // propagate DATABRICKS_* env vars if set
@@ -237,8 +278,10 @@ impl IOProvider {
 
                 let mut sandbox = DaggerSandbox::from_container(container, client);
 
-                // run validation checks
-                let validation_result = run_typescript_validation(&mut sandbox, work_dir_str).await;
+                // run validation checks using the strategy
+                let validation_result = validation_strategy
+                    .validate(&mut sandbox, &work_dir_str)
+                    .await;
 
                 let _ = tx.send(validation_result);
                 Ok(())
@@ -262,7 +305,7 @@ impl IOProvider {
 
                 ValidateProjectResult {
                     success: true,
-                    message: "All validations passed (build + tests)".to_string(),
+                    message: "All validations passed".to_string(),
                     details: None,
                 }
             }
@@ -281,7 +324,7 @@ impl IOProvider {
 
     #[tool(
         name = "validate_data_app",
-        description = "Validate a project by copying files to a sandbox and running TypeScript compilation check and tests. Project should be scaffolded first. Returns validation result with success status and details."
+        description = "Validate a project by copying files to a sandbox and running validation checks. Project should be scaffolded first. Returns validation result with success status and details."
     )]
     pub async fn validate_data_app(
         &self,
@@ -300,9 +343,12 @@ impl IOProvider {
             ));
         }
 
-        let result = Self::validate_project_impl(&work_path).await.map_err(|e| {
-            ErrorData::internal_error(format!("failed to validate project: {}", e), None)
-        })?;
+        let validation_strategy = self.get_validation_strategy();
+        let result = Self::validate_project_impl(&work_path, validation_strategy)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(format!("failed to validate project: {}", e), None)
+            })?;
 
         match result.success {
             true => Ok(CallToolResult::success(vec![Content::text(
@@ -343,110 +389,199 @@ impl TemplateCore for TemplateFiles {
     }
 }
 
-async fn run_typescript_validation(
-    sandbox: &mut DaggerSandbox,
-    work_dir: String,
-) -> Result<(), ValidationDetails> {
-    let start_time = std::time::Instant::now();
-    tracing::info!("Starting validation (build + tests + type checks)...");
+pub mod validation {
+    use super::*;
+    use edda_sandbox::DaggerSandbox;
+    use std::pin::Pin;
 
-    refresh_sandbox_files(sandbox, &work_dir).await?;
-    run_build(sandbox).await?;
-    run_client_type_check(sandbox).await?;
-    run_tests(sandbox).await?;
+    pub trait Validation {
+        fn validate(
+            &self,
+            sandbox: &mut DaggerSandbox,
+            work_dir: &str,
+        ) -> impl Future<Output = Result<(), ValidationDetails>> + Send;
 
-    let duration = start_time.elapsed().as_secs_f64();
-    tracing::info!(duration, "All validation checks passed");
-    Ok(())
-}
-
-async fn refresh_sandbox_files(
-    sandbox: &mut DaggerSandbox,
-    work_dir: &str,
-) -> Result<(), ValidationDetails> {
-    sandbox
-        .refresh_from_host(work_dir, "/app")
-        .await
-        .map_err(|e| ValidationDetails {
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: format!("Failed to refresh from host: {}", e),
-        })
-}
-
-async fn run_build(sandbox: &mut DaggerSandbox) -> Result<(), ValidationDetails> {
-    let start_time = std::time::Instant::now();
-    let build_result = sandbox
-        .exec("cd /app && npm run build")
-        .await
-        .map_err(|e| ValidationDetails {
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: format!("Failed to run npm build: {}", e),
-        })?;
-
-    if build_result.exit_code != 0 {
-        tracing::error!("npm build failed: {:?}", build_result);
-        return Err(ValidationDetails {
-            exit_code: build_result.exit_code,
-            stdout: build_result.stdout,
-            stderr: build_result.stderr,
-        });
+        fn boxed(self) -> Box<dyn ValidationDyn>
+        where
+            Self: Sized + Send + Sync + 'static,
+        {
+            Box::new(self)
+        }
     }
 
-    let duration = start_time.elapsed().as_secs_f64();
-    tracing::info!(duration, "Build passed");
-    Ok(())
-}
-
-async fn run_client_type_check(sandbox: &mut DaggerSandbox) -> Result<(), ValidationDetails> {
-    let start_time = std::time::Instant::now();
-    let check_result = sandbox
-        .exec("cd /app/client && npx tsc --noEmit")
-        .await
-        .map_err(|e| ValidationDetails {
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: format!("Failed to run client type check: {}", e),
-        })?;
-
-    if check_result.exit_code != 0 {
-        tracing::error!("Client type check failed: {:?}", check_result);
-        return Err(ValidationDetails {
-            exit_code: check_result.exit_code,
-            stdout: check_result.stdout,
-            stderr: check_result.stderr,
-        });
+    pub trait ValidationDyn {
+        fn validate<'a>(
+            &'a self,
+            sandbox: &'a mut DaggerSandbox,
+            work_dir: &'a str,
+        ) -> Pin<Box<dyn Future<Output = Result<(), ValidationDetails>> + Send + 'a>>;
     }
 
-    let duration = start_time.elapsed().as_secs_f64();
-    tracing::info!(duration, "Client type check passed");
-    Ok(())
-}
-
-async fn run_tests(sandbox: &mut DaggerSandbox) -> Result<(), ValidationDetails> {
-    let start_time = std::time::Instant::now();
-    let test_result = sandbox
-        .exec("cd /app && npm test")
-        .await
-        .map_err(|e| ValidationDetails {
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: format!("Failed to run npm test: {}", e),
-        })?;
-
-    if test_result.exit_code != 0 {
-        tracing::error!("npm test failed: {:?}", test_result);
-        return Err(ValidationDetails {
-            exit_code: test_result.exit_code,
-            stdout: test_result.stdout,
-            stderr: test_result.stderr,
-        });
+    impl<T: Validation + Send + Sync> ValidationDyn for T {
+        fn validate<'a>(
+            &'a self,
+            sandbox: &'a mut DaggerSandbox,
+            work_dir: &'a str,
+        ) -> Pin<Box<dyn Future<Output = Result<(), ValidationDetails>> + Send + 'a>> {
+            Box::pin(self.validate(sandbox, work_dir))
+        }
     }
 
-    let duration = start_time.elapsed().as_secs_f64();
-    tracing::info!(duration, "Tests passed");
-    Ok(())
+    pub struct ValidationTRPC;
+
+    impl Validation for ValidationTRPC {
+        async fn validate(
+            &self,
+            sandbox: &mut DaggerSandbox,
+            work_dir: &str,
+        ) -> Result<(), ValidationDetails> {
+            let start_time = std::time::Instant::now();
+            tracing::info!("Starting tRPC validation (build + tests + type checks)...");
+
+            refresh_sandbox_files(sandbox, work_dir).await?;
+            Self::run_build(sandbox).await?;
+            Self::run_client_type_check(sandbox).await?;
+            Self::run_tests(sandbox).await?;
+
+            let duration = start_time.elapsed().as_secs_f64();
+            tracing::info!(duration, "All tRPC validation checks passed");
+            Ok(())
+        }
+    }
+
+    impl ValidationTRPC {
+        pub async fn run_build(sandbox: &mut DaggerSandbox) -> Result<(), ValidationDetails> {
+            let start_time = std::time::Instant::now();
+            let build_result = sandbox
+                .exec("cd /app && npm run build")
+                .await
+                .map_err(|e| ValidationDetails {
+                    exit_code: -1,
+                    stdout: String::new(),
+                    stderr: format!("Failed to run npm build: {}", e),
+                })?;
+
+            if build_result.exit_code != 0 {
+                tracing::error!("npm build failed: {:?}", build_result);
+                return Err(ValidationDetails {
+                    exit_code: build_result.exit_code,
+                    stdout: build_result.stdout,
+                    stderr: build_result.stderr,
+                });
+            }
+
+            let duration = start_time.elapsed().as_secs_f64();
+            tracing::info!(duration, "Build passed");
+            Ok(())
+        }
+
+        pub async fn run_client_type_check(
+            sandbox: &mut DaggerSandbox,
+        ) -> Result<(), ValidationDetails> {
+            let start_time = std::time::Instant::now();
+            let check_result = sandbox
+                .exec("cd /app/client && npx tsc --noEmit")
+                .await
+                .map_err(|e| ValidationDetails {
+                    exit_code: -1,
+                    stdout: String::new(),
+                    stderr: format!("Failed to run client type check: {}", e),
+                })?;
+
+            if check_result.exit_code != 0 {
+                tracing::error!("Client type check failed: {:?}", check_result);
+                return Err(ValidationDetails {
+                    exit_code: check_result.exit_code,
+                    stdout: check_result.stdout,
+                    stderr: check_result.stderr,
+                });
+            }
+
+            let duration = start_time.elapsed().as_secs_f64();
+            tracing::info!(duration, "Client type check passed");
+            Ok(())
+        }
+
+        pub async fn run_tests(sandbox: &mut DaggerSandbox) -> Result<(), ValidationDetails> {
+            let start_time = std::time::Instant::now();
+            let test_result =
+                sandbox
+                    .exec("cd /app && npm test")
+                    .await
+                    .map_err(|e| ValidationDetails {
+                        exit_code: -1,
+                        stdout: String::new(),
+                        stderr: format!("Failed to run npm test: {}", e),
+                    })?;
+
+            if test_result.exit_code != 0 {
+                tracing::error!("npm test failed: {:?}", test_result);
+                return Err(ValidationDetails {
+                    exit_code: test_result.exit_code,
+                    stdout: test_result.stdout,
+                    stderr: test_result.stderr,
+                });
+            }
+
+            let duration = start_time.elapsed().as_secs_f64();
+            tracing::info!(duration, "Tests passed");
+            Ok(())
+        }
+    }
+
+    pub struct ValidationCmd {
+        pub command: String,
+    }
+
+    impl Validation for ValidationCmd {
+        async fn validate(
+            &self,
+            sandbox: &mut DaggerSandbox,
+            work_dir: &str,
+        ) -> Result<(), ValidationDetails> {
+            let start_time = std::time::Instant::now();
+            tracing::info!("Starting custom validation: {}", self.command);
+
+            refresh_sandbox_files(sandbox, work_dir).await?;
+
+            let result = sandbox
+                .exec(&format!("cd /app && {}", self.command))
+                .await
+                .map_err(|e| ValidationDetails {
+                    exit_code: -1,
+                    stdout: String::new(),
+                    stderr: format!("Failed to run validation command: {}", e),
+                })?;
+
+            if result.exit_code != 0 {
+                tracing::error!("Validation command failed: {:?}", result);
+                return Err(ValidationDetails {
+                    exit_code: result.exit_code,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                });
+            }
+
+            let duration = start_time.elapsed().as_secs_f64();
+            tracing::info!(duration, "Custom validation passed");
+            Ok(())
+        }
+    }
+
+    // Helper functions (kept internal to validation module)
+    async fn refresh_sandbox_files(
+        sandbox: &mut DaggerSandbox,
+        work_dir: &str,
+    ) -> Result<(), ValidationDetails> {
+        sandbox
+            .refresh_from_host(work_dir, "/app")
+            .await
+            .map_err(|e| ValidationDetails {
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: format!("Failed to refresh from host: {}", e),
+            })
+    }
 }
 
 #[tool_handler]
