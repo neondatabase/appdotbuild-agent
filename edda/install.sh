@@ -246,6 +246,12 @@ download_and_install() {
             ;;
     esac
 
+    # Run environment check (non-blocking but shows status)
+    echo ""
+    echo "${BOLD}Running environment check...${RESET}"
+    echo ""
+    "$_install_path" check || true
+
     print_claude_instructions "$_install_path"
 }
 

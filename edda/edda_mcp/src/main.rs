@@ -42,6 +42,31 @@ enum Commands {
         /// Bug description (optional, will prompt if not provided)
         message: Option<String>,
     },
+    /// Check environment configuration and prerequisites
+    Check,
+}
+
+/// load config from file and apply CLI overrides
+fn load_config_with_overrides(cli: &Cli) -> Result<edda_mcp::config::Config> {
+    let mut config = edda_mcp::config::Config::load_from_dir()?;
+
+    if cli.disallow_deployment {
+        config.allow_deployment = false;
+        config.required_providers.retain(|p| !matches!(p, edda_mcp::providers::ProviderType::Deployment));
+    }
+
+    if cli.with_workspace_tools {
+        config.with_workspace_tools = true;
+    }
+
+    if let Some(io_config_json) = &cli.io_config {
+        let io_config: edda_mcp::config::IoConfig =
+            serde_json::from_str(io_config_json)
+                .map_err(|e| eyre::eyre!("Failed to parse --io_config JSON: {}", e))?;
+        config.io_config = Some(io_config);
+    }
+
+    Ok(config)
 }
 
 /// check if docker is available by running 'docker ps'
@@ -85,26 +110,99 @@ async fn warmup_sandbox() -> Result<()> {
     Ok(())
 }
 
+/// check environment configuration and prerequisites
+async fn check_environment(config: &edda_mcp::config::Config) -> Result<()> {
+    use edda_mcp::providers::ProviderType;
+
+    println!("🔍 Checking environment configuration...\n");
+
+    let mut all_passed = true;
+
+    // check docker
+    print!("  Docker availability... ");
+    match check_docker_available().await {
+        Ok(_) => println!("✓"),
+        Err(e) => {
+            println!("✗\n    Error: {}", e);
+            all_passed = false;
+        }
+    }
+
+    // check databricks environment variables only if databricks or deployment is required
+    let databricks_required = config.required_providers.contains(&ProviderType::Databricks)
+        || config.required_providers.contains(&ProviderType::Deployment);
+
+    if databricks_required {
+        let databricks_checks = [
+            ("DATABRICKS_HOST", true),
+            ("DATABRICKS_TOKEN", true),
+            ("DATABRICKS_WAREHOUSE_ID", config.required_providers.contains(&ProviderType::Deployment)),
+        ];
+
+        for (var_name, required) in databricks_checks {
+            print!("  {}... ", var_name);
+            match std::env::var(var_name) {
+                Ok(value) if !value.is_empty() => println!("✓"),
+                _ => {
+                    if required {
+                        println!("✗\n    Error: {} environment variable not set", var_name);
+                        all_passed = false;
+                    } else {
+                        println!("⚠ (optional for your config)");
+                    }
+                }
+            }
+        }
+
+        // check databricks CLI (optional, only if deployment is required)
+        if config.required_providers.contains(&ProviderType::Deployment) {
+            print!("  Databricks CLI... ");
+            match tokio::process::Command::new("databricks")
+                .arg("--version")
+                .output()
+                .await
+            {
+                Ok(output) if output.status.success() => println!("✓"),
+                _ => println!("⚠ (optional, needed for deployment)"),
+            }
+        }
+    }
+
+    // sandbox warmup (only if docker is available)
+    if check_docker_available().await.is_ok() {
+        println!("\n  Sandbox warmup started. It may take a while on first run...");
+        match warmup_sandbox().await {
+            Ok(_) => println!("  Sandbox warmup complete ✓"),
+            Err(e) => {
+                println!("  Sandbox warmup failed ✗\n    Error: {}", e);
+                all_passed = false;
+            }
+        }
+    }
+
+    println!();
+
+    if all_passed {
+        println!("✅ All checks passed!");
+        Ok(())
+    } else {
+        println!("❌ Some checks failed. Please review the errors above.");
+        Err(eyre::eyre!("Environment check failed"))
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Some(Commands::Yell { message }) => yell::run_yell(message),
+        Some(Commands::Check) => {
+            let config = load_config_with_overrides(&cli)?;
+            check_environment(&config).await
+        }
         None => {
-            let mut config = edda_mcp::config::Config::load_from_dir()?;
-            if cli.disallow_deployment {
-                config.allow_deployment = false;
-            }
-            if cli.with_workspace_tools {
-                config.with_workspace_tools = true;
-            }
-            if let Some(io_config_json) = cli.io_config {
-                let io_config: edda_mcp::config::IoConfig =
-                    serde_json::from_str(&io_config_json)
-                        .map_err(|e| eyre::eyre!("Failed to parse --io_config JSON: {}", e))?;
-                config.io_config = Some(io_config);
-            }
+            let config = load_config_with_overrides(&cli)?;
             run_server(config).await
         }
     }
@@ -160,15 +258,6 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
         eprintln!(
             "⚠️  Warning: docker not available - you may have issues with sandbox operations\n"
         );
-    }
-
-    // spawn non-blocking warmup task if docker is available
-    if docker_available {
-        tokio::spawn(async {
-            if let Err(e) = warmup_sandbox().await {
-                eprintln!("⚠️  Sandbox warmup failed: {}", e);
-            }
-        });
     }
 
     // spawn non-blocking version check
