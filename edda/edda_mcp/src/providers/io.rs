@@ -110,43 +110,18 @@ impl IOProvider {
         }
     }
 
-    fn get_docker_image(&self) -> String {
+    fn get_validation_strategy(&self) -> Box<dyn validation::ValidationDyn> {
+        use validation::Validation;
         if let Some(cfg) = &self.config {
             if let Some(val_config) = &cfg.validation {
-                if let Some(docker_image) = &val_config.docker_image {
-                    return docker_image.clone();
+                return validation::ValidationCmd {
+                    command: val_config.command.clone(),
+                    docker_image: val_config.docker_image.clone(),
                 }
+                .boxed();
             }
         }
-        "node:20-alpine3.22".to_string()
-    }
-
-    /// Get validation strategy based on template type and config
-    fn get_validation_strategy(&self) -> validation::ValidationStrategy {
-        match &self.config {
-            Some(cfg) => {
-                // Check if custom validation is configured
-                if let Some(val_config) = &cfg.validation {
-                    return validation::ValidationStrategy::Configurable {
-                        command: val_config.command.clone(),
-                        docker_image: val_config.docker_image.clone(),
-                    };
-                }
-
-                // Otherwise use template-specific default
-                match &cfg.template {
-                    TemplateConfig::Trpc => validation::ValidationStrategy::Trpc,
-                    TemplateConfig::Custom { .. } => {
-                        // Default for custom templates: assume npm-based
-                        validation::ValidationStrategy::Configurable {
-                            command: "npm run build && npm test".to_string(),
-                            docker_image: None,
-                        }
-                    }
-                }
-            }
-            None => validation::ValidationStrategy::Trpc,
-        }
+        validation::ValidationTRPC.boxed()
     }
 
     /// Core logic for initiating a project from template.
@@ -245,7 +220,7 @@ impl IOProvider {
         // use channel to pass validation result out of dagger connection callback
         let (tx, rx) = tokio::sync::oneshot::channel();
         let work_dir_str = work_dir.display().to_string();
-        let docker_image = self.get_docker_image();
+        let docker_image = validation_strategy.docker_image();
 
         // create connection and run validation
         let opts = ConnectOpts::default()
@@ -257,7 +232,7 @@ impl IOProvider {
                 // create base container with configured image
                 let mut container = client
                     .container()
-                    .from(self.get_docker_image())
+                    .from(&docker_image)
                     .with_exec(vec!["mkdir", "-p", "/app"]);
 
                 // propagate DATABRICKS_* env vars if set
@@ -401,6 +376,10 @@ pub mod validation {
             work_dir: &str,
         ) -> impl Future<Output = Result<(), ValidationDetails>> + Send;
 
+        fn docker_image(&self) -> String {
+            "node:20-alpine3.22".to_string()
+        }
+
         fn boxed(self) -> Box<dyn ValidationDyn>
         where
             Self: Sized + Send + Sync + 'static,
@@ -409,12 +388,16 @@ pub mod validation {
         }
     }
 
-    pub trait ValidationDyn {
+    pub trait ValidationDyn: Send + Sync {
         fn validate<'a>(
             &'a self,
             sandbox: &'a mut DaggerSandbox,
             work_dir: &'a str,
         ) -> Pin<Box<dyn Future<Output = Result<(), ValidationDetails>> + Send + 'a>>;
+
+        fn docker_image(&self) -> String {
+            "node:20-alpine3.22".to_string()
+        }
     }
 
     impl<T: Validation + Send + Sync> ValidationDyn for T {
@@ -531,6 +514,7 @@ pub mod validation {
 
     pub struct ValidationCmd {
         pub command: String,
+        pub docker_image: String,
     }
 
     impl Validation for ValidationCmd {
@@ -565,6 +549,10 @@ pub mod validation {
             let duration = start_time.elapsed().as_secs_f64();
             tracing::info!(duration, "Custom validation passed");
             Ok(())
+        }
+
+        fn docker_image(&self) -> String {
+            self.docker_image.clone()
         }
     }
 

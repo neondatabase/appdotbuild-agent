@@ -100,8 +100,9 @@ async fn main() -> Result<()> {
                 config.with_workspace_tools = true;
             }
             if let Some(io_config_json) = cli.io_config {
-                let io_config: edda_mcp::config::IoConfig = serde_json::from_str(&io_config_json)
-                    .map_err(|e| eyre::eyre!("Failed to parse --io_config JSON: {}", e))?;
+                let io_config: edda_mcp::config::IoConfig =
+                    serde_json::from_str(&io_config_json)
+                        .map_err(|e| eyre::eyre!("Failed to parse --io_config JSON: {}", e))?;
                 config.io_config = Some(io_config);
             }
             run_server(config).await
@@ -230,16 +231,23 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
     );
 
     // create combined provider with all available integrations
-    let provider =
-        CombinedProvider::new(session_ctx, databricks, deployment, google_sheets, io, workspace).map_err(|_| {
-            eyre::eyre!(
-                "No integrations available. Configure at least one:\n\
+    let provider = CombinedProvider::new(
+        session_ctx,
+        databricks,
+        deployment,
+        google_sheets,
+        io,
+        workspace,
+    )
+    .map_err(|_| {
+        eyre::eyre!(
+            "No integrations available. Configure at least one:\n\
              - Databricks: Set DATABRICKS_HOST and DATABRICKS_TOKEN\n\
              - Deployment: Set DATABRICKS_HOST and DATABRICKS_TOKEN)\n\
              - Google Sheets: Place credentials at ~/.config/gspread/credentials.json\n\
              - I/O: Always available (includes Workspace tools)"
-            )
-        })?;
+        )
+    })?;
 
     provider
         .check_availability(&config.required_providers)

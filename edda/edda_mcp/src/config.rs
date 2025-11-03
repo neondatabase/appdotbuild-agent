@@ -25,8 +25,7 @@ pub struct IoConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ValidationConfig {
     pub command: String,
-    /// Docker image to use (defaults to "node:20-alpine3.22")
-    pub docker_image: Option<String>,
+    pub docker_image: String,
 }
 
 impl Config {
