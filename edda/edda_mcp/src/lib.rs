@@ -1,4 +1,5 @@
 pub mod config;
+pub mod engine_guide;
 pub mod paths;
 pub mod providers;
 pub mod session;

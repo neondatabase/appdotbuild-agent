@@ -16,6 +16,10 @@ pub struct SessionContext {
     /// Starts as None, gets set by scaffold_data_app tool.
     /// Used by WorkspaceTools to scope file operations to the project directory.
     pub work_dir: Arc<RwLock<Option<PathBuf>>>,
+
+    /// Tracks whether any tool has been called in this session.
+    /// Used to inject engine guidance on first tool call only.
+    pub first_tool_called: Arc<RwLock<bool>>,
 }
 
 impl SessionContext {
@@ -25,6 +29,7 @@ impl SessionContext {
         Self {
             session_id,
             work_dir: Arc::new(RwLock::new(None)),
+            first_tool_called: Arc::new(RwLock::new(false)),
         }
     }
 }

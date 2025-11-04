@@ -231,6 +231,16 @@ impl ServerHandler for CombinedProvider {
         params: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> std::result::Result<CallToolResult, ErrorData> {
+        // check if this is the first tool call in the session
+        let is_first_call = {
+            let mut first_call_lock = self.session_ctx.first_tool_called.write().await;
+            let is_first = !*first_call_lock;
+            if is_first {
+                *first_call_lock = true;
+            }
+            is_first
+        };
+
         // intercept scaffold_data_app to set work_dir in session context
         if params.name == "scaffold_data_app" {
             if let Some(ref io) = self.io {
@@ -255,13 +265,28 @@ impl ServerHandler for CombinedProvider {
             }
         }
 
-        match self.resolve_provider(&params.name)? {
+        let mut result = match self.resolve_provider(&params.name)? {
             TargetProvider::Databricks(provider) => provider.call_tool(params, context).await,
             TargetProvider::Deployment(provider) => provider.call_tool(params, context).await,
             TargetProvider::GoogleSheets(provider) => provider.call_tool(params, context).await,
             TargetProvider::Io(provider) => provider.call_tool(params, context).await,
             TargetProvider::Workspace(provider) => provider.call_tool(params, context).await,
+        }?;
+
+        // inject engine guide on first tool call
+        if is_first_call {
+            use crate::engine_guide::ENGINE_GUIDE;
+            use rmcp::model::RawContent;
+
+            // prepend engine guide to the first content item
+            if let Some(first_content) = result.content.first_mut() {
+                if let RawContent::Text(text_content) = &mut first_content.raw {
+                    text_content.text = format!("{}\n\n---\n\n{}", ENGINE_GUIDE, text_content.text);
+                }
+            }
         }
+
+        Ok(result)
     }
 
     async fn list_tools(
