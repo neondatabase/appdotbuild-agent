@@ -250,7 +250,13 @@ download_and_install() {
     echo ""
     echo "${BOLD}Running environment check...${RESET}"
     echo ""
-    "$_install_path" check || true
+    if "$_install_path" check; then
+        echo ""
+        success "Environment validation passed"
+    else
+        echo ""
+        warn "Environment needs configuration - see checks above"
+    fi
 
     print_claude_instructions "$_install_path"
 }
@@ -275,7 +281,7 @@ print_claude_instructions() {
     esac
 
     echo ""
-    echo "${GREEN}✓${RESET} ${BOLD}Done!${RESET} 🎉"
+    echo "${BOLD}Setup Instructions${RESET}"
     echo ""
     echo ""
     echo "${BOLD}Next steps:${RESET}"
