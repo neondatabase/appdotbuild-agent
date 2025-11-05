@@ -33,19 +33,21 @@ RUN cd client && npm run build
 # Stage 2: Production image
 FROM node:20-alpine3.22
 
-# Install curl for healthcheck
-RUN apk add --no-cache curl
+# Install curl for healthcheck and build tools for native modules
+RUN apk add --no-cache curl python3 make g++
 
 WORKDIR /app
+
+# Copy server source first (excluding node_modules via .dockerignore)
+COPY server/ ./server/
 
 # Copy package files including the lock file generated in build stage
 # This ensures reproducible production builds with exact dependency versions
 COPY --from=builder /app/server/package*.json ./server/
+
+# Install dependencies - this will compile native modules for Alpine
 RUN --mount=type=cache,target=/root/.npm \
     cd server && npm ci --omit=dev
-
-# Copy server source
-COPY server/ ./server/
 
 # Copy built client from builder stage
 RUN mkdir -p server/public
