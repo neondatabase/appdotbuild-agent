@@ -7,6 +7,7 @@
 //!
 //! Run with: cargo run --example client
 
+use edda_mcp::config::Config;
 use edda_mcp::providers::{
     CombinedProvider, DatabricksProvider, DeploymentProvider, GoogleSheetsProvider, IOProvider,
 };
@@ -32,8 +33,9 @@ async fn main() -> Result<()> {
     let io = IOProvider::new(None).ok();
 
     let session_ctx = SessionContext::new(None);
+    let config = Config::default();
     let provider =
-        CombinedProvider::new(session_ctx, databricks, deployment, google_sheets, io, None).map_err(|_| {
+        CombinedProvider::new(session_ctx, databricks, deployment, google_sheets, io, None, &config).map_err(|_| {
             eyre::eyre!(
                 "No integrations available. Configure at least one:\n\
              - Databricks: Set DATABRICKS_HOST and DATABRICKS_TOKEN\n\

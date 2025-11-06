@@ -5,6 +5,7 @@
 //! - Basic MCP protocol operations work (list_tools, call_tool)
 //! - At least one provider is available
 
+use edda_mcp::config::Config;
 use edda_mcp::providers::{CombinedProvider, IOProvider};
 use edda_mcp::session::SessionContext;
 use eyre::Result;
@@ -18,7 +19,8 @@ async fn smoke_test_mcp_server() -> Result<()> {
 
     // create provider (no need to try other providers for smoke test)
     let session_ctx = SessionContext::new(None);
-    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None)?;
+    let config = Config::default();
+    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None, &config)?;
 
     // create in-process service
     let tokio_in_process = TokioInProcess::new(provider).await?;

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
-    pub allow_deployment: bool,
+    pub with_deployment: bool,
     pub with_workspace_tools: bool,
     pub required_providers: Vec<ProviderType>,
     pub io_config: Option<IoConfig>,
@@ -38,7 +38,7 @@ pub struct ScreenshotConfig {
 }
 
 pub struct ConfigOverrides {
-    pub allow_deployment: Option<bool>,
+    pub with_deployment: Option<bool>,
     pub with_workspace_tools: Option<bool>,
     pub screenshot: Option<ScreenshotOverrides>,
 }
@@ -72,8 +72,8 @@ impl Config {
     /// Apply CLI overrides to loaded config - single place for all config merging
     pub fn apply_overrides(mut self, overrides: ConfigOverrides) -> Self {
         // apply top-level overrides
-        if let Some(allow_deployment) = overrides.allow_deployment {
-            self.allow_deployment = allow_deployment;
+        if let Some(with_deployment) = overrides.with_deployment {
+            self.with_deployment = with_deployment;
         }
         if let Some(with_workspace_tools) = overrides.with_workspace_tools {
             self.with_workspace_tools = with_workspace_tools;
@@ -120,7 +120,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            allow_deployment: true,
+            with_deployment: true,
             with_workspace_tools: false,
             required_providers: vec![
                 ProviderType::Databricks,

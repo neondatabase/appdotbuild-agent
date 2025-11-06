@@ -94,7 +94,7 @@ fn load_config_with_overrides(cli: &Cli) -> Result<edda_mcp::config::Config> {
 
     // build config overrides struct
     let overrides = ConfigOverrides {
-        allow_deployment: cli.with_deployment,
+        with_deployment: cli.with_deployment,
         with_workspace_tools: cli.with_workspace_tools,
         screenshot: screenshot_overrides,
     };
@@ -103,7 +103,7 @@ fn load_config_with_overrides(cli: &Cli) -> Result<edda_mcp::config::Config> {
     let mut config = config.apply_overrides(overrides);
 
     // special handling: remove deployment provider if disabled
-    if config.allow_deployment == false {
+    if config.with_deployment == false {
         config.required_providers.retain(|p| !matches!(p, edda_mcp::providers::ProviderType::Deployment));
     }
 
@@ -317,7 +317,7 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
 
     // initialize all available providers
     let databricks = DatabricksProvider::new().ok();
-    let deployment = if config.allow_deployment {
+    let deployment = if config.with_deployment {
         DeploymentProvider::new().ok()
     } else {
         None
@@ -345,7 +345,7 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
     if google_sheets.is_some() {
         providers_list.push("Google Sheets");
     }
-    if config.allow_deployment && io.is_some() {
+    if config.with_deployment && io.is_some() {
         providers_list.push("I/O");
     }
     if workspace.is_some() {
