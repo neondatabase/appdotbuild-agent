@@ -168,6 +168,7 @@ class AppBuilder:
         suppress_logs: bool = False,
         use_subagents: bool = False,
         mcp_binary: str | None = None,
+        mcp_extra_args: list[str] | None = None,
     ):
         self.project_root = Path(__file__).parent.parent.parent
         self.mcp_manifest = self.project_root / "edda" / "edda_mcp" / "Cargo.toml"
@@ -181,6 +182,7 @@ class AppBuilder:
         self.use_subagents = use_subagents
         self.suppress_logs = suppress_logs
         self.mcp_binary = mcp_binary
+        self.mcp_extra_args = mcp_extra_args or []
         self.app_dir: str | None = None
         # track tool_use_id -> (tool_name, work_dir) to capture app_dir from results
         self._pending_scaffold_calls: dict[str, str] = {}
@@ -242,7 +244,7 @@ Use up to 10 tools per call to speed up the process.\n"""
             mcp_config = {
                 "type": "stdio",
                 "command": self.mcp_binary,
-                "args": ["--with-deployment=false"],
+                "args": ["--disallow-deployment"] + self.mcp_extra_args,
                 "env": {},
             }
         else:
@@ -254,10 +256,14 @@ Use up to 10 tools per call to speed up the process.\n"""
                     "--manifest-path",
                     str(self.mcp_manifest),
                     "--",
-                    "--with-deployment=false",
-                ],
+                    "--disallow-deployment",
+                ] + self.mcp_extra_args,
                 "env": {},
             }
+
+        if not self.suppress_logs:
+            import json
+            logger.info(f"MCP config: {json.dumps(mcp_config, indent=2)}")
 
         options = ClaudeAgentOptions(
             system_prompt={
