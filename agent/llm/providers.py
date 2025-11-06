@@ -7,6 +7,7 @@ from llm.gemini import GeminiLLM
 from llm.lmstudio_client import LMStudioLLM
 from llm.openrouter_client import OpenRouterLLM
 from llm.openai_client import OpenAILLM
+from llm.gonka_client import GonkaLLM
 
 from llm.ollama_client import OllamaLLM
 
@@ -42,6 +43,10 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
         "client": OpenRouterLLM,
         "env_vars": ["OPENROUTER_API_KEY"],
     },
+    "gonka": {
+        "client": GonkaLLM,
+        "env_vars": ["GONKA_API_KEY"],
+    },
 }
 
 
@@ -56,6 +61,10 @@ def is_backend_available(backend: str) -> bool:
     if not required_vars:
         return True  # no requirements, always available
 
+    # Special case for Gonka: accepts either GONKA_API_KEY or GONKA_PRIVATE_KEY
+    if backend == "gonka":
+        return bool(os.getenv("GONKA_PRIVATE_KEY") or os.getenv("GONKA_API_KEY"))
+
     return all(os.getenv(var) for var in required_vars)
 
 
@@ -67,6 +76,7 @@ def get_backend_for_model(model_name: str) -> str:
     - gemini:gemini-2.5-flash-preview-05-20
     - ollama:phi4
     - openrouter:deepseek/deepseek-coder
+    - gonka:Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
     - lmstudio:http://localhost:1234
     """
     if ":" not in model_name:
@@ -94,6 +104,12 @@ def get_backend_for_model(model_name: str) -> str:
                 if not os.getenv("PREFER_BEDROCK"):
                     raise ValueError(
                         f"Backend '{backend}' requires AWS credentials or PREFER_BEDROCK to be configured"
+                    )
+            elif backend == "gonka":
+                # Special case: Gonka accepts either GONKA_PRIVATE_KEY or GONKA_API_KEY
+                if not (os.getenv("GONKA_PRIVATE_KEY") or os.getenv("GONKA_API_KEY")):
+                    raise ValueError(
+                        f"Backend '{backend}' requires GONKA_PRIVATE_KEY or GONKA_API_KEY environment variable"
                     )
             else:
                 raise ValueError(

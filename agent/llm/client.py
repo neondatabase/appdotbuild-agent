@@ -115,5 +115,28 @@ def create_client(
                 )
             return client_class(model_name=mapped_model, api_key=api_key)
 
+        case "gonka":
+            # Gonka accepts either GONKA_PRIVATE_KEY or GONKA_API_KEY
+            api_key = (
+                os.getenv("GONKA_PRIVATE_KEY")
+                or os.getenv("GONKA_API_KEY")
+                or client_params.get("api_key")
+            )
+            if not api_key:
+                raise ValueError(
+                    "Gonka backend requires GONKA_PRIVATE_KEY or GONKA_API_KEY environment variable"
+                )
+            # Source URL can be from multiple env vars
+            base_url = (
+                os.getenv("GONKA_SOURCE_URL")
+                or os.getenv("GONKA_BASE_URL")
+                or client_params.get("base_url")
+            )
+            return client_class(
+                model_name=mapped_model,
+                api_key=api_key,
+                base_url=base_url,
+            )
+
         case _:
             raise ValueError(f"Unsupported backend: {backend}")

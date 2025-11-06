@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 llm_clients_cache: Dict[str, AsyncLLM] = {}
 
 LLMBackend = Literal[
-    "bedrock", "anthropic", "gemini", "ollama", "lmstudio", "openrouter", "openai"
+    "bedrock", "anthropic", "gemini", "ollama", "lmstudio", "openrouter", "openai", "gonka"
 ]
 
 
