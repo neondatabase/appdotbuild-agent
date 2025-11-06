@@ -65,7 +65,9 @@ jobs:
       - name: Run integration tests
         working-directory: ./edda
         # Run with single thread due to Dagger connection race conditions
-        run: cargo nextest run --tests --workspace --test-threads=1
+        # Exclude postponed crates (edda_agent, edda_cli) - they contain expensive E2E tests
+        # that require LLM API calls, cost money, and test functionality that's currently postponed
+        run: cargo nextest run --tests --workspace --exclude edda_agent --exclude edda_cli --test-threads=1
 
   check-release-condition:
     name: Check Release Condition
