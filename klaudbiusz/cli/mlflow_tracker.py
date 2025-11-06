@@ -174,6 +174,13 @@ class EvaluationTracker:
                                      for app in apps) / len(apps)
                 mlflow.log_metric("avg_appeval_100", avg_appeval_100)
 
+                # Average eff_units efficiency metric (lower is better)
+                eff_values = [app['metrics'].get('eff_units') for app in apps
+                             if app.get('metrics', {}).get('eff_units') is not None]
+                if eff_values:
+                    avg_eff_units = sum(eff_values) / len(eff_values)
+                    mlflow.log_metric("avg_eff_units", avg_eff_units)
+
                 # Log per-app detailed metrics as MLflow Table
                 # Mapping internal names to standard names from Databricks Apps 2.0 spec
                 metric_name_mapping = {

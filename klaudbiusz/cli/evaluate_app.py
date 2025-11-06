@@ -45,7 +45,7 @@ try:
 except ImportError:
     anthropic = None
 
-from eval_metrics import calculate_appeval_100
+from eval_metrics import calculate_appeval_100, eff_units
 from eval_checks import check_databricks_connectivity as _check_db_connectivity
 
 
@@ -79,6 +79,9 @@ class FullMetrics:
 
     # Composite score
     appeval_100: float = 0.0
+
+    # Efficiency metric (lower is better) - optional
+    eff_units: float | None = None
 
 
 @dataclass
@@ -666,6 +669,20 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
             local_runability_score=metrics.local_runability_score,
             deployability_score=metrics.deployability_score,
         )
+
+        # Calculate efficiency metric from generation data if available
+        generation_metrics_file = app_dir / "generation_metrics.json"
+        if generation_metrics_file.exists():
+            generation_metrics = json.loads(generation_metrics_file.read_text())
+            tokens = generation_metrics.get("input_tokens", 0) + generation_metrics.get("output_tokens", 0)
+            turns = generation_metrics.get("turns")
+            validations = generation_metrics.get("validation_runs")
+
+            metrics.eff_units = eff_units(
+                tokens_used=tokens if tokens > 0 else None,
+                agent_turns=turns,
+                validation_runs=validations
+            )
 
         # Add LOC count
         metrics.total_loc = sum(

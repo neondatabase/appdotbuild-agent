@@ -97,3 +97,37 @@ def calculate_appeval_100(
     # Final score
     appeval_100 = 100.0 * (0.7 * R + 0.3 * D) * G
     return round(appeval_100, 1)
+
+
+def eff_units(
+    tokens_used: int | None = None,
+    agent_turns: int | None = None,
+    validation_runs: int | None = None,
+) -> float | None:
+    """
+    Calculate efficiency units (lower is better).
+
+    Formula: EffUnits = T/1000 + U + V
+
+    Where:
+        T = tokens used (prompt+completion)
+        U = agent turns
+        V = validation runs / retries
+
+    Args:
+        tokens_used: Total tokens used (optional)
+        agent_turns: Number of agent turns (optional)
+        validation_runs: Number of validation/retry attempts (optional)
+
+    Returns:
+        Efficiency units as a float, or None if no metrics provided
+    """
+    parts = []
+    if tokens_used is not None:
+        parts.append(tokens_used / 1000.0)
+    if agent_turns is not None:
+        parts.append(float(agent_turns))
+    if validation_runs is not None:
+        parts.append(float(validation_runs))
+
+    return round(sum(parts), 3) if parts else None
