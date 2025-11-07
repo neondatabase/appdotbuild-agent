@@ -77,7 +77,7 @@ impl DatabricksProvider {
         }
     }
 
-    #[tool(name = "databricks_list_tables", description = "List tables in a Databricks catalog and schema")]
+    #[tool(name = "databricks_list_tables", description = "List accessible tables in a Databricks catalog and schema. Supports optional filtering by table name and pagination (default limit: 500).")]
     pub async fn list_tables(
         &self,
         Parameters(args): Parameters<DatabricksListTablesArgs>,
@@ -85,7 +85,9 @@ impl DatabricksProvider {
         let request = ListTablesRequest {
             catalog_name: args.catalog_name,
             schema_name: args.schema_name,
-            exclude_inaccessible: args.exclude_inaccessible,
+            filter: args.filter,
+            limit: args.limit,
+            offset: args.offset,
         };
         match self.client.list_tables(&request).await {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result.display())])),

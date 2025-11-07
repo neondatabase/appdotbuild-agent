@@ -107,8 +107,12 @@ pub struct DatabricksListSchemasArgs {
 pub struct DatabricksListTablesArgs {
     pub catalog_name: String,
     pub schema_name: String,
-    #[serde(default = "default_exclude_inaccessible")]
-    pub exclude_inaccessible: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -144,19 +148,19 @@ pub struct ListSchemasRequest {
 }
 
 fn default_limit() -> usize {
-    1000
+    500
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListTablesRequest {
     pub catalog_name: String,
     pub schema_name: String,
-    #[serde(default = "default_exclude_inaccessible")]
-    pub exclude_inaccessible: bool,
-}
-
-fn default_exclude_inaccessible() -> bool {
-    true
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +226,10 @@ pub struct ListSchemasResult {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListTablesResult {
     pub tables: Vec<TableInfo>,
+    pub total_count: usize,
+    pub shown_count: usize,
+    pub offset: usize,
+    pub limit: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -251,29 +259,16 @@ impl ToolResultDisplay for ListCatalogsResult {
 
 impl ToolResultDisplay for ListSchemasResult {
     fn display(&self) -> String {
-        let pagination_info = if self.total_count > self.limit + self.offset {
-            format!(
-                "Showing {} items (offset {}, limit {}). Total: {}",
-                self.shown_count, self.offset, self.limit, self.total_count
-            )
-        } else if self.offset > 0 {
-            format!(
-                "Showing {} items (offset {}). Total: {}",
-                self.shown_count, self.offset, self.total_count
-            )
-        } else if self.total_count > self.limit {
-            format!(
-                "Showing {} items (limit {}). Total: {}",
-                self.shown_count, self.limit, self.total_count
-            )
-        } else {
-            format!("Showing all {} items", self.total_count)
-        };
-
         if self.schemas.is_empty() {
-            pagination_info
+            "No schemas found.".to_string()
         } else {
-            let mut lines = vec![pagination_info, String::new()];
+            let mut lines = vec![
+                format!(
+                    "Showing {} of {} schemas (offset: {}, limit: {}):",
+                    self.shown_count, self.total_count, self.offset, self.limit
+                ),
+                String::new(),
+            ];
             for schema in &self.schemas {
                 lines.push(format!("• {}", schema));
             }
@@ -287,7 +282,13 @@ impl ToolResultDisplay for ListTablesResult {
         if self.tables.is_empty() {
             "No tables found.".to_string()
         } else {
-            let mut lines = vec![format!("Found {} tables:", self.tables.len()), String::new()];
+            let mut lines = vec![
+                format!(
+                    "Showing {} of {} tables (offset: {}, limit: {}):",
+                    self.shown_count, self.total_count, self.offset, self.limit
+                ),
+                String::new(),
+            ];
 
             for table in &self.tables {
                 let mut info = format!("• {} ({})", table.full_name, table.table_type);
@@ -842,13 +843,28 @@ impl DatabricksRestClient {
     }
 
     pub async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResult> {
-        let tables = self.list_tables_impl(
+        let mut tables = self.list_tables_impl(
             &request.catalog_name,
             &request.schema_name,
-            request.exclude_inaccessible,
+            true, // always exclude inaccessible tables
         )
         .await?;
-        Ok(ListTablesResult { tables })
+
+        // Apply filter if provided
+        if let Some(filter) = &request.filter {
+            let filter_lower = filter.to_lowercase();
+            tables.retain(|t| t.name.to_lowercase().contains(&filter_lower));
+        }
+
+        let (tables, total_count, shown_count) = apply_pagination(tables, request.limit, request.offset);
+
+        Ok(ListTablesResult {
+            tables,
+            total_count,
+            shown_count,
+            offset: request.offset,
+            limit: request.limit,
+        })
     }
 
     async fn list_tables_impl(

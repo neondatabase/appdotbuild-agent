@@ -206,7 +206,7 @@ impl DatabricksTool for DatabricksListTables {
     fn definition(&self) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: DatabricksTool::name(self),
-            description: "List tables in a specific catalog and schema".to_string(),
+            description: "List accessible tables in a Databricks catalog and schema. Supports optional filtering by table name and pagination (default limit: 500).".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -218,10 +218,19 @@ impl DatabricksTool for DatabricksListTables {
                         "type": "string",
                         "description": "Schema name (required)",
                     },
-                    "exclude_inaccessible": {
-                        "type": "boolean",
-                        "description": "Skip tables user cannot access (default: true)",
-                        "default": true,
+                    "filter": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring to filter table names",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of tables to return (default: 500)",
+                        "default": 500,
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Number of tables to skip for pagination (default: 0)",
+                        "default": 0,
                     },
                 },
                 "required": ["catalog_name", "schema_name"],
@@ -237,7 +246,9 @@ impl DatabricksTool for DatabricksListTables {
         let request = ListTablesRequest {
             catalog_name: args.catalog_name.clone(),
             schema_name: args.schema_name.clone(),
-            exclude_inaccessible: args.exclude_inaccessible,
+            filter: args.filter.clone(),
+            limit: args.limit,
+            offset: args.offset,
         };
         match client.list_tables(&request).await {
             Ok(result) => {

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -193,7 +194,6 @@ class AppBuilder:
             logger.info(mcp_msg)
 
     async def run_async(self, prompt: str) -> GenerationMetrics:
-        import time
         start_time = time.time()
 
         self._setup_logging()
@@ -270,6 +270,7 @@ Use up to 10 tools per call to speed up the process.\n"""
             agents=agents,
             max_turns=75,
             mcp_servers={"edda": mcp_config},
+            max_buffer_size=3 * 1024 * 1024,
         )
 
         if not self.suppress_logs:
