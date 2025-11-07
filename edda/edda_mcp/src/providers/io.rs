@@ -259,10 +259,10 @@ impl IOProvider {
             .await
             .context("Screenshot capture failed (app may not have started)")?;
 
-        // export screenshot to work_dir/screenshot.png
-        let screenshot_path = work_dir.join("screenshot.png");
+        // export screenshot to work_dir/screenshot.webp
+        let screenshot_path = work_dir.join("screenshot.webp");
         result_dir
-            .file("screenshot.png")
+            .file("screenshot.webp")
             .export(screenshot_path.display().to_string())
             .await
             .context("failed to export screenshot")?;

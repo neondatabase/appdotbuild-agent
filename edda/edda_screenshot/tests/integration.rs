@@ -84,10 +84,10 @@ async fn test_screenshot_smoke() {
         .await
         .expect("Dagger connection should succeed");
 
-    let screenshot_path = output_dir.join("screenshot.png");
+    let screenshot_path = output_dir.join("screenshot.webp");
     let logs_path = output_dir.join("logs.txt");
 
-    assert!(screenshot_path.exists(), "screenshot.png should exist");
+    assert!(screenshot_path.exists(), "screenshot.webp should exist");
     assert!(logs_path.exists(), "logs.txt should exist");
 
     let screenshot_size = std::fs::metadata(&screenshot_path).unwrap().len();
