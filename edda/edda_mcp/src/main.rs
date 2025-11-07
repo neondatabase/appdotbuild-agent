@@ -19,7 +19,24 @@ use uuid::Uuid;
 #[command(name = "edda_mcp")]
 #[command(about = "Edda MCP Server", long_about = None)]
 struct Cli {
-    /// Override allow_deployment setting
+    /// Full config as JSON (mutually exclusive with other flags)
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "with_deployment",
+            "with_workspace_tools",
+            "template",
+            "validation_command",
+            "validation_docker_image",
+            "screenshot_enabled",
+            "screenshot_url",
+            "screenshot_port",
+            "screenshot_wait_time_ms",
+        ]
+    )]
+    json: Option<String>,
+
+    /// Override with_deployment setting
     #[arg(long = "with-deployment")]
     with_deployment: Option<bool>,
 
@@ -27,24 +44,32 @@ struct Cli {
     #[arg(long = "with-workspace-tools")]
     with_workspace_tools: Option<bool>,
 
-    /// Override I/O config with JSON (e.g., '{"template":"Trpc"}' or '{"template":{"Custom":{"path":"/path"}}}')
-    #[arg(long)]
-    io_config: Option<String>,
+    /// Override template (currently only supports 'Trpc', use --json for Custom)
+    #[arg(long = "template")]
+    template: Option<String>,
+
+    /// Override validation command
+    #[arg(long = "validation.command")]
+    validation_command: Option<String>,
+
+    /// Override validation docker image
+    #[arg(long = "validation.docker_image")]
+    validation_docker_image: Option<String>,
 
     /// Override screenshot enabled setting
-    #[arg(long = "io.screenshot.enabled")]
+    #[arg(long = "screenshot.enabled")]
     screenshot_enabled: Option<bool>,
 
     /// Override screenshot URL path
-    #[arg(long = "io.screenshot.url")]
+    #[arg(long = "screenshot.url")]
     screenshot_url: Option<String>,
 
     /// Override screenshot port
-    #[arg(long = "io.screenshot.port")]
+    #[arg(long = "screenshot.port")]
     screenshot_port: Option<u16>,
 
     /// Override screenshot wait time in milliseconds
-    #[arg(long = "io.screenshot.wait_time_ms")]
+    #[arg(long = "screenshot.wait_time_ms")]
     screenshot_wait_time_ms: Option<u64>,
 
     #[command(subcommand)]
@@ -62,27 +87,46 @@ enum Commands {
     Check,
 }
 
-/// load config from file and apply CLI overrides
-fn load_config_with_overrides(cli: &Cli) -> Result<edda_mcp::config::Config> {
-    use edda_mcp::config::{ConfigOverrides, ScreenshotOverrides};
+/// Build config overrides from CLI flags
+fn build_overrides_from_cli(cli: &Cli) -> Result<edda_mcp::config::ConfigOverrides> {
+    use edda_mcp::config::{
+        ConfigOverrides, IoConfigOverrides, ScreenshotConfigOverrides, TemplateConfig,
+        ValidationConfigOverrides,
+    };
 
-    let mut config = edda_mcp::config::Config::load_from_dir()?;
+    // parse template if provided
+    let template = if let Some(template_str) = &cli.template {
+        match template_str.as_str() {
+            "Trpc" => Some(TemplateConfig::Trpc),
+            _ => {
+                return Err(eyre::eyre!(
+                    "Invalid template '{}'. Only 'Trpc' is supported via CLI. Use --json for Custom templates.",
+                    template_str
+                ))
+            }
+        }
+    } else {
+        None
+    };
 
-    // handle legacy JSON override (kept for backward compatibility)
-    if let Some(io_config_json) = &cli.io_config {
-        let io_config: edda_mcp::config::IoConfig =
-            serde_json::from_str(io_config_json)
-                .map_err(|e| eyre::eyre!("Failed to parse --io_config JSON: {}", e))?;
-        config.io_config = Some(io_config);
-    }
+    // build validation overrides if any field is provided
+    let validation = if cli.validation_command.is_some() || cli.validation_docker_image.is_some()
+    {
+        Some(ValidationConfigOverrides {
+            command: cli.validation_command.clone(),
+            docker_image: cli.validation_docker_image.clone(),
+        })
+    } else {
+        None
+    };
 
-    // build screenshot overrides if any flag is provided
-    let screenshot_overrides = if cli.screenshot_enabled.is_some()
+    // build screenshot overrides if any field is provided
+    let screenshot = if cli.screenshot_enabled.is_some()
         || cli.screenshot_url.is_some()
         || cli.screenshot_port.is_some()
         || cli.screenshot_wait_time_ms.is_some()
     {
-        Some(ScreenshotOverrides {
+        Some(ScreenshotConfigOverrides {
             enabled: cli.screenshot_enabled,
             url: cli.screenshot_url.clone(),
             port: cli.screenshot_port,
@@ -92,19 +136,45 @@ fn load_config_with_overrides(cli: &Cli) -> Result<edda_mcp::config::Config> {
         None
     };
 
-    // build config overrides struct
-    let overrides = ConfigOverrides {
-        with_deployment: cli.with_deployment,
-        with_workspace_tools: cli.with_workspace_tools,
-        screenshot: screenshot_overrides,
+    // build io_config overrides if any nested field is provided
+    let io_config = if template.is_some() || validation.is_some() || screenshot.is_some() {
+        Some(IoConfigOverrides {
+            template,
+            validation,
+            screenshot,
+        })
+    } else {
+        None
     };
 
-    // apply all overrides in single place
-    let mut config = config.apply_overrides(overrides);
+    Ok(ConfigOverrides {
+        with_deployment: cli.with_deployment,
+        with_workspace_tools: cli.with_workspace_tools,
+        io_config,
+    })
+}
+
+/// Load config from file and apply CLI overrides
+fn load_config_with_overrides(cli: &Cli) -> Result<edda_mcp::config::Config> {
+    use edda_mcp::config::ConfigOverride;
+
+    // Mode 1: JSON replacement
+    if let Some(json_str) = &cli.json {
+        let config: edda_mcp::config::Config = serde_json::from_str(json_str)
+            .map_err(|e| eyre::eyre!("Failed to parse --json config: {}", e))?;
+        return Ok(config);
+    }
+
+    // Mode 2: Load base config + apply overrides
+    let base_config = edda_mcp::config::Config::load_from_dir()?;
+    let overrides = build_overrides_from_cli(cli)?;
+    let mut config = base_config.apply_override(overrides);
 
     // special handling: remove deployment provider if disabled
-    if config.with_deployment == false {
-        config.required_providers.retain(|p| !matches!(p, edda_mcp::providers::ProviderType::Deployment));
+    if !config.with_deployment {
+        config
+            .required_providers
+            .retain(|p| !matches!(p, edda_mcp::providers::ProviderType::Deployment));
     }
 
     Ok(config)

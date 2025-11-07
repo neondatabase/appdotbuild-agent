@@ -1,6 +1,16 @@
 use crate::providers::ProviderType;
 use serde::{Deserialize, Serialize};
 
+/// Trait that all config types must implement to support CLI overrides.
+/// Ensures consistency when adding new config fields.
+pub trait ConfigOverride: Sized + Default {
+    /// Override struct type containing optional fields
+    type Override;
+
+    /// Apply override to this config, consuming both
+    fn apply_override(self, override_val: Self::Override) -> Self;
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
@@ -37,13 +47,30 @@ pub struct ScreenshotConfig {
     pub wait_time_ms: Option<u64>,
 }
 
+// Override structs - mirror config structs with all Option<T> fields
+
+#[derive(Default)]
 pub struct ConfigOverrides {
     pub with_deployment: Option<bool>,
     pub with_workspace_tools: Option<bool>,
-    pub screenshot: Option<ScreenshotOverrides>,
+    pub io_config: Option<IoConfigOverrides>,
 }
 
-pub struct ScreenshotOverrides {
+#[derive(Default)]
+pub struct IoConfigOverrides {
+    pub template: Option<TemplateConfig>,
+    pub validation: Option<ValidationConfigOverrides>,
+    pub screenshot: Option<ScreenshotConfigOverrides>,
+}
+
+#[derive(Default)]
+pub struct ValidationConfigOverrides {
+    pub command: Option<String>,
+    pub docker_image: Option<String>,
+}
+
+#[derive(Default)]
+pub struct ScreenshotConfigOverrides {
     pub enabled: Option<bool>,
     pub url: Option<String>,
     pub port: Option<u16>,
@@ -69,52 +96,6 @@ impl Config {
         serde_json::from_str::<Config>(&contents).map_err(Into::into)
     }
 
-    /// Apply CLI overrides to loaded config - single place for all config merging
-    pub fn apply_overrides(mut self, overrides: ConfigOverrides) -> Self {
-        // apply top-level overrides
-        if let Some(with_deployment) = overrides.with_deployment {
-            self.with_deployment = with_deployment;
-        }
-        if let Some(with_workspace_tools) = overrides.with_workspace_tools {
-            self.with_workspace_tools = with_workspace_tools;
-        }
-
-        // apply screenshot overrides
-        if let Some(screenshot_overrides) = overrides.screenshot {
-            if let Some(mut io_config) = self.io_config {
-                // if CLI explicitly disables, set to None
-                if screenshot_overrides.enabled == Some(false) {
-                    io_config.screenshot = None;
-                } else {
-                    // Get existing config or create default
-                    let mut screenshot_cfg = io_config.screenshot.unwrap_or_else(|| ScreenshotConfig {
-                        enabled: None,
-                        url: None,
-                        port: None,
-                        wait_time_ms: None,
-                    });
-
-                    // apply individual field overrides
-                    if let Some(enabled) = screenshot_overrides.enabled {
-                        screenshot_cfg.enabled = Some(enabled);
-                    }
-                    if let Some(url) = screenshot_overrides.url {
-                        screenshot_cfg.url = Some(url);
-                    }
-                    if let Some(port) = screenshot_overrides.port {
-                        screenshot_cfg.port = Some(port);
-                    }
-                    if let Some(wait_time) = screenshot_overrides.wait_time_ms {
-                        screenshot_cfg.wait_time_ms = Some(wait_time);
-                    }
-                    io_config.screenshot = Some(screenshot_cfg);
-                }
-                self.io_config = Some(io_config);
-            }
-        }
-
-        self
-    }
 }
 
 impl Default for Config {
@@ -127,16 +108,128 @@ impl Default for Config {
                 ProviderType::Deployment,
                 ProviderType::Io,
             ],
-            io_config: Some(IoConfig {
-                template: TemplateConfig::Trpc,
-                validation: None,
-                screenshot: Some(ScreenshotConfig {
-                    enabled: Some(true),
-                    url: None,
-                    port: None,
-                    wait_time_ms: None,
-                }),
-            }),
+            io_config: Some(IoConfig::default()),
         }
+    }
+}
+
+impl Default for IoConfig {
+    fn default() -> Self {
+        Self {
+            template: TemplateConfig::Trpc,
+            validation: None,
+            screenshot: Some(ScreenshotConfig::default()),
+        }
+    }
+}
+
+impl Default for ValidationConfig {
+    fn default() -> Self {
+        Self {
+            command: String::new(),
+            docker_image: String::new(),
+        }
+    }
+}
+
+impl Default for ScreenshotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: Some(true),
+            url: Some("/".to_string()),
+            port: Some(8000),
+            wait_time_ms: Some(30000),
+        }
+    }
+}
+
+// ConfigOverride trait implementations
+
+impl ConfigOverride for Config {
+    type Override = ConfigOverrides;
+
+    fn apply_override(mut self, override_val: Self::Override) -> Self {
+        if let Some(v) = override_val.with_deployment {
+            self.with_deployment = v;
+        }
+        if let Some(v) = override_val.with_workspace_tools {
+            self.with_workspace_tools = v;
+        }
+        if let Some(io_override) = override_val.io_config {
+            self.io_config = Some(
+                self.io_config
+                    .unwrap_or_default()
+                    .apply_override(io_override),
+            );
+        }
+        self
+    }
+}
+
+impl ConfigOverride for IoConfig {
+    type Override = IoConfigOverrides;
+
+    fn apply_override(mut self, override_val: Self::Override) -> Self {
+        if let Some(template) = override_val.template {
+            self.template = template;
+        }
+        if let Some(validation_override) = override_val.validation {
+            self.validation = Some(
+                self.validation
+                    .unwrap_or_default()
+                    .apply_override(validation_override),
+            );
+        }
+        if let Some(screenshot_override) = override_val.screenshot {
+            // special case: enabled=false with no other fields means disable screenshot
+            if screenshot_override.enabled == Some(false)
+                && screenshot_override.url.is_none()
+                && screenshot_override.port.is_none()
+                && screenshot_override.wait_time_ms.is_none()
+            {
+                self.screenshot = None;
+            } else {
+                self.screenshot = Some(
+                    self.screenshot
+                        .unwrap_or_default()
+                        .apply_override(screenshot_override),
+                );
+            }
+        }
+        self
+    }
+}
+
+impl ConfigOverride for ValidationConfig {
+    type Override = ValidationConfigOverrides;
+
+    fn apply_override(mut self, override_val: Self::Override) -> Self {
+        if let Some(v) = override_val.command {
+            self.command = v;
+        }
+        if let Some(v) = override_val.docker_image {
+            self.docker_image = v;
+        }
+        self
+    }
+}
+
+impl ConfigOverride for ScreenshotConfig {
+    type Override = ScreenshotConfigOverrides;
+
+    fn apply_override(mut self, override_val: Self::Override) -> Self {
+        if let Some(v) = override_val.enabled {
+            self.enabled = Some(v);
+        }
+        if let Some(v) = override_val.url {
+            self.url = Some(v);
+        }
+        if let Some(v) = override_val.port {
+            self.port = Some(v);
+        }
+        if let Some(v) = override_val.wait_time_ms {
+            self.wait_time_ms = Some(v);
+        }
+        self
     }
 }
