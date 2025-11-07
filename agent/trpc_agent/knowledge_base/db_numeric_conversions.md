@@ -1,0 +1,7 @@
+# Numeric Type Conversions
+
+PostgreSQL's `numeric` type returns string values through Drizzle ORM to preserve arbitrary precision, requiring explicit conversion in your handlers. When selecting data, use `parseFloat(row.price)` to convert string values back to JavaScript numbers. When inserting or updating, use `input.price.toString()` to convert numbers to strings for database storage. This conversion is essential for all `numeric` and `decimal` columns.
+
+Apply conversions consistently in your handlers: map over query results to convert all numeric fields, or handle conversions when building response objects. For example: `results.map(product => ({ ...product, price: parseFloat(product.price) }))`. Always convert every numeric field - partial conversions lead to type inconsistencies and runtime errors.
+
+Test numeric conversions explicitly in your unit tests: verify that returned values have the correct JavaScript type using `typeof result.price === 'number'`. Include both positive and negative numbers, zero values, and decimal precision in your test cases. Remember that `integer` and `real` Drizzle columns return native numbers and don't need conversion - only `numeric` columns require this handling.

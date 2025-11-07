@@ -1,0 +1,7 @@
+# Handler Testing
+
+Create reliable test setup using `beforeEach(createDB)` and `afterEach(resetDB)` to ensure clean database state between tests. Never use mocks - always test against real database operations to catch integration issues, constraint violations, and type conversion problems. Create prerequisite data first (users, categories) before testing dependent records to avoid foreign key constraint errors.
+
+Include ALL fields in test inputs, even those with Zod defaults, to ensure your tests represent realistic usage patterns. Test numeric conversions explicitly by verifying `typeof result.price === 'number'` to catch string-to-number conversion issues. Use flexible error assertions like `expect().rejects.toThrow(/pattern/i)` to handle different error message formats across database drivers.
+
+Structure tests with clear arrange-act-assert patterns: set up test data, call the handler, verify results including field types and database state. Test both success and failure scenarios, focusing on business logic validation rather than framework behavior. Keep tests isolated by never calling other handlers within tests - create test data directly in the database when needed for complex scenarios.

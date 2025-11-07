@@ -2,6 +2,7 @@ import anyio
 import jinja2
 import logging
 import os
+from pathlib import Path
 from typing import Optional, Callable, Awaitable
 from dataclasses import dataclass
 
@@ -11,6 +12,7 @@ from core.actors import BaseData, FileOperationsActor, AgentSearchFailedExceptio
 from llm.common import AsyncLLM, Message, TextRaw, Tool, ToolUse, ToolUseResult
 from trpc_agent import playbooks
 from trpc_agent.playwright import PlaywrightRunner, drizzle_push
+from core.knowledge_enricher import KnowledgeBaseEnricher
 from core.notification_utils import notify_if_callback, notify_stage
 
 logger = logging.getLogger(__name__)
@@ -85,6 +87,10 @@ class TrpcActor(FileOperationsActor):
 
         # File path configuration
         self.paths = TrpcPaths.default()
+
+        # Knowledge base enricher with trpc-specific knowledge base (singleton)
+        trpc_kb_dir = Path(__file__).parent / "knowledge_base"
+        self.enricher = KnowledgeBaseEnricher(trpc_kb_dir)
 
     async def execute(
         self,
@@ -403,12 +409,34 @@ class TrpcActor(FileOperationsActor):
                 "handler failure",
             )
 
+    async def _enrich_system_prompt(self, base_system_prompt: str, user_prompt: str, development_phase: str | None = None) -> str:
+        """enrich system prompt with relevant knowledge base topics."""
+        try:
+            original_size = len(base_system_prompt)
+            enrichment = await self.enricher.enrich_prompt(user_prompt, development_phase)
+
+            if enrichment:
+                enriched_prompt = f"{base_system_prompt}\n\n{enrichment}"
+                new_size = len(enriched_prompt)
+                logger.info(f"system prompt enriched: {original_size} → {new_size} chars (+{new_size - original_size})")
+                return enriched_prompt
+            else:
+                logger.info(f"system prompt unchanged: {original_size} chars (no enrichment)")
+                return base_system_prompt
+        except Exception as e:
+            logger.warning(f"failed to enrich system prompt: {e}")
+            return base_system_prompt
+
     async def _search_single_node(
         self, root_node: Node[BaseData], system_prompt: str, conditional_tools: bool = False,
     ) -> Optional[Node[BaseData]]:
         """Search for solution from a single node."""
         solution: Optional[Node[BaseData]] = None
         iteration = 0
+
+        # enrich system prompt with relevant knowledge base topics
+        development_phase = root_node.data.context
+        enriched_system_prompt = await self._enrich_system_prompt(system_prompt, self._user_prompt, development_phase)
 
         while solution is None:
             iteration += 1
@@ -422,7 +450,7 @@ class TrpcActor(FileOperationsActor):
             )
             nodes = await self.run_llm(
                 candidates,
-                system_prompt=system_prompt,
+                system_prompt=enriched_system_prompt,
                 tools=self.tools + (self.conditional_tools if conditional_tools else []),
                 max_tokens=8192,
             )

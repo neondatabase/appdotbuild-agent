@@ -1,0 +1,7 @@
+# Frontend Styling Guidelines
+
+Use Tailwind CSS classes directly in JSX for most styling needs, avoiding custom CSS unless necessary for complex animations or reusable component styles. When using @apply, only use it within @layer components, never in @layer base, to maintain proper cascade behavior. Structure classes logically: layout properties first (flex, grid), then spacing (margin, padding), then visual properties (colors, borders).
+
+Adjust visual design to match the user's request context: use default professional styling for corporate business applications, but incorporate custom colors, emojis, and engaging visual elements for more playful or consumer-focused applications. Consider the mood and target audience when selecting color schemes, typography, and interactive elements.
+
+Maintain consistency across components by establishing design patterns early: consistent spacing scales, color usage, and component sizing. Use Tailwind's design system features like consistent spacing (space-4, space-8) and semantic color names (gray-500, blue-600) rather than arbitrary values. Create reusable component styles when you find yourself repeating complex class combinations across multiple components.
