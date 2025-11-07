@@ -39,11 +39,15 @@ def screenshot_apps(
     # validate databricks credentials
     databricks_host = os.environ.get("DATABRICKS_HOST")
     databricks_token = os.environ.get("DATABRICKS_TOKEN")
+    databricks_warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID")
 
     if not databricks_host or not databricks_token:
         raise ValueError("DATABRICKS_HOST and DATABRICKS_TOKEN environment variables must be set")
 
-    env_vars = f"DATABRICKS_HOST={databricks_host},DATABRICKS_TOKEN={databricks_token}"
+    if not databricks_warehouse_id:
+        raise ValueError("DATABRICKS_WAREHOUSE_ID environment variable must be set")
+
+    env_vars = f"DATABRICKS_HOST={databricks_host},DATABRICKS_TOKEN={databricks_token},DATABRICKS_WAREHOUSE_ID={databricks_warehouse_id}"
 
     # build rust CLI command
     screenshot_tool_path = Path(__file__).parent.parent.parent / "edda" / "edda_screenshot"
