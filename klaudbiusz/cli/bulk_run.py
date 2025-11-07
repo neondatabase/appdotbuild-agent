@@ -79,16 +79,20 @@ def enrich_results_with_screenshots(results: list[RunResult]) -> None:
             result["browser_logs_path"] = None
 
 
-def run_single_generation(app_name: str, prompt: str, wipe_db: bool = False, use_subagents: bool = False, mcp_binary: str | None = None) -> RunResult:
+def run_single_generation(
+    app_name: str, prompt: str, wipe_db: bool = False, use_subagents: bool = False, mcp_binary: str | None = None
+) -> RunResult:
     def timeout_handler(signum, frame):
-        raise TimeoutError(f"Generation timed out after 900 seconds")
+        raise TimeoutError(f"Generation timed out after 1200 seconds")
 
     try:
         # set 15 minute timeout for entire generation
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(900)
+        signal.alarm(1200)
 
-        codegen = AppBuilder(app_name=app_name, wipe_db=wipe_db, suppress_logs=True, use_subagents=use_subagents, mcp_binary=mcp_binary)
+        codegen = AppBuilder(
+            app_name=app_name, wipe_db=wipe_db, suppress_logs=True, use_subagents=use_subagents, mcp_binary=mcp_binary
+        )
         metrics = codegen.run(prompt, wipe_db=wipe_db)
         app_dir = metrics.get("app_dir") if metrics else None
 
@@ -138,7 +142,8 @@ def main(
 
     # generate all apps
     results: list[RunResult] = Parallel(n_jobs=n_jobs, verbose=10)(  # type: ignore[assignment]
-        delayed(run_single_generation)(app_name, prompt, wipe_db, use_subagents, mcp_binary) for app_name, prompt in PROMPTS.items()
+        delayed(run_single_generation)(app_name, prompt, wipe_db, use_subagents, mcp_binary)
+        for app_name, prompt in PROMPTS.items()
     )
 
     # separate successful and failed generations

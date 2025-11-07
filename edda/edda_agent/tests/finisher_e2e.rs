@@ -112,6 +112,7 @@ impl Agent for Basic {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "dagger"), ignore)]
 async fn test_finisher_e2e_with_real_dagger() -> Result<()> {
     dotenvy::dotenv().ok();
 

@@ -46,6 +46,7 @@ pub struct CombinedProvider {
     google_sheets: Option<Arc<GoogleSheetsProvider>>,
     io: Option<Arc<IOProvider>>,
     workspace: Option<Arc<WorkspaceTools>>,
+    screenshot_enabled: bool,
 }
 
 impl CombinedProvider {
@@ -56,6 +57,7 @@ impl CombinedProvider {
         google_sheets: Option<GoogleSheetsProvider>,
         io: Option<IOProvider>,
         workspace: Option<WorkspaceTools>,
+        config: &crate::config::Config,
     ) -> Result<Self> {
         if databricks.is_none()
             && deployment.is_none()
@@ -65,6 +67,15 @@ impl CombinedProvider {
         {
             return Err(eyre::eyre!("at least one provider must be available"));
         }
+
+        // check if screenshots are enabled in config
+        let screenshot_enabled = config
+            .io_config
+            .as_ref()
+            .and_then(|io| io.screenshot.as_ref())
+            .and_then(|screenshot| screenshot.enabled)
+            .unwrap_or(true);
+
         Ok(Self {
             session_ctx,
             databricks: databricks.map(Arc::new),
@@ -72,6 +83,7 @@ impl CombinedProvider {
             google_sheets: google_sheets.map(Arc::new),
             io: io.map(Arc::new),
             workspace: workspace.map(Arc::new),
+            screenshot_enabled,
         })
     }
 
@@ -240,6 +252,52 @@ impl ServerHandler for CombinedProvider {
             }
             is_first
         };
+
+        // optimization: warmup playwright on first tool call if screenshots enabled
+        if is_first_call && self.screenshot_enabled {
+            let playwright_warmed = self.session_ctx.playwright_warmed.clone();
+
+            // spawn non-blocking warmup task
+            tokio::spawn(async move {
+                // Fast path: check with read lock first
+                if *playwright_warmed.read().await {
+                    return;
+                }
+
+                // Acquire write lock only for state transition
+                {
+                    let warmed = playwright_warmed.write().await;
+                    if *warmed {
+                        return; // Another task already completed warmup
+                    }
+                    // Write lock released here when scope ends
+                }
+
+                tracing::info!("Starting playwright warmup (non-blocking)");
+
+                let warmup_result = edda_sandbox::dagger::ConnectOpts::default()
+                    .with_logger(edda_sandbox::dagger::Logger::Silent)
+                    .with_execute_timeout(Some(600))
+                    .connect(|client| async move {
+                        edda_screenshot::warmup_playwright(&client).await?;
+                        Ok(())
+                    })
+                    .await;
+
+                // Reacquire write lock to update state
+                let warmed = &mut *playwright_warmed.write().await;
+                match warmup_result {
+                    Ok(_) => {
+                        tracing::info!("Playwright warmup completed successfully");
+                        *warmed = true;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Playwright warmup failed: {}", e);
+                        // don't mark as warmed so it can retry on next call
+                    }
+                }
+            });
+        }
 
         // intercept scaffold_data_app to set work_dir in session context
         if params.name == "scaffold_data_app" {

@@ -11,6 +11,9 @@ path = "src/main.rs"
 name = "client"
 path = "examples/client.rs"
 
+[features]
+dagger = []
+
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "process", "sync"] }
 serde = { version = "1", features = ["derive"] }
@@ -39,6 +42,7 @@ semver = "1.0"
 # internal dependencies
 edda_integrations = { path = "../edda_integrations" }
 edda_sandbox = { path = "../edda_sandbox" }
+edda_screenshot = { path = "../edda_screenshot" }
 edda_templates = { path = "../edda_templates" }
 
 [dev-dependencies]

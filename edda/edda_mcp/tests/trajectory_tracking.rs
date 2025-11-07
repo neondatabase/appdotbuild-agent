@@ -16,10 +16,10 @@ async fn test_trajectory_tracking_records_tool_calls() -> Result<()> {
 
     let io = IOProvider::new(None)?;
     let session_ctx = SessionContext::new(None);
-    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None)?;
+    let config = Config::default();
+    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None, &config)?;
 
     let session_id = "test-session-123".to_string();
-    let config = Config::default();
     let tracking_provider = TrajectoryTrackingProvider::new_with_path(
         provider,
         session_id.clone(),
@@ -90,8 +90,8 @@ async fn test_trajectory_tracking_multiple_calls() -> Result<()> {
 
     let io = IOProvider::new(None)?;
     let session_ctx = SessionContext::new(None);
-    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None)?;
     let config = Config::default();
+    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None, &config)?;
     let tracking_provider = TrajectoryTrackingProvider::new_with_path(
         provider,
         "multi-test".to_string(),
@@ -145,8 +145,8 @@ async fn test_trajectory_entry_format() -> Result<()> {
 
     let io = IOProvider::new(None)?;
     let session_ctx = SessionContext::new(None);
-    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None)?;
     let config = Config::default();
+    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None, &config)?;
     let tracking_provider = TrajectoryTrackingProvider::new_with_path(
         provider,
         "format-test".to_string(),
@@ -206,8 +206,8 @@ async fn test_trajectory_tracking_error_case() -> Result<()> {
 
     let io = IOProvider::new(None)?;
     let session_ctx = SessionContext::new(None);
-    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None)?;
     let config = Config::default();
+    let provider = CombinedProvider::new(session_ctx, None, None, None, Some(io), None, &config)?;
     let tracking_provider = TrajectoryTrackingProvider::new_with_path(
         provider,
         "error-test".to_string(),

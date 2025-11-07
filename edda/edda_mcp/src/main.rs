@@ -19,17 +19,33 @@ use uuid::Uuid;
 #[command(name = "edda_mcp")]
 #[command(about = "Edda MCP Server", long_about = None)]
 struct Cli {
-    /// Disallow deployment operations (overrides config file)
-    #[arg(long)]
-    disallow_deployment: bool,
+    /// Override allow_deployment setting
+    #[arg(long = "with-deployment")]
+    with_deployment: Option<bool>,
 
-    /// Enable workspace tools (overrides config file)
-    #[arg(long)]
-    with_workspace_tools: bool,
+    /// Override with_workspace_tools setting
+    #[arg(long = "with-workspace-tools")]
+    with_workspace_tools: Option<bool>,
 
     /// Override I/O config with JSON (e.g., '{"template":"Trpc"}' or '{"template":{"Custom":{"path":"/path"}}}')
     #[arg(long)]
     io_config: Option<String>,
+
+    /// Override screenshot enabled setting
+    #[arg(long = "io.screenshot.enabled")]
+    screenshot_enabled: Option<bool>,
+
+    /// Override screenshot URL path
+    #[arg(long = "io.screenshot.url")]
+    screenshot_url: Option<String>,
+
+    /// Override screenshot port
+    #[arg(long = "io.screenshot.port")]
+    screenshot_port: Option<u16>,
+
+    /// Override screenshot wait time in milliseconds
+    #[arg(long = "io.screenshot.wait_time_ms")]
+    screenshot_wait_time_ms: Option<u64>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -48,22 +64,47 @@ enum Commands {
 
 /// load config from file and apply CLI overrides
 fn load_config_with_overrides(cli: &Cli) -> Result<edda_mcp::config::Config> {
+    use edda_mcp::config::{ConfigOverrides, ScreenshotOverrides};
+
     let mut config = edda_mcp::config::Config::load_from_dir()?;
 
-    if cli.disallow_deployment {
-        config.allow_deployment = false;
-        config.required_providers.retain(|p| !matches!(p, edda_mcp::providers::ProviderType::Deployment));
-    }
-
-    if cli.with_workspace_tools {
-        config.with_workspace_tools = true;
-    }
-
+    // handle legacy JSON override (kept for backward compatibility)
     if let Some(io_config_json) = &cli.io_config {
         let io_config: edda_mcp::config::IoConfig =
             serde_json::from_str(io_config_json)
                 .map_err(|e| eyre::eyre!("Failed to parse --io_config JSON: {}", e))?;
         config.io_config = Some(io_config);
+    }
+
+    // build screenshot overrides if any flag is provided
+    let screenshot_overrides = if cli.screenshot_enabled.is_some()
+        || cli.screenshot_url.is_some()
+        || cli.screenshot_port.is_some()
+        || cli.screenshot_wait_time_ms.is_some()
+    {
+        Some(ScreenshotOverrides {
+            enabled: cli.screenshot_enabled,
+            url: cli.screenshot_url.clone(),
+            port: cli.screenshot_port,
+            wait_time_ms: cli.screenshot_wait_time_ms,
+        })
+    } else {
+        None
+    };
+
+    // build config overrides struct
+    let overrides = ConfigOverrides {
+        with_deployment: cli.with_deployment,
+        with_workspace_tools: cli.with_workspace_tools,
+        screenshot: screenshot_overrides,
+    };
+
+    // apply all overrides in single place
+    let mut config = config.apply_overrides(overrides);
+
+    // special handling: remove deployment provider if disabled
+    if config.with_deployment == false {
+        config.required_providers.retain(|p| !matches!(p, edda_mcp::providers::ProviderType::Deployment));
     }
 
     Ok(config)
@@ -276,7 +317,7 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
 
     // initialize all available providers
     let databricks = DatabricksProvider::new().ok();
-    let deployment = if config.allow_deployment {
+    let deployment = if config.with_deployment {
         DeploymentProvider::new().ok()
     } else {
         None
@@ -304,7 +345,7 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
     if google_sheets.is_some() {
         providers_list.push("Google Sheets");
     }
-    if config.allow_deployment && io.is_some() {
+    if config.with_deployment && io.is_some() {
         providers_list.push("I/O");
     }
     if workspace.is_some() {
@@ -334,6 +375,7 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
         google_sheets,
         io,
         workspace,
+        &config,
     )
     .map_err(|_| {
         eyre::eyre!(

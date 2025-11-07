@@ -242,12 +242,13 @@ mod tests {
     #[test]
     fn test_session_metadata_serialization() {
         let config = Config {
-            allow_deployment: true,
+            with_deployment: true,
             with_workspace_tools: false,
             required_providers: vec![ProviderType::Databricks, ProviderType::Io],
             io_config: Some(IoConfig {
                 template: TemplateConfig::Trpc,
                 validation: None,
+                screenshot: None,
             }),
         };
 
@@ -267,7 +268,7 @@ mod tests {
         match deserialized {
             HistoryEntry::Session(sm) => {
                 assert_eq!(sm.session_id, "sess-123");
-                assert!(sm.config.allow_deployment);
+                assert!(sm.config.with_deployment);
                 assert!(sm.config.io_config.is_some());
             }
             _ => panic!("Expected Session entry"),
@@ -277,7 +278,7 @@ mod tests {
     #[test]
     fn test_session_metadata_with_custom_template() {
         let config = Config {
-            allow_deployment: false,
+            with_deployment: false,
             with_workspace_tools: true,
             required_providers: vec![ProviderType::Io],
             io_config: Some(IoConfig {
@@ -286,6 +287,7 @@ mod tests {
                     path: "/path/to/template".to_string(),
                 },
                 validation: None,
+                screenshot: None,
             }),
         };
 
@@ -301,7 +303,7 @@ mod tests {
         match deserialized {
             HistoryEntry::Session(sm) => {
                 assert_eq!(sm.session_id, "sess-456");
-                assert!(!sm.config.allow_deployment);
+                assert!(!sm.config.with_deployment);
                 assert!(sm.config.with_workspace_tools);
                 match &sm.config.io_config.unwrap().template {
                     TemplateConfig::Custom { name, path } => {

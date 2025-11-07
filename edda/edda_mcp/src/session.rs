@@ -20,6 +20,10 @@ pub struct SessionContext {
     /// Tracks whether any tool has been called in this session.
     /// Used to inject engine guidance on first tool call only.
     pub first_tool_called: Arc<RwLock<bool>>,
+
+    /// Tracks whether Playwright warmup has been triggered in this session.
+    /// Used to avoid duplicate warmup calls and optimize screenshot performance.
+    pub playwright_warmed: Arc<RwLock<bool>>,
 }
 
 impl SessionContext {
@@ -30,6 +34,7 @@ impl SessionContext {
             session_id,
             work_dir: Arc::new(RwLock::new(None)),
             first_tool_called: Arc::new(RwLock::new(false)),
+            playwright_warmed: Arc::new(RwLock::new(false)),
         }
     }
 }

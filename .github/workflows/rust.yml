@@ -67,7 +67,37 @@ jobs:
         # Run with single thread due to Dagger connection race conditions
         # Exclude postponed crates (edda_agent, edda_cli) - they contain expensive E2E tests
         # that require LLM API calls, cost money, and test functionality that's currently postponed
+        # Note: Tests with #[cfg_attr(not(feature = "dagger"), ignore)] will be skipped here
+        # and run in the rust-tests-dagger job instead
         run: cargo nextest run --tests --workspace --exclude edda_agent --exclude edda_cli --test-threads=1
+
+  rust-tests-dagger:
+    name: Rust Tests (Dagger)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: edda
+
+      - name: Install Dagger CLI
+        run: |
+          curl -fsSL https://dl.dagger.io/dagger/install.sh | DAGGER_VERSION=0.19.2 BIN_DIR=/usr/local/bin sh
+
+      - name: Run Dagger tests
+        working-directory: ./edda
+        # Run with single thread due to Dagger connection race conditions
+        run: cargo nextest run --tests --workspace --features dagger --test-threads=1
 
   check-release-condition:
     name: Check Release Condition
@@ -113,7 +143,7 @@ jobs:
     name: Build edda_mcp (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
-    needs: [rust-checks, rust-tests, check-release-condition]
+    needs: [rust-checks, rust-tests, rust-tests-dagger, check-release-condition]
     if: needs.check-release-condition.outputs.should_build == 'true'
     strategy:
       matrix:

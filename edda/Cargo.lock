@@ -1061,6 +1061,7 @@ dependencies = [
  "dirs",
  "edda_integrations",
  "edda_sandbox",
+ "edda_screenshot",
  "edda_templates",
  "eyre",
  "filetime",

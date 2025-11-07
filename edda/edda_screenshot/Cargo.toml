@@ -7,6 +7,9 @@ edition = "2024"
 name = "edda-screenshot"
 path = "src/main.rs"
 
+[features]
+dagger = []
+
 [dependencies]
 dagger-sdk = "0.18.16"
 edda_sandbox = { path = "../edda_sandbox" }

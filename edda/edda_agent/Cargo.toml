@@ -3,6 +3,9 @@ name = "edda_agent"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+dagger = []
+
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "process", "sync", "time"] }
 serde = { version = "1", features = ["derive"] }

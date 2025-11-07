@@ -25,10 +25,9 @@ fn test_screenshot_options_custom() {
 }
 
 /// Smoke test using the trpc template from the repo
-/// Run with: cargo test test_screenshot_smoke -- --ignored --nocapture
-/// Requires Dagger to be running locally
+/// Run with: cargo test --features dagger test_screenshot_smoke
 #[tokio::test]
-#[ignore]
+#[cfg_attr(not(feature = "dagger"), ignore)]
 async fn test_screenshot_smoke() {
     use edda_sandbox::dagger::ConnectOpts;
     use edda_screenshot::screenshot_app;

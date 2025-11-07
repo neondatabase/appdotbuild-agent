@@ -9,6 +9,9 @@ pub use noop::NoOpSandbox;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 
+// re-export dagger types so consumers don't need direct dependency
+pub use dagger_sdk::{Container as DaggerContainer, DaggerConn};
+
 pub type FutureBoxed<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

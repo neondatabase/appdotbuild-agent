@@ -2,9 +2,9 @@ use crate::config::TemplateConfig;
 use crate::state;
 use edda_integrations::ToolResultDisplay;
 use edda_sandbox::dagger::{ConnectOpts, Logger};
-use edda_sandbox::{DaggerSandbox, Sandbox};
+use edda_sandbox::{DaggerConn, DaggerSandbox, Sandbox};
 use edda_templates::{LocalTemplate, Template, TemplateCore, TemplateTRPC};
-use eyre::Result;
+use eyre::{Context, Result};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, ServerInfo};
@@ -61,6 +61,8 @@ pub struct ValidateProjectResult {
     pub success: bool,
     pub message: String,
     pub details: Option<ValidationDetails>,
+    pub screenshot_path: Option<String>,
+    pub browser_logs: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -73,15 +75,26 @@ pub struct ValidationDetails {
 impl ToolResultDisplay for ValidateProjectResult {
     fn display(&self) -> String {
         if self.success {
-            format!("Validation passed: {}", self.message)
-        } else {
-            match &self.details {
-                Some(details) => format!(
-                    "Validation failed: {}\nExit code: {}\nStdout: {}\nStderr: {}",
-                    self.message, details.exit_code, details.stdout, details.stderr
-                ),
-                None => format!("Validation failed: {}", self.message),
+            let mut msg = format!("Validation passed: {}", self.message);
+            if let Some(screenshot) = &self.screenshot_path {
+                msg.push_str(&format!("\n\nScreenshot: {}", screenshot));
             }
+            if let Some(logs) = &self.browser_logs {
+                msg.push_str(&format!("\n\nBrowser console logs:\n{}", logs));
+            }
+            msg
+        } else {
+            let mut msg = format!("Validation failed: {}", self.message);
+            if let Some(details) = &self.details {
+                msg.push_str(&format!(
+                    "\nExit code: {}\nStdout: {}\nStderr: {}",
+                    details.exit_code, details.stdout, details.stderr
+                ));
+            }
+            if let Some(logs) = &self.browser_logs {
+                msg.push_str(&format!("\n\nBrowser console logs:\n{}", logs));
+            }
+            msg
         }
     }
 }
@@ -194,10 +207,95 @@ impl IOProvider {
         )]))
     }
 
+    /// Capture screenshot of the app using edda_screenshot
+    /// Returns (screenshot_path, browser_logs) on success, or error with logs attached
+    async fn capture_screenshot(
+        client: &DaggerConn,
+        work_dir: &Path,
+        screenshot_config: Option<&crate::config::ScreenshotConfig>,
+    ) -> Result<(String, Option<String>)> {
+        // check if Dockerfile exists
+        let dockerfile_path = work_dir.join("Dockerfile");
+        if !dockerfile_path.exists() {
+            eyre::bail!(
+                "Dockerfile required for screenshot validation. Expected at: {}",
+                dockerfile_path.display()
+            );
+        }
+
+        // build ScreenshotOptions with defaults from config
+        let options = edda_screenshot::ScreenshotOptions {
+            url: screenshot_config
+                .and_then(|c| c.url.clone())
+                .unwrap_or_else(|| "/".to_string()),
+            port: screenshot_config
+                .and_then(|c| c.port)
+                .unwrap_or(8000),
+            wait_time_ms: screenshot_config
+                .and_then(|c| c.wait_time_ms)
+                .unwrap_or(30000),
+            env_vars: {
+                let mut vars = vec![];
+                if let Ok(host) = std::env::var("DATABRICKS_HOST") {
+                    vars.push(("DATABRICKS_HOST".to_string(), host));
+                }
+                if let Ok(token) = std::env::var("DATABRICKS_TOKEN") {
+                    vars.push(("DATABRICKS_TOKEN".to_string(), token));
+                }
+                if let Ok(warehouse_id) = std::env::var("DATABRICKS_WAREHOUSE_ID") {
+                    vars.push(("DATABRICKS_WAREHOUSE_ID".to_string(), warehouse_id));
+                }
+                vars
+            },
+        };
+
+        tracing::info!("Starting screenshot capture with options: url={}, port={}, wait_time={}ms",
+            options.url, options.port, options.wait_time_ms);
+
+        // get app source directory
+        let app_source = client.host().directory(work_dir.display().to_string());
+
+        // capture screenshot and handle errors with context
+        let result_dir = edda_screenshot::screenshot_app(client, app_source, options)
+            .await
+            .context("Screenshot capture failed (app may not have started)")?;
+
+        // export screenshot to work_dir/screenshot.png
+        let screenshot_path = work_dir.join("screenshot.png");
+        result_dir
+            .file("screenshot.png")
+            .export(screenshot_path.display().to_string())
+            .await
+            .context("failed to export screenshot")?;
+
+        tracing::info!("Screenshot saved to: {}", screenshot_path.display());
+
+        // read browser console logs if available (soft failure - empty string if missing)
+        let browser_logs = match result_dir.file("logs.txt").contents().await {
+            Ok(logs) => {
+                if !logs.trim().is_empty() {
+                    tracing::info!("Browser console logs captured ({} bytes)", logs.len());
+                    Some(logs)
+                } else {
+                    tracing::debug!("Browser logs file is empty");
+                    None
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to read browser logs (screenshot succeeded, logs missing): {}", e);
+                None
+            }
+        };
+
+        // return absolute path for agent to read
+        Ok((screenshot_path.display().to_string(), browser_logs))
+    }
+
     /// Core logic for validating a project
     pub async fn validate_project_impl(
         work_dir: &Path,
         validation_strategy: Box<dyn validation::ValidationDyn>,
+        screenshot_config: Option<crate::config::ScreenshotConfig>,
     ) -> Result<ValidateProjectResult> {
         // validate work directory exists
         if !work_dir.exists() {
@@ -217,12 +315,54 @@ impl IOProvider {
             }
         };
 
-        // use channel to pass validation result out of dagger connection callback
+        // optimization: spawn screenshot task early if enabled
+        // this allows parallel execution: validation checks + screenshot warmup/capture
+        let screenshot_task = if screenshot_config
+            .as_ref()
+            .map_or(false, |c| c.enabled.unwrap_or(true))
+        {
+            let work_dir_clone = work_dir.to_path_buf();
+            let screenshot_config_clone = screenshot_config.clone();
+
+            tracing::info!("Spawning screenshot task in parallel with validation");
+
+            Some(tokio::spawn(async move {
+                let (screenshot_tx, screenshot_rx) = tokio::sync::oneshot::channel();
+
+                let screenshot_opts = ConnectOpts::default()
+                    .with_logger(Logger::Silent)
+                    .with_execute_timeout(Some(600));
+
+                let screenshot_connect_result = screenshot_opts
+                    .connect(move |client| async move {
+                        let result = IOProvider::capture_screenshot(
+                            &client,
+                            &work_dir_clone,
+                            screenshot_config_clone.as_ref(),
+                        )
+                        .await;
+                        let _ = screenshot_tx.send(result);
+                        Ok(())
+                    })
+                    .await;
+
+                if let Err(e) = screenshot_connect_result {
+                    return Err(eyre::eyre!("failed to connect to dagger for screenshot: {}", e));
+                }
+
+                screenshot_rx
+                    .await
+                    .map_err(|_| eyre::eyre!("screenshot task was cancelled"))?
+            }))
+        } else {
+            None
+        };
+
+        // run validation checks in main thread
         let (tx, rx) = tokio::sync::oneshot::channel();
         let work_dir_str = work_dir.display().to_string();
         let docker_image = validation_strategy.docker_image();
 
-        // create connection and run validation
         let opts = ConnectOpts::default()
             .with_logger(Logger::Silent)
             .with_execute_timeout(Some(600));
@@ -273,23 +413,62 @@ impl IOProvider {
 
         let result = match validation_result {
             Ok(_) => {
-                // compute checksum and transition to validated state
+                // validation passed - update state and await screenshot if spawned
                 let checksum = state::compute_checksum(work_dir)?;
                 let project_state = project_state.validate(checksum)?;
                 state::save_state(work_dir, &project_state)?;
+
+                // await screenshot task with timeout if it was spawned
+                let (screenshot_path, browser_logs) = if let Some(task) = screenshot_task {
+                    tracing::info!("Validation passed, awaiting screenshot result");
+
+                    use tokio::time::{timeout, Duration};
+                    let screenshot_timeout = Duration::from_secs(300); // 5 minutes
+
+                    match timeout(screenshot_timeout, task).await {
+                        Ok(Ok(Ok((path, logs)))) => (Some(path), logs),
+                        Ok(Ok(Err(e))) => {
+                            // Screenshot failed, but validation passed - soft failure
+                            tracing::warn!("Screenshot capture failed (validation passed): {}", e);
+                            let error_msg = format!("Screenshot failed: {}", e);
+                            (None, Some(error_msg))
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!("Screenshot task panicked (validation passed): {}", e);
+                            let error_msg = format!("Screenshot task panicked: {}", e);
+                            (None, Some(error_msg))
+                        }
+                        Err(_) => {
+                            tracing::warn!("Screenshot timed out after {} seconds (validation passed)", screenshot_timeout.as_secs());
+                            (None, Some("Screenshot timed out".to_string()))
+                        }
+                    }
+                } else {
+                    (None, None)
+                };
 
                 ValidateProjectResult {
                     success: true,
                     message: "All validations passed".to_string(),
                     details: None,
+                    screenshot_path,
+                    browser_logs,
                 }
             }
             Err(details) => {
-                // failed validation - don't update state
+                // validation failed - explicitly abort screenshot task
+                if let Some(task) = screenshot_task {
+                    tracing::info!("Validation failed, aborting screenshot task");
+                    task.abort();
+                    let _ = task.await; // Wait for abort to complete, ignore result
+                }
+
                 ValidateProjectResult {
                     success: false,
                     message: "Validation failed".to_string(),
                     details: Some(details),
+                    screenshot_path: None,
+                    browser_logs: None,
                 }
             }
         };
@@ -319,11 +498,16 @@ impl IOProvider {
         }
 
         let validation_strategy = self.get_validation_strategy();
-        let result = Self::validate_project_impl(&work_path, validation_strategy)
-            .await
-            .map_err(|e| {
-                ErrorData::internal_error(format!("failed to validate project: {}", e), None)
-            })?;
+        let screenshot_config = self.config.as_ref().and_then(|c| c.screenshot.clone());
+        let result = Self::validate_project_impl(
+            &work_path,
+            validation_strategy,
+            screenshot_config,
+        )
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(format!("failed to validate project: {}", e), None)
+        })?;
 
         match result.success {
             true => Ok(CallToolResult::success(vec![Content::text(

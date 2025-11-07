@@ -241,23 +241,12 @@ fn send_task_tool_definition() -> ToolDefinition {
 
 /// Test planner-worker workflow with Anthropic (Claude)
 #[tokio::test]
+#[cfg_attr(not(feature = "dagger"), ignore)]
 async fn test_e2e_planner_anthropic() {
     test_e2e_planner_impl(
         "test_e2e_planner_anthropic",
         LLMProvider::Anthropic,
         "anthropic_planner",
-    )
-    .await
-}
-
-/// Test planner-worker workflow with OpenRouter (DeepSeek)
-#[tokio::test]
-#[ignore] // API performance variability causes timeouts
-async fn test_e2e_planner_openrouter() {
-    test_e2e_planner_impl(
-        "test_e2e_planner_openrouter",
-        LLMProvider::OpenRouter,
-        "openrouter_planner",
     )
     .await
 }

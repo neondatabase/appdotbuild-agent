@@ -242,7 +242,7 @@ Use up to 10 tools per call to speed up the process.\n"""
             mcp_config = {
                 "type": "stdio",
                 "command": self.mcp_binary,
-                "args": ["--disallow-deployment"],
+                "args": ["--with-deployment=false"],
                 "env": {},
             }
         else:
@@ -254,7 +254,7 @@ Use up to 10 tools per call to speed up the process.\n"""
                     "--manifest-path",
                     str(self.mcp_manifest),
                     "--",
-                    "--disallow-deployment",
+                    "--with-deployment=false",
                 ],
                 "env": {},
             }
