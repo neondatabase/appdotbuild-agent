@@ -46,7 +46,8 @@ except ImportError:
     anthropic = None
 
 from eval_metrics import calculate_appeval_100, eff_units
-from eval_checks import check_databricks_connectivity as _check_db_connectivity
+from eval_checks import check_databricks_connectivity as _check_db_connectivity, extract_sql_queries
+from template_detection import detect_template
 
 
 @dataclass
@@ -82,6 +83,9 @@ class FullMetrics:
 
     # Efficiency metric (lower is better) - optional
     eff_units: float | None = None
+
+    # Template information
+    template_type: str = "unknown"
 
 
 @dataclass
@@ -303,43 +307,27 @@ def check_tests_pass(app_dir: Path) -> tuple[bool, float, bool]:
     return success, coverage_pct, has_tests
 
 
-def check_databricks_connectivity(app_dir: Path) -> bool:
+def check_databricks_connectivity(app_dir: Path, template: str = "trpc") -> bool:
     """Metric 5: Can connect to Databricks and execute queries."""
     print("  [5/7] Checking Databricks connectivity...")
-    return _check_db_connectivity(app_dir, 8000, run_command)
+    return _check_db_connectivity(app_dir, 8000, run_command, template)
 
 
-def check_data_validity_llm(app_dir: Path, prompt: str | None) -> tuple[bool, str]:
+def check_data_validity_llm(app_dir: Path, prompt: str | None, template: str = "trpc") -> tuple[bool, str]:
     """Metric 6: Binary check - does app return valid data from Databricks."""
     print("  [6/7] Checking data validity (LLM)...")
 
     if not anthropic or not prompt:
         return False, "Skipped: Anthropic client not available or no prompt"
 
-    # Extract SQL queries from source - try server/backend
-    server_dir = app_dir / "server" if (app_dir / "server").exists() else app_dir / "backend"
-    index_ts = server_dir / "src" / "index.ts"
-    if not index_ts.exists():
-        # Try without src/
-        index_ts = server_dir / "index.ts"
-    if not index_ts.exists():
-        return False, "No index.ts found"
+    # Extract SQL queries using template-aware extraction
+    queries = extract_sql_queries(app_dir, template)
 
-    content = index_ts.read_text()
-
-    # Extract first SQL query
-    sql_query = ""
-    in_query = False
-    for line in content.split("\n"):
-        if "query = `" in line:
-            in_query = True
-        if in_query:
-            sql_query += line + "\n"
-            if "`;" in line:
-                break
-
-    if not sql_query:
+    if not queries:
         return False, "No SQL query found"
+
+    # Use first query for validation
+    sql_query = queries[0]
 
     # Call LLM for validation - simplified to binary check
     try:
@@ -621,7 +609,12 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
     print(f"\nEvaluating: {app_dir.name}")
     print("=" * 60)
 
+    # Detect template type
+    template = detect_template(app_dir)
+    print(f"  Template: {template}")
+
     metrics = FullMetrics()
+    metrics.template_type = template
     issues = []
     details = {}
     container_name = f"eval-{app_dir.name}-{int(time.time())}"
@@ -672,14 +665,14 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
 
         # Metric 5: Databricks connectivity (only if runtime succeeded)
         if runtime_success:
-            db_success = check_databricks_connectivity(app_dir)
+            db_success = check_databricks_connectivity(app_dir, template)
             metrics.databricks_connectivity = db_success
             if not db_success:
                 issues.append("Databricks connectivity failed")
 
             # Metric 6: Data validity (LLM - binary check) - NOT INCLUDED IN SCORE
             if db_success:
-                data_returned, data_details = check_data_validity_llm(app_dir, prompt)
+                data_returned, data_details = check_data_validity_llm(app_dir, prompt, template)
                 metrics.data_returned = data_returned
                 if not data_returned:
                     issues.append(f"Data validity concerns: {data_details}")
@@ -820,7 +813,7 @@ def main():
         output_file.write_text(json.dumps(output_data, indent=2))
         print(f"\n\nResults saved to: {output_file}")
         if bulk_metadata:
-            print(f"Bulk run metadata:")
+            print("Bulk run metadata:")
             for key, value in bulk_metadata.items():
                 print(f"  {key}: {value}")
 

@@ -118,10 +118,17 @@ def generate_summary_report(results: list[dict]) -> dict:
     """Generate summary statistics from evaluation results."""
     total = len(results)
 
+    # Template distribution
+    template_counts = Counter()
+    for r in results:
+        template = r["metrics"].get("template_type", "unknown")
+        template_counts[template] += 1
+
     # Overall statistics - All 9 metrics
     stats = {
         "total_apps": total,
         "evaluated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "template_distribution": dict(template_counts),
         "metrics_summary": {
             # Metric 1-4: Core functionality
             "build_success": sum(1 for r in results if r["metrics"]["build_success"]),
@@ -214,6 +221,13 @@ def generate_markdown_report(results: list[dict], summary: dict) -> str:
     md.append("# App Evaluation Report")
     md.append(f"\n**Generated:** {summary['evaluated_at']}")
     md.append(f"\n**Total Apps Evaluated:** {summary['total_apps']}")
+
+    # Template distribution
+    if "template_distribution" in summary:
+        md.append("\n### Template Distribution")
+        for template, count in sorted(summary["template_distribution"].items()):
+            pct = (count / summary['total_apps'] * 100) if summary['total_apps'] > 0 else 0
+            md.append(f"- **{template}:** {count} apps ({pct:.1f}%)")
 
     # Executive Summary - All 9 metrics
     md.append("\n## Executive Summary\n")
@@ -461,6 +475,7 @@ def generate_csv_report(results: list[dict]) -> str:
     header = [
         "app_name",
         "timestamp",
+        "template_type",
         # Metric 1-4: Core functionality
         "build_success",
         "runtime_success",
@@ -496,6 +511,7 @@ def generate_csv_report(results: list[dict]) -> str:
         row = [
             result["app_name"],
             result["timestamp"],
+            metrics.get("template_type", "unknown"),
             # Metric 1-4
             1 if metrics["build_success"] else 0,
             1 if metrics["runtime_success"] else 0,
@@ -776,9 +792,9 @@ def main():
             # End run
             tracker.end_run()
 
-            print(f"✓ MLflow tracking complete")
+            print("✓ MLflow tracking complete")
             print(f"  Run ID: {run_id}")
-            print(f"  View: ML → Experiments → /Shared/klaudbiusz-evaluations")
+            print("  View: ML → Experiments → /Shared/klaudbiusz-evaluations")
         else:
             print("⚠️  MLflow tracking disabled (credentials not set)")
     except Exception as e:
@@ -809,7 +825,7 @@ def main():
     print(f"  8. Local Runability:      {metrics['local_runability_avg']:.1f}/5 ⭐")
     print(f"  9. Deployability:         {metrics['deployability_avg']:.1f}/5 ⭐")
 
-    print(f"\nQuality Distribution:")
+    print("\nQuality Distribution:")
     qual = summary["quality_distribution"]
     print(f"  🟢 Excellent: {len(qual['excellent'])}")
     print(f"  🟡 Good:      {len(qual['good'])}")
