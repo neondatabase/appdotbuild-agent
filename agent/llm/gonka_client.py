@@ -21,7 +21,8 @@ Environment Variables:
 from __future__ import annotations
 
 import os
-from typing import List
+import asyncio
+from typing import List, Dict, Any, Literal, cast
 try:
     from gonka_openai import GonkaOpenAI  # Official Gonka SDK (note: module uses underscore)
     GONKA_SDK_AVAILABLE = True
@@ -30,6 +31,9 @@ except ImportError:
     GONKA_SDK_AVAILABLE = False
 from llm.openai_client import OpenAILLM
 from llm import common
+from log import get_logger
+
+logger = get_logger(__name__)
 
 
 class GonkaLLM(OpenAILLM):
@@ -146,18 +150,41 @@ class GonkaLLM(OpenAILLM):
             finally:
                 self.client.chat.completions.create = original_create
         else:
-            # Use official Gonka SDK - it handles source_url automatically
-            return await super().completion(
-                messages=messages,
-                max_tokens=max_tokens,
-                model=model,
-                temperature=temperature,
-                tools=tools,
-                tool_choice=tool_choice,
-                system_prompt=system_prompt,
-                *args,
-                **kwargs,
-            )
+            # Use official Gonka SDK - it's synchronous, so wrap in thread
+            # The Gonka SDK doesn't support async, so we need to call it sync
+            logger.info(f"Using Gonka SDK (sync) for model {model or self.default_model}")
+
+            # Build messages in OpenAI format
+            openai_messages = self._messages_into(messages)
+            if system_prompt:
+                openai_messages.insert(0, {"role": "system", "content": system_prompt})
+
+            # Build request
+            request: Dict[str, Any] = {
+                "model": model or self.default_model,
+                "messages": openai_messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+
+            # Add tools if provided
+            openai_tools = self._tools_into(tools)
+            if openai_tools:
+                request["tools"] = openai_tools
+                if tool_choice:
+                    request["tool_choice"] = {
+                        "type": "function",
+                        "function": {"name": tool_choice},
+                    }
+
+            # Call synchronous Gonka SDK in thread pool
+            def sync_create():
+                return self.client.chat.completions.create(**request)
+
+            response = await asyncio.to_thread(sync_create)
+
+            # Convert response to our format
+            return self._completion_into(response)
 
 
 __all__ = ["GonkaLLM"]
