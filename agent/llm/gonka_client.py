@@ -22,14 +22,13 @@ from __future__ import annotations
 
 import os
 import asyncio
-import time
-from typing import List, Dict, Any, Literal, cast
+from typing import List, Dict, Any
 try:
     from gonka_openai import GonkaOpenAI  # Official Gonka SDK (note: module uses underscore)
     from openai import RateLimitError
     GONKA_SDK_AVAILABLE = True
 except ImportError:
-    from openai import AsyncOpenAI, RateLimitError
+    from openai import RateLimitError
     GONKA_SDK_AVAILABLE = False
 from llm.openai_client import OpenAILLM
 from llm import common
@@ -186,6 +185,7 @@ class GonkaLLM(OpenAILLM):
             # Retry logic for handling node capacity issues
             max_retries = 5
             base_delay = 1.0  # Start with 1 second
+            last_error: Exception | None = None
 
             for attempt in range(max_retries):
                 try:
@@ -193,6 +193,7 @@ class GonkaLLM(OpenAILLM):
                     # Convert response to our format
                     return self._completion_into(response)
                 except RateLimitError as e:
+                    last_error = e
                     if attempt < max_retries - 1:
                         # Exponential backoff: 1s, 2s, 4s, 8s, 16s
                         delay = base_delay * (2 ** attempt)
@@ -202,12 +203,15 @@ class GonkaLLM(OpenAILLM):
                         )
                         await asyncio.sleep(delay)
                         # SDK will automatically try a different node on next attempt
-                    else:
-                        logger.error(
-                            f"All Gonka nodes at capacity after {max_retries} attempts. "
-                            "Please try again later or use a different LLM provider."
-                        )
-                        raise
+
+            # If we get here, all retries failed
+            logger.error(
+                f"All Gonka nodes at capacity after {max_retries} attempts. "
+                "Please try again later or use a different LLM provider."
+            )
+            if last_error:
+                raise last_error
+            raise RuntimeError("Gonka completion failed with no error captured")
 
 
 __all__ = ["GonkaLLM"]

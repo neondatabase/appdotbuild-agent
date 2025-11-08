@@ -50,10 +50,10 @@ class ModelCategory:
 
 # defaults using backend:model format
 DEFAULT_MODELS = {
-    ModelCategory.BEST_CODING: "anthropic:claude-sonnet-4-20250514",
-    ModelCategory.UNIVERSAL: "gemini:gemini-2.5-flash-preview-05-20",
-    ModelCategory.ULTRA_FAST: "gemini:gemini-2.5-flash-lite-preview-06-17",
-    ModelCategory.VISION: "gemini:gemini-2.5-flash-lite-preview-06-17",
+    ModelCategory.BEST_CODING: "gonka:Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+    ModelCategory.UNIVERSAL: "gonka:Qwen/Qwen3-32B-FP8",
+    ModelCategory.ULTRA_FAST: "gonka:Qwen/Qwen2.5-7B-Instruct",
+    ModelCategory.VISION: "gonka:Gemma-3-27B-it",
 }
 
 
