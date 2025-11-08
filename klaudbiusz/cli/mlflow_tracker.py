@@ -160,74 +160,26 @@ class EvaluationTracker:
 
         try:
             summary = evaluation_report.get('summary', {})
-            metrics_summary = summary.get('metrics_summary', {})
 
-            # Log binary metric success rates
-            for metric_name, counts in metrics_summary.items():
-                # Handle new format: {"pass": X, "fail": Y}
-                if isinstance(counts, dict) and 'pass' in counts and 'fail' in counts:
-                    total = counts['pass'] + counts['fail']
-                    if total > 0:
-                        rate = counts['pass'] / total
-                        mlflow.log_metric(f"{metric_name}_rate", rate)
-                        mlflow.log_metric(f"{metric_name}_pass", counts['pass'])
-                        mlflow.log_metric(f"{metric_name}_fail", counts['fail'])
-
-                # Handle old format: "X/Y" or "X/Y (N/A: Z)"
-                elif isinstance(counts, str) and '/' in counts:
-                    # Parse "X/Y" or "X/Y (N/A: Z)" format
-                    parts = counts.split('(')[0].strip().split('/')
-                    if len(parts) == 2:
-                        try:
-                            passed = int(parts[0])
-                            total = int(parts[1])
-                            failed = total - passed
-                            if total > 0:
-                                rate = passed / total
-                                mlflow.log_metric(f"{metric_name}_rate", rate)
-                                mlflow.log_metric(f"{metric_name}_pass", passed)
-                                mlflow.log_metric(f"{metric_name}_fail", failed)
-                        except ValueError:
-                            pass  # Skip if can't parse
-
-                # Handle average scores: "X.XX/5" format
-                elif isinstance(counts, str) and '/5' in counts:
-                    try:
-                        score = float(counts.split('/')[0])
-                        mlflow.log_metric(metric_name, score)
-                    except ValueError:
-                        pass
-
-            # Calculate and log aggregate metrics
+            # Log only top-level aggregate metrics (appeval_100 + 2-3 key metrics)
             total_apps = summary.get('total_apps', 0)
             if total_apps > 0:
                 mlflow.log_metric("total_apps", total_apps)
-                mlflow.log_metric("evaluated", summary.get('evaluated', total_apps))
 
             # Log average scores from individual apps
             apps = evaluation_report.get('apps', [])
             if apps:
-                avg_runability = sum(app['metrics'].get('local_runability_score', 0)
-                                    for app in apps) / len(apps)
-                avg_deployability = sum(app['metrics'].get('deployability_score', 0)
-                                       for app in apps) / len(apps)
+                # Average appeval_100 composite score (PRIMARY METRIC)
+                avg_appeval_100 = sum(app['metrics'].get('appeval_100', 0)
+                                     for app in apps) / len(apps)
+                mlflow.log_metric("avg_appeval_100", avg_appeval_100)
 
-                # Use standard names from Databricks Apps 2.0 spec
-                mlflow.log_metric("avg_runability_score", avg_runability)
-                mlflow.log_metric("avg_deployability_score", avg_deployability)
-
-                # Overall quality score (0-1) - calculate from per-app metrics
-                # Use the table data which has accurate per-app results
-                if apps:
-                    # Calculate success rates from individual apps
-                    build_success_count = sum(1 for app in apps if app.get('metrics', {}).get('build_success', False))
-                    db_success_count = sum(1 for app in apps if app.get('metrics', {}).get('databricks_connectivity', False))
-                    runtime_success_count = sum(1 for app in apps if app.get('metrics', {}).get('runtime_success', False))
-                    tests_pass_count = sum(1 for app in apps if app.get('metrics', {}).get('tests_pass', False))
-
-                    # Overall quality: average of key success metrics
-                    quality_score = (build_success_count + db_success_count + runtime_success_count + tests_pass_count) / (4 * len(apps))
-                    mlflow.log_metric("overall_quality_score", quality_score)
+                # Average eff_units efficiency metric (lower is better)
+                eff_values = [app['metrics'].get('eff_units') for app in apps
+                             if app.get('metrics', {}).get('eff_units') is not None]
+                if eff_values:
+                    avg_eff_units = sum(eff_values) / len(eff_values)
+                    mlflow.log_metric("avg_eff_units", avg_eff_units)
 
                 # Log per-app detailed metrics as MLflow Table
                 # Mapping internal names to standard names from Databricks Apps 2.0 spec
@@ -264,35 +216,10 @@ class EvaluationTracker:
 
                     app_records.append(record)
 
-                # Log as table
+                # Log as table (all detailed metrics available here)
                 if app_records:
                     df = pd.DataFrame(app_records)
                     mlflow.log_table(df, "app_metrics.json")
-
-                    # Also log aggregate statistics as MLflow metrics
-                    for column in df.columns:
-                        if column == 'app_name':
-                            continue
-
-                        col_data = df[column]
-
-                        # For numeric columns, log statistics
-                        if pd.api.types.is_numeric_dtype(col_data):
-                            # Skip if all NaN
-                            if col_data.notna().sum() == 0:
-                                continue
-
-                            mlflow.log_metric(f"{column}_mean", col_data.mean())
-                            mlflow.log_metric(f"{column}_median", col_data.median())
-                            mlflow.log_metric(f"{column}_min", col_data.min())
-                            mlflow.log_metric(f"{column}_max", col_data.max())
-                            mlflow.log_metric(f"{column}_std", col_data.std())
-
-                            # For binary metrics (0/1), also log success rate
-                            unique_vals = col_data.dropna().unique()
-                            if len(unique_vals) <= 2 and set(unique_vals).issubset({0, 1, 0.0, 1.0}):
-                                success_rate = col_data.mean()  # mean of 0/1 is the success rate
-                                mlflow.log_metric(f"{column}_rate", success_rate)
 
         except Exception as e:
             print(f"⚠️  Failed to log metrics: {e}")

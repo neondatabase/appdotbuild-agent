@@ -18,53 +18,70 @@ Usage:
 import json
 import os
 import subprocess
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-# Load environment variables from .env file
-try:
-    from dotenv import load_dotenv
-    # Try loading from various locations
-    env_paths = [
-        Path(__file__).parent.parent.parent / "edda" / ".env",
-        Path(__file__).parent.parent / ".env",
-        Path(__file__).parent / ".env",
-    ]
-    for env_path in env_paths:
-        if env_path.exists():
-            load_dotenv(env_path)
-            print(f"Loaded environment from: {env_path}")
-            break
-except ImportError:
-    print("Warning: python-dotenv not installed, relying on system environment variables")
+# Add the cli directory to Python path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+from dotenv import load_dotenv
+
+# Load environment variables from .env file - try multiple locations
+env_paths = [
+    Path(__file__).parent.parent.parent / "edda" / ".env",
+    Path(__file__).parent.parent / ".env",
+    Path(__file__).parent / ".env",
+]
+for env_path in env_paths:
+    if env_path.exists():
+        load_dotenv(env_path, override=True)  # override=True to ensure vars are set
+        break
 
 try:
     import anthropic
 except ImportError:
     anthropic = None
 
+from eval_metrics import calculate_appeval_100, eff_units
+from eval_checks import check_databricks_connectivity as _check_db_connectivity
+
 
 @dataclass
-class EvalMetrics:
-    """Core evaluation metrics."""
-
+class FullMetrics:
+    """All 9 metrics from evals.md."""
+    # Core functionality (Binary)
     build_success: bool = False
     runtime_success: bool = False
     type_safety: bool = False
     tests_pass: bool = False
-    test_coverage_pct: float = 0.0
+
+    # Databricks (Binary)
     databricks_connectivity: bool = False
-    data_validity_score: int = 0
-    ui_functional_score: int = 0
+    data_returned: bool = False
+
+    # UI (Binary)
+    ui_renders: bool = False
+
+    # DevX (Scores)
     local_runability_score: int = 0
     deployability_score: int = 0
+
+    # Metadata
+    test_coverage_pct: float = 0.0
+    total_loc: int = 0
+    has_dockerfile: bool = False
+    has_tests: bool = False
+    build_time_sec: float = 0.0
+    startup_time_sec: float = 0.0
+
+    # Composite score
+    appeval_100: float = 0.0
+
+    # Efficiency metric (lower is better) - optional
+    eff_units: float | None = None
 
 
 @dataclass
@@ -74,10 +91,9 @@ class EvalResult:
     app_name: str
     app_dir: str
     timestamp: str
-    metrics: EvalMetrics
-    overall_status: str
+    metrics: FullMetrics
     issues: list[str]
-    metadata: dict[str, Any]
+    details: dict[str, Any]
 
 
 def run_command(cmd: list[str], cwd: str | None = None, timeout: int = 300) -> tuple[bool, str, str]:
@@ -102,6 +118,12 @@ def check_build_success(app_dir: Path) -> tuple[bool, dict]:
     print("  [1/7] Checking build success...")
     start = time.time()
 
+    dockerfile = app_dir / "Dockerfile"
+    has_dockerfile = dockerfile.exists()
+
+    if not has_dockerfile:
+        return False, {"build_time_sec": 0.0, "has_dockerfile": False}
+
     success, stdout, stderr = run_command(
         ["docker", "build", "-t", f"eval-{app_dir.name}", "."],
         cwd=str(app_dir),
@@ -109,7 +131,7 @@ def check_build_success(app_dir: Path) -> tuple[bool, dict]:
     )
 
     build_time = time.time() - start
-    return success, {"build_time_sec": round(build_time, 1)}
+    return success, {"build_time_sec": round(build_time, 1), "has_dockerfile": True}
 
 
 def check_runtime_success(app_dir: Path, container_name: str) -> tuple[bool, dict]:
@@ -126,8 +148,10 @@ def check_runtime_success(app_dir: Path, container_name: str) -> tuple[bool, dic
         env_vars.extend(["-e", f"DATABRICKS_HOST={os.environ['DATABRICKS_HOST']}"])
     if "DATABRICKS_TOKEN" in os.environ:
         env_vars.extend(["-e", f"DATABRICKS_TOKEN={os.environ['DATABRICKS_TOKEN']}"])
+    if "DATABRICKS_WAREHOUSE_ID" in os.environ:
+        env_vars.extend(["-e", f"DATABRICKS_WAREHOUSE_ID={os.environ['DATABRICKS_WAREHOUSE_ID']}"])
 
-    success, _, _ = run_command(
+    success, stdout, stderr = run_command(
         [
             "docker",
             "run",
@@ -152,7 +176,7 @@ def check_runtime_success(app_dir: Path, container_name: str) -> tuple[bool, dic
     # Check health endpoint
     start = time.time()
     for _ in range(6):  # Try for 30 seconds
-        success, stdout, _ = run_command(
+        success, stdout, stderr = run_command(
             ["curl", "-f", "-s", "http://localhost:8000/healthcheck"],
             timeout=10,
         )
@@ -215,7 +239,7 @@ def check_type_safety(app_dir: Path) -> bool:
     return server_success and client_success
 
 
-def check_tests_pass(app_dir: Path) -> tuple[bool, float]:
+def check_tests_pass(app_dir: Path) -> tuple[bool, float, bool]:
     """Metric 4: Tests pass with coverage."""
     print("  [4/7] Checking tests pass...")
 
@@ -224,6 +248,10 @@ def check_tests_pass(app_dir: Path) -> tuple[bool, float]:
         cwd=str(app_dir / "server"),
         timeout=120,
     )
+
+    # Check if tests exist
+    test_files = list((app_dir / "server" / "src").glob("*.test.ts")) + list((app_dir / "server" / "src").glob("**/*.test.ts"))
+    has_tests = len(test_files) > 0
 
     # Parse coverage from output (node's test runner output format)
     coverage_pct = 0.0
@@ -238,72 +266,26 @@ def check_tests_pass(app_dir: Path) -> tuple[bool, float]:
                 except (ValueError, IndexError):
                     pass
 
-    return success, coverage_pct
+    return success, coverage_pct, has_tests
 
 
 def check_databricks_connectivity(app_dir: Path) -> bool:
     """Metric 5: Can connect to Databricks and execute queries."""
     print("  [5/7] Checking Databricks connectivity...")
-
-    # Try to call the first tRPC endpoint
-    # First, discover available procedures by inspecting the router
-    index_ts = app_dir / "server" / "src" / "index.ts"
-    if not index_ts.exists():
-        return False
-
-    # Look for procedure names in the file
-    content = index_ts.read_text()
-    procedures = []
-    for line in content.split("\n"):
-        if "publicProcedure" in line and ":" in line:
-            # Extract procedure name (simple heuristic)
-            parts = line.split(":")
-            if parts:
-                proc_name = parts[0].strip()
-                if proc_name and proc_name != "healthcheck":
-                    procedures.append(proc_name)
-
-    # Try first data procedure (skip healthcheck)
-    for proc in procedures[:3]:  # Try up to 3 endpoints
-        success, stdout, _ = run_command(
-            [
-                "curl",
-                "-f",
-                "-s",
-                "-X",
-                "POST",
-                f"http://localhost:8000/api/{proc}",
-                "-H",
-                "Content-Type: application/json",
-                "-d",
-                "{}",
-            ],
-            timeout=60,
-        )
-
-        if success:
-            try:
-                result = json.loads(stdout)
-                # Check if we got data back
-                if result and "result" in result:
-                    return True
-            except json.JSONDecodeError:
-                pass
-
-    return False
+    return _check_db_connectivity(app_dir, 8000, run_command)
 
 
-def check_data_validity_llm(app_dir: Path, prompt: str | None) -> tuple[int, str]:
-    """Metric 6: LLM validates SQL logic and results."""
+def check_data_validity_llm(app_dir: Path, prompt: str | None) -> tuple[bool, str]:
+    """Metric 6: Binary check - does app return valid data from Databricks."""
     print("  [6/7] Checking data validity (LLM)...")
 
     if not anthropic or not prompt:
-        return 0, "Skipped: Anthropic client not available or no prompt"
+        return False, "Skipped: Anthropic client not available or no prompt"
 
     # Extract SQL queries from source
     index_ts = app_dir / "server" / "src" / "index.ts"
     if not index_ts.exists():
-        return 0, "No index.ts found"
+        return False, "No index.ts found"
 
     content = index_ts.read_text()
 
@@ -319,14 +301,14 @@ def check_data_validity_llm(app_dir: Path, prompt: str | None) -> tuple[int, str
                 break
 
     if not sql_query:
-        return 0, "No SQL query found"
+        return False, "No SQL query found"
 
-    # Call LLM for validation
+    # Call LLM for validation - simplified to binary check
     try:
         client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=500,
+            max_tokens=200,
             messages=[
                 {
                     "role": "user",
@@ -337,37 +319,27 @@ Prompt: {prompt}
 SQL Query:
 {sql_query}
 
-Rate the query on these criteria (answer yes/no for each):
-1. Does the query match the prompt requirements?
-2. Are the column names meaningful?
-3. Do the aggregations make sense?
-4. Are there any obvious logic errors?
-5. Does the query look correct?
+Answer YES or NO: Does this query look valid and likely to return meaningful data?
+Consider:
+- Does the query match the prompt requirements?
+- Are the column names meaningful?
+- Are there obvious syntax or logic errors?
 
-Respond in this exact format:
-SCORE: X/5
-ISSUES: [list issues or "None"]""",
+Respond with ONLY: YES or NO""",
                 }
             ],
         )
 
-        response_text = message.content[0].text
-        score = 0
-        issues = "Unknown"
-
-        for line in response_text.split("\n"):
-            if "SCORE:" in line:
-                try:
-                    score = int(line.split("/")[0].split(":")[-1].strip())
-                except ValueError:
-                    pass
-            if "ISSUES:" in line:
-                issues = line.split(":", 1)[1].strip()
-
-        return score, issues
+        # Extract text from first content block
+        content_block = message.content[0]
+        response_text = getattr(content_block, 'text', '').strip().upper()
+        if response_text:
+            return "YES" in response_text, response_text
+        else:
+            return False, "Invalid response format"
 
     except Exception as e:
-        return 0, f"LLM check failed: {str(e)}"
+        return False, f"LLM check failed: {str(e)}"
 
 
 def check_ui_functional_vlm(app_dir: Path, prompt: str | None) -> tuple[bool, str]:
@@ -435,7 +407,11 @@ Respond with ONLY one word: PASS or FAIL""",
             ],
         )
 
-        response_text = message.content[0].text.strip().upper()
+        # Extract text from first content block
+        content_block = message.content[0]
+        response_text = getattr(content_block, 'text', '').strip().upper()
+        if not response_text:
+            return False, "Invalid response format"
 
         # Binary check: PASS or FAIL
         if "PASS" in response_text:
@@ -598,9 +574,9 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
     print(f"\nEvaluating: {app_dir.name}")
     print("=" * 60)
 
-    metrics = EvalMetrics()
+    metrics = FullMetrics()
     issues = []
-    metadata = {}
+    details = {}
     container_name = f"eval-{app_dir.name}-{int(time.time())}"
 
     runtime_success = False  # Initialize to avoid UnboundLocalError
@@ -612,7 +588,8 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
         # Metric 1: Build
         build_success, build_meta = check_build_success(app_dir)
         metrics.build_success = build_success
-        metadata.update(build_meta)
+        metrics.build_time_sec = build_meta.get("build_time_sec", 0.0)
+        metrics.has_dockerfile = build_meta.get("has_dockerfile", False)
         if not build_success:
             issues.append("Docker build failed")
 
@@ -620,7 +597,7 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
         if build_success:
             runtime_success, runtime_meta = check_runtime_success(app_dir, container_name)
             metrics.runtime_success = runtime_success
-            metadata.update(runtime_meta)
+            metrics.startup_time_sec = runtime_meta.get("startup_time_sec", 0.0)
             if not runtime_success:
                 issues.append("Container failed to start or healthcheck failed")
 
@@ -637,9 +614,10 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
 
         # Metric 4: Tests (requires dependencies)
         if deps_installed:
-            tests_pass, coverage = check_tests_pass(app_dir)
+            tests_pass, coverage, has_tests = check_tests_pass(app_dir)
             metrics.tests_pass = tests_pass
             metrics.test_coverage_pct = coverage
+            metrics.has_tests = has_tests
             if not tests_pass:
                 issues.append("Tests failed")
             if coverage < 70:
@@ -652,62 +630,80 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
             if not db_success:
                 issues.append("Databricks connectivity failed")
 
-            # Metric 6: Data validity (LLM)
+            # Metric 6: Data validity (LLM - binary check) - NOT INCLUDED IN SCORE
             if db_success:
-                data_score, data_issues = check_data_validity_llm(app_dir, prompt)
-                metrics.data_validity_score = data_score
-                if data_score < 4:
-                    issues.append(f"Data validity concerns: {data_issues}")
+                data_returned, data_details = check_data_validity_llm(app_dir, prompt)
+                metrics.data_returned = data_returned
+                if not data_returned:
+                    issues.append(f"Data validity concerns: {data_details}")
 
-            # Metric 7: UI functional (VLM)
-            ui_score, ui_issues = check_ui_functional_vlm(app_dir, prompt)
-            metrics.ui_functional_score = ui_score
-            if ui_score < 4:
-                issues.append(f"UI concerns: {ui_issues}")
+            # Metric 7: UI functional (VLM - binary check) - NOT INCLUDED IN SCORE
+            ui_renders, ui_details = check_ui_functional_vlm(app_dir, prompt)
+            metrics.ui_renders = ui_renders
+            if not ui_renders:
+                issues.append(f"UI concerns: {ui_details}")
 
         # Metric 8: Local runability (DevX)
         local_score, local_details = check_local_runability(app_dir)
         metrics.local_runability_score = local_score
+        details["local_runability"] = local_details
         if local_score < 3:
             issues.append(f"Local runability concerns ({local_score}/5): {'; '.join([d for d in local_details if '✗' in d])}")
 
         # Metric 9: Deployability (DevX)
         deploy_score, deploy_details = check_deployability(app_dir)
         metrics.deployability_score = deploy_score
+        details["deployability"] = deploy_details
         if deploy_score < 3:
             issues.append(f"Deployability concerns ({deploy_score}/5): {'; '.join([d for d in deploy_details if '✗' in d])}")
 
-        # Calculate overall status
-        critical_checks = [
-            metrics.build_success,
-            metrics.runtime_success,
-            metrics.databricks_connectivity,
-        ]
-        overall_status = "PASS" if all(critical_checks) else "FAIL"
+        # Calculate composite appeval_100 score
+        metrics.appeval_100 = calculate_appeval_100(
+            build_success=metrics.build_success,
+            runtime_success=metrics.runtime_success,
+            type_safety=metrics.type_safety,
+            tests_pass=metrics.tests_pass,
+            databricks_connectivity=metrics.databricks_connectivity,
+            data_metric=metrics.data_returned,
+            ui_metric=metrics.ui_renders,
+            local_runability_score=metrics.local_runability_score,
+            deployability_score=metrics.deployability_score,
+        )
 
-        # Add metadata
-        metadata["total_loc"] = sum(
+        # Calculate efficiency metric from generation data if available
+        generation_metrics_file = app_dir / "generation_metrics.json"
+        if generation_metrics_file.exists():
+            generation_metrics = json.loads(generation_metrics_file.read_text())
+            tokens = generation_metrics.get("input_tokens", 0) + generation_metrics.get("output_tokens", 0)
+            turns = generation_metrics.get("turns")
+            validations = generation_metrics.get("validation_runs")
+
+            metrics.eff_units = eff_units(
+                tokens_used=tokens if tokens > 0 else None,
+                agent_turns=turns,
+                validation_runs=validations
+            )
+
+        # Add LOC count
+        metrics.total_loc = sum(
             1
             for f in app_dir.rglob("*.ts")
             if f.is_file() and "node_modules" not in str(f)
         )
 
     finally:
-        # Always cleanup
-        if metrics.runtime_success:
-            cleanup_container(container_name)
+        # Always cleanup container if it exists (regardless of success/failure)
+        cleanup_container(container_name)
 
-    print(f"\nStatus: {overall_status}")
-    print(f"Issues: {len(issues)}")
+    print(f"\nIssues: {len(issues)}")
 
     return EvalResult(
         app_name=app_dir.name,
         app_dir=str(app_dir),
         timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         metrics=metrics,
-        overall_status=overall_status,
         issues=issues,
-        metadata=metadata,
+        details=details,
     )
 
 

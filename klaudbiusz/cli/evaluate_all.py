@@ -16,8 +16,6 @@ Usage:
 import argparse
 import fnmatch
 import json
-import os
-import subprocess
 import sys
 from datetime import datetime
 from dotenv import load_dotenv
@@ -26,9 +24,8 @@ from dotenv import load_dotenv
 load_dotenv()
 import time
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any
 
 # Load environment variables
 try:
@@ -44,295 +41,27 @@ try:
 except ImportError:
     pass
 
-try:
-    import anthropic
-    ANTHROPIC_AVAILABLE = True
-except ImportError:
-    ANTHROPIC_AVAILABLE = False
+# Import evaluate_app from evaluate_app.py - all evaluation logic is there
+from evaluate_app import evaluate_app
+from eval_metrics import eff_units
 
 
-@dataclass
-class FullMetrics:
-    """All 9 metrics from evals.md."""
-    # Core functionality (Binary)
-    build_success: bool = False
-    runtime_success: bool = False
-    type_safety: bool = False
-    tests_pass: bool = False
-
-    # Databricks (Binary)
-    databricks_connectivity: bool = False
-    data_returned: bool = False
-
-    # UI (Binary)
-    ui_renders: bool = False
-
-    # DevX (Scores)
-    local_runability_score: int = 0
-    deployability_score: int = 0
-
-    # Metadata
-    test_coverage_pct: float = 0.0
-    total_loc: int = 0
-    has_dockerfile: bool = False
-    has_tests: bool = False
-    build_time_sec: float = 0.0
-    startup_time_sec: float = 0.0
-
-
-@dataclass
-class EvalResult:
-    """Evaluation result."""
-    app_name: str
-    app_dir: str
-    timestamp: str
-    metrics: FullMetrics
-    issues: list[str]
-    details: dict[str, Any]
-
-
-def run_command(cmd: list[str], cwd: str | None = None, timeout: int = 120) -> tuple[bool, str, str]:
-    """Run a shell command."""
+def get_git_commit_hash() -> str | None:
+    """Get the current git commit hash."""
+    import subprocess
     try:
-        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-        return result.returncode == 0, result.stdout, result.stderr
-    except Exception:
-        return False, "", ""
-
-
-def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
-    """Run evaluation with all 9 metrics from evals.md."""
-    metrics = FullMetrics()
-    issues = []
-    details_dict = {}
-
-    # Metric 1: Build Success (requires Docker - skip if not available)
-    dockerfile = app_dir / "Dockerfile"
-    if dockerfile.exists():
-        build_start = time.time()
-        build_ok, _, _ = run_command(["docker", "build", "-t", f"test-{app_dir.name}", "."], cwd=str(app_dir), timeout=300)
-        metrics.build_time_sec = time.time() - build_start
-        metrics.build_success = build_ok
-        if not build_ok:
-            issues.append("Docker build failed")
-
-    # Metric 2: Runtime Success (requires Docker - skip if build failed)
-    if metrics.build_success:
-        # Start container with PORT=3000 to match our health check
-        start_time = time.time()
-        run_ok, container_id, _ = run_command(
-            ["docker", "run", "-d", "-p", "3000:3000",
-             "-e", "PORT=3000",
-             "-e", f"DATABRICKS_HOST={os.getenv('DATABRICKS_HOST', '')}",
-             "-e", f"DATABRICKS_TOKEN={os.getenv('DATABRICKS_TOKEN', '')}",
-             f"test-{app_dir.name}"],
-            timeout=30
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).parent.parent,
+            capture_output=True,
+            text=True,
+            timeout=5
         )
-        if run_ok and container_id:
-            container_id = container_id.strip()
-            # Wait longer for Node.js to start and check if container is running
-            time.sleep(10)
-
-            # First check if container is still running
-            running_ok, _, _ = run_command(["docker", "ps", "-q", "-f", f"id={container_id}"], timeout=5)
-
-            if running_ok:
-                # Try tRPC health check endpoint
-                health_ok, _, _ = run_command(
-                    ["curl", "-f", "-X", "GET",
-                     "http://localhost:3000/api/trpc/healthcheck?batch=1&input=%7B%7D"],
-                    timeout=10
-                )
-                metrics.runtime_success = health_ok
-                metrics.startup_time_sec = time.time() - start_time
-                if not health_ok:
-                    issues.append("Container failed to start or health check failed")
-            else:
-                issues.append("Container exited immediately after start")
-                metrics.startup_time_sec = time.time() - start_time
-
-            # Cleanup
-            run_command(["docker", "stop", container_id], timeout=10)
-            run_command(["docker", "rm", container_id], timeout=10)
-
-    # Install dependencies (needed for TypeScript and tests)
-    print("  Installing dependencies...")
-    server_deps_ok, _, _ = run_command(["npm", "install"], cwd=str(app_dir / "server"), timeout=180)
-    client_deps_ok, _, _ = run_command(["npm", "install"], cwd=str(app_dir / "client"), timeout=180)
-    deps_installed = server_deps_ok and client_deps_ok
-
-    if not deps_installed:
-        issues.append("Dependencies installation failed")
-
-    # Metric 3: Type Safety (requires dependencies)
-    if deps_installed:
-        type_ok_server, _, _ = run_command(["npx", "tsc", "--noEmit"], cwd=str(app_dir / "server"), timeout=60)
-        type_ok_client, _, _ = run_command(["npx", "tsc", "--noEmit"], cwd=str(app_dir / "client"), timeout=60)
-        metrics.type_safety = type_ok_server and type_ok_client
-        # Only flag TS errors as issues if they cause build/runtime problems
-        # (Since apps use tsx which skips type checking, TS strictness is informational)
-        if not metrics.type_safety and not metrics.build_success:
-            issues.append("TypeScript compilation errors prevent build")
-
-    # Metric 4: Tests Pass (requires dependencies)
-    if deps_installed:
-        tests_ok, stdout, stderr = run_command(["npm", "test"], cwd=str(app_dir / "server"), timeout=120)
-        metrics.tests_pass = tests_ok
-        test_files = list((app_dir / "server" / "src").glob("*.test.ts")) + list((app_dir / "server" / "src").glob("**/*.test.ts"))
-        metrics.has_tests = len(test_files) > 0
-        if not tests_ok:
-            issues.append("Tests failed")
-    else:
-        # If dependencies failed, tests also fail
-        tests_ok = False
-        metrics.tests_pass = False
-        stdout = ""
-        stderr = ""
-
-    # Parse coverage
-    output = stdout + stderr
-    for line in output.split("\n"):
-        if "all files" in line.lower() and "%" in line:
-            parts = line.split("|")
-            if len(parts) >= 2:
-                try:
-                    metrics.test_coverage_pct = float(parts[1].strip().replace("%", ""))
-                except (ValueError, IndexError):
-                    pass
-
-    if metrics.test_coverage_pct < 70:
-        issues.append(f"Coverage below 70% ({metrics.test_coverage_pct:.1f}%)")
-
-    # Metric 5: Databricks Connectivity (requires running container)
-    # For now, if runtime succeeds, we assume DB connectivity works
-    # In reality, we'd need to know the specific tRPC procedure names for each app
-    if metrics.runtime_success:
-        # Runtime success means the tRPC API is responding, which implies DB client initialized
-        # We're not testing actual DB queries here since that requires app-specific knowledge
-        metrics.databricks_connectivity = True
-
-    # Metric 6: Data Returned (requires running container + knowing procedure names)
-    # Skip for now since each app has different tRPC procedures
-    # Would need to introspect the router or know procedure names in advance
-    metrics.data_returned = False  # TODO: Implement app-specific procedure calls
-
-    # Metric 7: UI Renders (binary VLM check - requires screenshot)
-    if ANTHROPIC_AVAILABLE:
-        screenshot_path = app_dir / "screenshot_output" / "screenshot.png"
-        if not screenshot_path.exists():
-            screenshot_path = app_dir / "screenshot.png"
-
-        if screenshot_path.exists():
-            try:
-                import base64
-                image_data = base64.standard_b64encode(screenshot_path.read_bytes()).decode("utf-8")
-
-                client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-                message = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
-                    max_tokens=100,
-                    messages=[{
-                        "role": "user",
-                        "content": [{
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": image_data,
-                            },
-                        }, {
-                            "type": "text",
-                            "text": """Look at this screenshot and answer ONLY these objective binary questions:
-
-1. Is the page NOT blank (does something render)? Answer: YES or NO
-2. Are there NO visible error messages (no 404, 500, crash messages, red error text)? Answer: YES or NO
-3. Is there ANY visible content (text, tables, charts, buttons, etc.)? Answer: YES or NO
-
-DO NOT assess quality, aesthetics, or whether it matches requirements.
-ONLY verify: Does the page render without errors?
-
-If ALL THREE answers are YES, respond: PASS
-If ANY answer is NO, respond: FAIL
-
-Respond with ONLY one word: PASS or FAIL""",
-                        }],
-                    }],
-                )
-
-                # Extract text from content block
-                content_block = message.content[0]
-                response_text = getattr(content_block, 'text', '').strip().upper()
-                metrics.ui_renders = "PASS" in response_text
-            except Exception:
-                metrics.ui_renders = False
-        else:
-            metrics.ui_renders = False
-    else:
-        metrics.ui_renders = False
-
-    # Metric 8: Local runability
-    local_score = 0
-    local_details = []
-    readme = app_dir / "README.md"
-    if readme.exists() and any(w in readme.read_text().lower() for w in ["setup", "installation"]):
-        local_score += 1
-    if (app_dir / ".env.example").exists() or (app_dir / ".env.template").exists():
-        local_score += 1
-
-    # Check for package.json at root or in server/
-    pkg_file = app_dir / "package.json"
-    if not pkg_file.exists():
-        pkg_file = app_dir / "server" / "package.json"
-
-    if pkg_file.exists():
-        try:
-            import json as json_mod  # Ensure we have json
-            pkg_data = json_mod.loads(pkg_file.read_text())
-            local_score += 1
-            if "start" in pkg_data.get("scripts", {}):
-                local_score += 1
-        except Exception as e:
-            # Silently fail but at least we tried
-            pass
-    if (app_dir / "server" / "src" / "index.ts").exists():
-        local_score += 1
-    metrics.local_runability_score = local_score
-    if local_score < 3:
-        issues.append(f"Local runability concerns ({local_score}/5)")
-
-    # Metric 9: Deployability
-    deploy_score = 0
-    if dockerfile.exists():
-        deploy_score += 1
-        content = dockerfile.read_text()
-        if content.count("FROM") > 1:
-            deploy_score += 1
-        elif "alpine" in content.lower():
-            deploy_score += 1
-        if "HEALTHCHECK" in content:
-            deploy_score += 1
-        if "EXPOSE" in content:
-            deploy_score += 1
-        metrics.has_dockerfile = True
-    metrics.deployability_score = deploy_score
-    if deploy_score < 3:
-        issues.append(f"Deployability concerns ({deploy_score}/5)")
-
-    # Code metrics
-    metrics.total_loc = sum(
-        len(f.read_text().split("\n"))
-        for f in app_dir.rglob("*.ts")
-        if "node_modules" not in str(f) and f.is_file()
-    )
-
-    return EvalResult(
-        app_name=app_dir.name,
-        app_dir=str(app_dir),
-        timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        metrics=metrics,
-        issues=issues,
-        details=details_dict,
-    )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
 
 
 def load_prompts_and_metrics_from_bulk_run() -> tuple[dict[str, str], dict[str, dict]]:
@@ -746,6 +475,8 @@ def generate_csv_report(results: list[dict]) -> str:
         # Metric 8-9: DevX
         "local_runability_score",
         "deployability_score",
+        # Composite score
+        "appeval_100",
         # Metadata
         "build_time_sec",
         "startup_time_sec",
@@ -779,6 +510,8 @@ def generate_csv_report(results: list[dict]) -> str:
             # Metric 8-9
             metrics["local_runability_score"],
             metrics["deployability_score"],
+            # Composite score
+            f"{metrics['appeval_100']:.1f}",
             # Metadata
             f"{metrics['build_time_sec']:.1f}",
             f"{metrics['startup_time_sec']:.1f}",
@@ -937,6 +670,16 @@ def main():
             if app_dir.name in gen_metrics:
                 result_dict["generation_metrics"] = gen_metrics[app_dir.name]
 
+                # Calculate eff_units from generation_metrics if not already present
+                if result_dict["metrics"].get("eff_units") is None:
+                    gm = gen_metrics[app_dir.name]
+                    tokens = gm.get("input_tokens", 0) + gm.get("output_tokens", 0)
+                    result_dict["metrics"]["eff_units"] = eff_units(
+                        tokens_used=tokens if tokens > 0 else None,
+                        agent_turns=gm.get("turns"),
+                        validation_runs=gm.get("validation_runs", 0)
+                    )
+
             results.append(result_dict)
 
             # Quick status
@@ -1005,7 +748,14 @@ def main():
         if tracker.enabled:
             # Start MLflow run
             run_name = f"eval-{timestamp}"
-            run_id = tracker.start_run(run_name=run_name, tags={"mode": "evaluation"})
+            tags = {"mode": "evaluation"}
+
+            # Add git commit hash if available
+            git_hash = get_git_commit_hash()
+            if git_hash:
+                tags["git_commit"] = git_hash
+
+            run_id = tracker.start_run(run_name=run_name, tags=tags)
 
             # Log parameters
             tracker.log_evaluation_parameters(
