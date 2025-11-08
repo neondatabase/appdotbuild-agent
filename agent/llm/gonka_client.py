@@ -15,19 +15,21 @@ Inference Nodes: http://node2.gonka.ai:8000/v1/epochs/current/participants
 
 Environment Variables:
 - GONKA_PRIVATE_KEY: Private key for Gonka.ai (required)
-- GONKA_SOURCE_URL: Genesis/inference node URL (default: http://node2.gonka.ai:8000)
+- GONKA_SOURCE_URL: Genesis/inference node URL (default: http://gonka.spv.re:8000)
 """
 
 from __future__ import annotations
 
 import os
 import asyncio
+import time
 from typing import List, Dict, Any, Literal, cast
 try:
     from gonka_openai import GonkaOpenAI  # Official Gonka SDK (note: module uses underscore)
+    from openai import RateLimitError
     GONKA_SDK_AVAILABLE = True
 except ImportError:
-    from openai import AsyncOpenAI
+    from openai import AsyncOpenAI, RateLimitError
     GONKA_SDK_AVAILABLE = False
 from llm.openai_client import OpenAILLM
 from llm import common
@@ -46,7 +48,7 @@ class GonkaLLM(OpenAILLM):
     Usage:
         # Set environment variables
         export GONKA_PRIVATE_KEY="your-private-key"
-        export GONKA_SOURCE_URL="http://node2.gonka.ai:8000"  # optional
+        export GONKA_SOURCE_URL="http://gonka.spv.re:8000"  # optional
 
         # Via model category configuration
         LLM_BEST_CODING_MODEL=gonka:Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
@@ -67,14 +69,14 @@ class GonkaLLM(OpenAILLM):
 
         Args:
             model_name: Model to use (default: Qwen/Qwen3-235B-A22B-Instruct-2507-FP8)
-                       View nodes: http://node2.gonka.ai:8000/v1/epochs/current/participants
+                       View nodes: http://gonka.spv.re:8000/v1/epochs/current/participants
             api_key: Gonka private key (or set GONKA_PRIVATE_KEY env var)
-            base_url: Source URL - genesis/inference node (default: http://node2.gonka.ai:8000)
+            base_url: Source URL - genesis/inference node (default: http://gonka.spv.re:8000)
             provider_name: Override provider name for logging
         """
         # Get Gonka-specific config
         gonka_private_key = api_key or os.getenv("GONKA_PRIVATE_KEY") or os.getenv("GONKA_API_KEY")
-        gonka_source_url = base_url or os.getenv("GONKA_SOURCE_URL") or os.getenv("GONKA_BASE_URL") or "http://node2.gonka.ai:8000"
+        gonka_source_url = base_url or os.getenv("GONKA_SOURCE_URL") or os.getenv("GONKA_BASE_URL") or "http://gonka.spv.re:8000"
 
         if not gonka_private_key:
             raise ValueError(
@@ -177,14 +179,35 @@ class GonkaLLM(OpenAILLM):
                         "function": {"name": tool_choice},
                     }
 
-            # Call synchronous Gonka SDK in thread pool
+            # Call synchronous Gonka SDK in thread pool with retry logic
             def sync_create():
                 return self.client.chat.completions.create(**request)
 
-            response = await asyncio.to_thread(sync_create)
+            # Retry logic for handling node capacity issues
+            max_retries = 5
+            base_delay = 1.0  # Start with 1 second
 
-            # Convert response to our format
-            return self._completion_into(response)
+            for attempt in range(max_retries):
+                try:
+                    response = await asyncio.to_thread(sync_create)
+                    # Convert response to our format
+                    return self._completion_into(response)
+                except RateLimitError as e:
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+                        delay = base_delay * (2 ** attempt)
+                        logger.warning(
+                            f"Gonka node capacity reached (attempt {attempt + 1}/{max_retries}). "
+                            f"Retrying in {delay}s... Error: {str(e)}"
+                        )
+                        await asyncio.sleep(delay)
+                        # SDK will automatically try a different node on next attempt
+                    else:
+                        logger.error(
+                            f"All Gonka nodes at capacity after {max_retries} attempts. "
+                            "Please try again later or use a different LLM provider."
+                        )
+                        raise
 
 
 __all__ = ["GonkaLLM"]

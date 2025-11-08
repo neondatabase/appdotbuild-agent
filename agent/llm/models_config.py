@@ -21,15 +21,18 @@ LLM_VISION_MODEL=ollama:llama3.2-vision
 LLM_BEST_CODING_MODEL=anthropic:claude-sonnet-4-20250514
 LLM_UNIVERSAL_MODEL=gemini:gemini-2.5-flash-preview-05-20
 LLM_ULTRA_FAST_MODEL=gemini:gemini-2.5-flash-lite-preview-06-17
+LLM_VISION_MODEL=gemini:gemini-2.5-flash-lite-preview-06-17
 
 # OpenRouter (requires OPENROUTER_API_KEY)
 LLM_BEST_CODING_MODEL=openrouter:deepseek/deepseek-coder
 LLM_UNIVERSAL_MODEL=openrouter:openai/gpt-4o-mini
 
-# Gonka.ai - Decentralized AI network (requires GONKA_API_KEY)
+# Gonka.ai - Decentralized AI network (requires GONKA_PRIVATE_KEY)
 # Zero-cost inference during Grace Period
 LLM_BEST_CODING_MODEL=gonka:Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
-LLM_UNIVERSAL_MODEL=gonka:Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+LLM_UNIVERSAL_MODEL=gonka:Qwen/Qwen3-32B-FP8
+LLM_ULTRA_FAST_MODEL=gonka:Qwen/Qwen2.5-7B-Instruct
+LLM_VISION_MODEL=gonka:Gemma-3-27B-it
 
 # LMStudio with custom host
 LLM_BEST_CODING_MODEL=lmstudio:http://localhost:1234
