@@ -7,3 +7,4 @@ edition = "2024"
 rust-embed = { version = "8.8.0", features = ["include-exclude"] }
 eyre = "0.6"
 ignore = "0.4"
+imara-diff = { version = "0.2", features = ["unified_diff"] }

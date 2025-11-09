@@ -1,5 +1,7 @@
 use rust_embed::Embed;
+pub mod capabilities;
 pub mod local;
+pub mod merge;
 pub mod template;
 pub use local::LocalTemplate;
 pub use template::{Template, TemplateCore};
