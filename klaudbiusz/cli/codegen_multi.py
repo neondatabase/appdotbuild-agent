@@ -45,8 +45,8 @@ class MCPSession:
         }
 
         command, args = build_mcp_command(self.mcp_binary, self.mcp_manifest)
-        # override args for LiteLLM (different flags)
-        args = ["--with-workspace-tools=true", "--with-deployment=false"]
+        # add workspace tools flag for LiteLLM backend (works for both binary and cargo run)
+        args.append("--with-workspace-tools=true")
         server_params = StdioServerParameters(command=command, args=args, env=env)
 
         self._context = stdio_client(server_params)

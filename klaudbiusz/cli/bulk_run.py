@@ -89,15 +89,10 @@ def run_single_generation(
     def timeout_handler(signum, frame):
         raise TimeoutError("Generation timed out after 1200 seconds")
 
-    # signal-based timeout only works in main thread (multiprocessing)
-    # skip timeout for threading backend (litellm)
-    use_timeout = backend != "litellm"
-
     try:
-        if use_timeout:
-            # set 20 minute timeout for entire generation
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(1200)
+        # set 20 minute timeout for entire generation
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(1200)
 
         match backend:
             case "claude":
@@ -125,8 +120,7 @@ def run_single_generation(
             case _:
                 raise ValueError(f"Unknown backend: {backend}. Use 'claude' or 'litellm'")
 
-        if use_timeout:
-            signal.alarm(0)  # cancel timeout
+        signal.alarm(0)  # cancel timeout
 
         return {
             "prompt": prompt,
@@ -138,8 +132,7 @@ def run_single_generation(
             "browser_logs_path": None,  # filled in later by enrichment
         }
     except TimeoutError as e:
-        if use_timeout:
-            signal.alarm(0)  # cancel timeout
+        signal.alarm(0)  # cancel timeout
         print(f"[TIMEOUT] {prompt[:80]}...", file=sys.stderr, flush=True)
         return {
             "prompt": prompt,
@@ -151,8 +144,7 @@ def run_single_generation(
             "browser_logs_path": None,
         }
     except Exception as e:
-        if use_timeout:
-            signal.alarm(0)  # cancel timeout
+        signal.alarm(0)  # cancel timeout
         print(f"[ERROR] {prompt[:80]}... - {e}", file=sys.stderr, flush=True)
         return {
             "prompt": prompt,
@@ -233,9 +225,8 @@ def main(
     print(f"Screenshot concurrency: {screenshot_concurrency}\n")
 
     # generate all apps
-    # Use threading for LiteLLM (MCP sessions don't work with multiprocessing)
-    # Use multiprocessing for Claude (default, more isolation)
-    backend_type = "threading" if backend == "litellm" else "multiprocessing"
+    # Use multiprocessing for better isolation (MCP sessions are created in each worker process)
+    backend_type = "multiprocessing"
 
     results: list[RunResult] = Parallel(n_jobs=n_jobs, backend=backend_type, verbose=10)(  # type: ignore[assignment]
         delayed(run_single_generation)(app_name, prompt, backend, model, wipe_db, use_subagents, suppress_logs, mcp_binary)

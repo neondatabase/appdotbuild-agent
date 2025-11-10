@@ -232,16 +232,16 @@ class Tracker:
         )
 
         # save to JSONL file if app_dir exists
-        traj_dir = Path(app_dir) / "trajectory" if app_dir else None
+        traj_file = Path(app_dir) / "trajectory.jsonl" if app_dir else None
 
         await save_trajectory(
             trajectory,
-            output_dir=traj_dir,
+            output_file=traj_file,
             db_pool=self.db_pool,
         )
 
-        if not self.suppress_logs and traj_dir:
-            logger.info(f"💾 Trajectory saved to {traj_dir}")
+        if not self.suppress_logs and traj_file:
+            logger.info(f"💾 Trajectory saved to {traj_file}")
 
 
 class ScaffoldTracker:

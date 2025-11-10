@@ -4,7 +4,7 @@ Captures full conversation history (messages, tool calls, results) for analysis.
 Works with both Claude SDK and LiteLLM backends.
 
 Storage options:
-- JSON files per app (default): saves to app_dir/trajectory/
+- JSONL file per app (default): saves to app_dir/trajectory.jsonl
 - Neon DB: saves to PostgreSQL database (requires NEON_DATABASE_URL)
 - None: trajectory collection disabled
 """
@@ -63,21 +63,20 @@ class Trajectory:
 
 async def save_trajectory(
     trajectory: Trajectory,
-    output_dir: Path | None = None,
+    output_file: Path | None = None,
     db_pool: "Pool | None" = None,
 ) -> None:
     """Save trajectory to JSONL file and/or Neon DB.
 
     Args:
         trajectory: Trajectory to save
-        output_dir: Directory to save JSONL file (if None, skips file export)
+        output_file: Path to JSONL file (if None, skips file export)
         db_pool: asyncpg Pool for Neon DB (if None, skips DB export)
     """
     # save to JSONL file (one message per line for easy streaming analysis)
-    if output_dir:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        jsonl_path = output_dir / "trajectory.jsonl"
-        with jsonl_path.open("w") as f:
+    if output_file:
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        with output_file.open("w") as f:
             for msg in trajectory.messages:
                 f.write(json.dumps(_message_to_dict(msg)) + "\n")
 
