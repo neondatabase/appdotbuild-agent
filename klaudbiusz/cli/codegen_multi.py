@@ -298,10 +298,8 @@ Be concise and to the point."""
             )
             await agent.initialize()
 
-            # get current dir
-            local_dir = Path(__file__).parent.resolve()
-            full_app_dir = local_dir / "app" / self.app_name
-            user_prompt = f"App name: {self.app_name}\nApp directory: {full_app_dir}\n\nTask: {prompt}"
+            # use relative path (resolves from CWD where user runs the command)
+            user_prompt = f"App name: {self.app_name}\nApp directory: ./app/{self.app_name}\n\nTask: {prompt}"
             metrics = await agent.run(user_prompt)
 
             # save trajectory via tracker
