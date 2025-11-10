@@ -72,12 +72,37 @@ async function screenshotApp(
       timeout: timeout,
     });
 
-    // take screenshot
+    // take screenshot with height limit
     await mkdir(`/screenshots/app-${appIndex}`, { recursive: true });
-    await page.screenshot({
-      path: `/screenshots/app-${appIndex}/screenshot.png`,
+
+    const maxHeight = 10000;
+    const format = "png";
+
+    const screenshotOptions: any = {
+      path: `/screenshots/app-${appIndex}/screenshot.${format}`,
       fullPage: true,
-    });
+      type: format as 'png' | 'jpeg',
+    };
+
+    // clip to max height if needed
+    const bodyHandle = await page.$('body');
+    const boundingBox = await bodyHandle?.boundingBox();
+    if (boundingBox && boundingBox.height > maxHeight) {
+      screenshotOptions.clip = {
+        x: 0,
+        y: 0,
+        width: boundingBox.width,
+        height: maxHeight,
+      };
+      screenshotOptions.fullPage = false;
+      console.log(`[app-${appIndex}] Height limited: ${boundingBox.height}px → ${maxHeight}px`);
+    }
+
+    await page.screenshot(screenshotOptions);
+
+    // compress PNG with oxipng (lossless, ~20-40% reduction)
+    const screenshotPath = `/screenshots/app-${appIndex}/screenshot.${format}`;
+    await execAsync(`oxipng -o 2 --strip all ${screenshotPath}`);
 
     console.log(`[app-${appIndex}] Screenshot saved`);
 

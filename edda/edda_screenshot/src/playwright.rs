@@ -26,6 +26,16 @@ pub async fn build_playwright_base(client: &DaggerConn) -> Result<Container> {
         .container()
         .from(format!("mcr.microsoft.com/playwright:{}", PLAYWRIGHT_VERSION))
         .with_workdir("/tests")
+        // install oxipng from GitHub releases (no apt package available)
+        .with_exec(vec!["apt-get", "update"])
+        .with_exec(vec!["apt-get", "install", "-y", "wget"])
+        .with_exec(vec![
+            "sh", "-c",
+            "wget -q https://github.com/shssoichiro/oxipng/releases/download/v9.1.2/oxipng-9.1.2-x86_64-unknown-linux-musl.tar.gz && \
+             tar xzf oxipng-9.1.2-x86_64-unknown-linux-musl.tar.gz && \
+             mv oxipng-9.1.2-x86_64-unknown-linux-musl/oxipng /usr/local/bin/ && \
+             rm -rf oxipng-*"
+        ])
         .with_directory("/tests", playwright_source)
         .with_exec(vec!["npm", "install"])
         .with_mounted_cache("/ms-playwright", client.cache_volume("playwright-browsers"))

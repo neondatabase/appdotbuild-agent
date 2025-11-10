@@ -11,6 +11,16 @@ APP_NAME="edda_mcp"
 GITHUB_REPO="appdotbuild/agent"
 GITHUB_BASE_URL="https://github.com/${GITHUB_REPO}"
 
+# Version handling - support EDDA_VERSION env var
+VERSION="${EDDA_VERSION:-latest}"
+if [ "$VERSION" != "latest" ]; then
+    # Prepend 'v' if not present
+    case "$VERSION" in
+        v*) ;;
+        *) VERSION="v${VERSION}" ;;
+    esac
+fi
+
 # Determine HOME directory, handling edge cases
 get_home() {
     if [ -n "${HOME:-}" ]; then
@@ -40,6 +50,13 @@ USAGE:
 OPTIONS:
     -h, --help
             Print this help message
+
+ENVIRONMENT VARIABLES:
+    EDDA_VERSION
+            Specify version to install (default: latest)
+            Examples:
+                EDDA_VERSION="0.0.7" ./install.sh
+                EDDA_VERSION="v0.0.7" ./install.sh
 
 SUPPORTED PLATFORMS:
     - macOS (Apple Silicon / ARM64)
@@ -206,7 +223,12 @@ download_and_install() {
 
     # Construct download URL
     local _binary_name="${APP_NAME}-${_arch}"
-    local _download_url="${GITHUB_BASE_URL}/releases/latest/download/${_binary_name}"
+    local _download_url
+    if [ "$VERSION" = "latest" ]; then
+        _download_url="${GITHUB_BASE_URL}/releases/latest/download/${_binary_name}"
+    else
+        _download_url="${GITHUB_BASE_URL}/releases/download/${VERSION}/${_binary_name}"
+    fi
 
     # Create temporary directory
     local _tmpdir
@@ -214,6 +236,7 @@ download_and_install() {
     local _tmpfile="$_tmpdir/$APP_NAME"
 
     # Download
+    info "Version: ${BOLD}$VERSION${RESET}"
     info "Platform: ${BOLD}$_arch${RESET}"
     echo "  ${DIM}$_download_url${RESET}"
     echo ""
@@ -270,6 +293,8 @@ download_and_install() {
     echo "  2. Edit ${DIM}~/.edda/.env${RESET} and add your credentials"
     echo "  3. Run ${DIM}edda_mcp check${RESET} to validate"
     echo ""
+    echo "  Found a bug? Please report via: ${DIM}edda_mcp yell${RESET}"
+    echo ""
 
     print_claude_instructions "$_install_path"
 }
@@ -293,9 +318,6 @@ print_claude_instructions() {
             ;;
     esac
 
-    echo ""
-    echo "${BOLD}Setup Instructions${RESET}"
-    echo ""
     echo ""
     echo "${BOLD}Next steps:${RESET}"
     echo ""

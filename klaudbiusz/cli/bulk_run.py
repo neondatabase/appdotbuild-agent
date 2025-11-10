@@ -8,14 +8,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
 
+# Disable LiteLLM's async logging to avoid event loop issues with joblib
+import litellm
+from codegen import ClaudeAppBuilder
+from codegen import GenerationMetrics as ClaudeGenerationMetrics
+from codegen_multi import LiteLLMAppBuilder
 from dotenv import load_dotenv
 from joblib import Parallel, delayed
+from prompts_databricks import PROMPTS as DATABRICKS_PROMPTS
 
-from codegen import AppBuilder, GenerationMetrics
-from screenshot import screenshot_apps
+litellm.turn_off_message_logging = True
+litellm.drop_params = True  # silently drop unsupported params instead of warning
+
+# Unified type for metrics from both backends
+GenerationMetrics = ClaudeGenerationMetrics
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Re-export for eval compatibility
+PROMPTS = DATABRICKS_PROMPTS
 
 
 class RunResult(TypedDict):
@@ -24,73 +36,62 @@ class RunResult(TypedDict):
     metrics: GenerationMetrics | None
     error: str | None
     app_dir: str | None
-    screenshot_path: str | None
-    browser_logs_path: str | None
 
 
-PROMPTS = {
-    "churn-risk-dashboard": "Build a churn risk dashboard showing customers with less than 30 day login activity, declining usage trends, and support ticket volume. Calculate a risk score.",
-    "revenue-by-channel": "Show daily revenue by channel (store/web/catalog) for the last 90 days with week-over-week growth rates and contribution percentages.",
-    "customer-rfm-segments": "Create customer segments using RFM analysis (recency, frequency, monetary). Show 4-5 clusters with average spend, purchase frequency, and last order date.",
-    "taxi-trip-metrics": "Calculate taxi trip metrics: average fare by distance bracket and time of day. Show daily trip volume and revenue trends.",
-    "slow-moving-inventory": "Identify slow-moving inventory: products with more than 90 days in stock, low turnover ratio, and current warehouse capacity by location.",
-    "customer-360-view": "Create a 360-degree customer view: lifetime orders, total spent, average order value, preferred categories, and payment methods used.",
-    "product-pair-analysis": "Show top 10 product pairs frequently purchased together with co-occurrence rates. Calculate potential bundle revenue opportunity.",
-    "revenue-forecast-quarterly": "Show revenue trends for next quarter based on historical growth rates. Display monthly comparisons and seasonal patterns.",
-    "data-quality-metrics": "Monitor data quality metrics: track completeness, outliers, and value distribution changes for key fields over time.",
-    "channel-conversion-comparison": "Compare conversion rates and average order value across store/web/catalog channels. Break down by customer segment.",
-    "customer-churn-analysis": "Show customer churn analysis: identify customers who stopped purchasing in last 90 days, segment by last order value and ticket history.",
-    "pricing-impact-analysis": "Analyze pricing impact: compare revenue at different price points by category. Show price recommendations based on historical data.",
-    "supplier-scorecard": "Build supplier scorecard: on-time delivery percentage, defect rate, average lead time, and fill rate. Rank top 10 suppliers.",
-    "sales-density-heatmap": "Map sales density by zip code with heatmap visualization. Show top 20 zips by revenue and compare to population density.",
-    "cac-by-channel": "Calculate CAC by marketing channel (paid search, social, email, organic). Show CAC to LTV ratio and payback period in months.",
-    "subscription-tier-optimization": "Identify subscription tier optimization opportunities: show high-usage users near tier limits and low-usage users in premium tiers.",
-    "product-profitability": "Show product profitability: revenue minus returns percentage minus discount cost. Rank bottom 20 products by net margin.",
-    "warehouse-efficiency": "Build warehouse efficiency dashboard: orders per hour, fulfillment SLA (percentage shipped within 24 hours), and capacity utilization by facility.",
-    "customer-ltv-cohorts": "Calculate customer LTV by acquisition cohort: average revenue per customer at 12, 24, 36 months. Show retention curves.",
-    "promotion-roi-analysis": "Measure promotion ROI: incremental revenue during promo vs cost, with 7-day post-promotion lift. Flag underperforming promotions.",
-}
+def run_single_generation(
+    app_name: str,
+    prompt: str,
+    backend: str,
+    model: str | None,
+    wipe_db: bool = False,
+    use_subagents: bool = False,
+    suppress_logs: bool = True,
+    mcp_binary: str | None = None,
+) -> RunResult:
+    # Ensure LiteLLM is configured fresh in each worker process
+    if backend == "litellm":
+        import litellm
 
+        litellm.turn_off_message_logging = True
+        litellm.drop_params = True
 
-def enrich_results_with_screenshots(results: list[RunResult]) -> None:
-    """Enrich results by checking filesystem for screenshots and logs.
-
-    Modifies results in-place, adding screenshot_path and has_logs flags.
-    """
-    for result in results:
-        app_dir = result.get("app_dir")
-        if not app_dir:
-            continue
-
-        screenshot_path = Path(app_dir) / "screenshot_output" / "screenshot.png"
-        logs_path = Path(app_dir) / "screenshot_output" / "logs.txt"
-
-        result["screenshot_path"] = str(screenshot_path) if screenshot_path.exists() else None
-
-        # check if logs exist and are non-empty
-        has_logs = False
-        if logs_path.exists():
-            try:
-                has_logs = logs_path.stat().st_size > 0
-                result["browser_logs_path"] = str(logs_path)
-            except Exception:
-                result["browser_logs_path"] = None
-        else:
-            result["browser_logs_path"] = None
-
-
-def run_single_generation(app_name: str, prompt: str, wipe_db: bool = False, use_subagents: bool = False, mcp_binary: str | None = None, mcp_extra_args: list[str] | None = None) -> RunResult:
     def timeout_handler(signum, frame):
-        raise TimeoutError(f"Generation timed out after 1200 seconds")
+        raise TimeoutError("Generation timed out after 1200 seconds")
 
     try:
-        # set 15 minute timeout for entire generation
+        # set 20 minute timeout for entire generation
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.alarm(1200)
 
-        codegen = AppBuilder(app_name=app_name, wipe_db=wipe_db, suppress_logs=True, use_subagents=use_subagents, mcp_binary=mcp_binary, mcp_extra_args=mcp_extra_args)
-        metrics = codegen.run(prompt, wipe_db=wipe_db)
-        app_dir = metrics.get("app_dir") if metrics else None
+        match backend:
+            case "claude":
+                codegen = ClaudeAppBuilder(
+                    app_name=app_name,
+                    wipe_db=wipe_db,
+                    suppress_logs=suppress_logs,
+                    use_subagents=use_subagents,
+                    mcp_binary=mcp_binary,
+                )
+                metrics = codegen.run(prompt, wipe_db=wipe_db)
+                app_dir = metrics.get("app_dir") if metrics else None
+            case "litellm":
+                if not model:
+                    raise ValueError("--model is required when using --backend=litellm")
+                builder = LiteLLMAppBuilder(
+                    app_name=app_name, model=model, mcp_binary=mcp_binary, suppress_logs=suppress_logs
+                )
+                litellm_metrics = builder.run(prompt)
+                # convert LiteLLM metrics to dict format matching Claude SDK
+                metrics: GenerationMetrics = {
+                    "cost_usd": litellm_metrics.cost_usd,
+                    "input_tokens": litellm_metrics.input_tokens,
+                    "output_tokens": litellm_metrics.output_tokens,
+                    "turns": litellm_metrics.turns,
+                    "app_dir": litellm_metrics.app_dir,
+                }
+                app_dir = litellm_metrics.app_dir
+            case _:
+                raise ValueError(f"Unknown backend: {backend}. Use 'claude' or 'litellm'")
 
         signal.alarm(0)  # cancel timeout
 
@@ -100,8 +101,6 @@ def run_single_generation(app_name: str, prompt: str, wipe_db: bool = False, use
             "metrics": metrics,
             "error": None,
             "app_dir": app_dir,
-            "screenshot_path": None,  # filled in later by enrichment
-            "browser_logs_path": None,  # filled in later by enrichment
         }
     except TimeoutError as e:
         signal.alarm(0)  # cancel timeout
@@ -112,42 +111,90 @@ def run_single_generation(app_name: str, prompt: str, wipe_db: bool = False, use
             "metrics": None,
             "error": str(e),
             "app_dir": None,
-            "screenshot_path": None,
-            "browser_logs_path": None,
+        }
+    except Exception as e:
+        signal.alarm(0)  # cancel timeout
+        print(f"[ERROR] {prompt[:80]}... - {e}", file=sys.stderr, flush=True)
+        return {
+            "prompt": prompt,
+            "success": False,
+            "metrics": None,
+            "error": str(e),
+            "app_dir": None,
         }
 
 
 def main(
+    prompts: str = "databricks",
+    backend: str = "claude",
+    model: str | None = None,
     wipe_db: bool = False,
     n_jobs: int = -1,
     use_subagents: bool = False,
-    screenshot_concurrency: int = 5,
-    screenshot_wait_time: int = 120000,
     mcp_binary: str | None = None,
-    io_config: str | None = None,
 ) -> None:
+    """Bulk app generation from predefined prompt sets.
+
+    Args:
+        prompts: Prompt set to use ("databricks" or "test", default: "databricks")
+        backend: Backend to use ("claude" or "litellm", default: "claude")
+        model: LLM model (required if backend=litellm, e.g., "openrouter/minimax/minimax-m2")
+        wipe_db: Whether to wipe database on start
+        n_jobs: Number of parallel jobs (-1 for all cores)
+        use_subagents: Whether to enable subagent delegation (claude backend only)
+        mcp_binary: Optional path to pre-built edda-mcp binary (default: use cargo run)
+
+    Usage:
+        # Claude backend (default) with databricks prompts (default)
+        python bulk_run.py
+
+        # Claude backend with test prompts
+        python bulk_run.py --prompts=test
+
+        # LiteLLM backend
+        python bulk_run.py --backend=litellm --model=openrouter/minimax/minimax-m2
+        python bulk_run.py --prompts=test --backend=litellm --model=gemini/gemini-2.5-pro
+
+        # Optional: Run screenshots after generation
+        python screenshot.py ./app --concurrency=5 --wait-time=120000
+    """
+    # bulk run always suppresses logs
+    suppress_logs = True
+
+    # load prompt set
+    match prompts:
+        case "databricks":
+            from prompts_databricks import PROMPTS as selected_prompts
+        case "test":
+            from prompts_test import PROMPTS as selected_prompts
+        case _:
+            raise ValueError(f"Unknown prompt set: {prompts}. Use 'databricks' or 'test'")
+
+    # validate backend-specific requirements
+    if backend == "litellm" and not model:
+        raise ValueError("--model is required when using --backend=litellm")
+
     # validate required environment variables
     if not os.environ.get("DATABRICKS_HOST") or not os.environ.get("DATABRICKS_TOKEN"):
         raise ValueError("DATABRICKS_HOST and DATABRICKS_TOKEN environment variables must be set")
 
-    # build mcp_extra_args from io_config
-    # Fire might parse JSON strings as dicts, so ensure it's a string
-    mcp_extra_args = []
-    if io_config:
-        io_config_str = io_config if isinstance(io_config, str) else json.dumps(io_config)
-        mcp_extra_args.extend(["--io-config", io_config_str])
-
-    print(f"Starting bulk generation for {len(PROMPTS)} prompts...")
+    print(f"Starting bulk generation for {len(selected_prompts)} prompts...")
+    print(f"Backend: {backend}")
+    if backend == "litellm":
+        print(f"Model: {model}")
+    print(f"Prompt set: {prompts}")
     print(f"Parallel jobs: {n_jobs}")
-    print(f"Wipe DB: {wipe_db}")
-    print(f"Use subagents: {use_subagents}")
-    print(f"MCP binary: {mcp_binary if mcp_binary else 'cargo run (default)'}")
-    print(f"IO config: {io_config if io_config else 'default'}")
-    print(f"Screenshot concurrency: {screenshot_concurrency}\n")
+    if backend == "claude":
+        print(f"Wipe DB: {wipe_db}")
+        print(f"Use subagents: {use_subagents}")
+    print(f"MCP binary: {mcp_binary if mcp_binary else 'cargo run (default)'}\n")
 
     # generate all apps
-    results: list[RunResult] = Parallel(n_jobs=n_jobs, verbose=10)(  # type: ignore[assignment]
-        delayed(run_single_generation)(app_name, prompt, wipe_db, use_subagents, mcp_binary, mcp_extra_args) for app_name, prompt in PROMPTS.items()
+    results: list[RunResult] = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)(  # type: ignore[assignment]
+        delayed(run_single_generation)(
+            app_name, prompt, backend, model, wipe_db, use_subagents, suppress_logs, mcp_binary
+        )
+        for app_name, prompt in selected_prompts.items()
     )
 
     # separate successful and failed generations
@@ -161,25 +208,11 @@ def main(
             failed.append(r)
 
     apps_dir = "./app/"
-    # batch screenshot all successful apps
+    # get apps directory from first successful app (used for output file path)
     if successful:
-        # get apps directory from first successful app
         first_app_dir = next((r["app_dir"] for r in successful if r["app_dir"]), None)
         if first_app_dir:
             apps_dir = str(Path(first_app_dir).parent)
-            print(f"\n{'=' * 80}")
-            print(f"Batch screenshotting {len(successful)} apps...")
-            print(f"{'=' * 80}\n")
-
-            try:
-                screenshot_apps(
-                    apps_dir, concurrency=screenshot_concurrency, wait_time=screenshot_wait_time, capture_logs=True
-                )
-            except Exception as e:
-                print(f"Screenshot batch failed: {e}")
-
-            # enrich results with screenshot info from filesystem
-            enrich_results_with_screenshots(results)
 
     successful_with_metrics: list[RunResult] = []
     for r in successful:
@@ -198,26 +231,13 @@ def main(
         total_input_tokens += metrics["input_tokens"]
         total_output_tokens += metrics["output_tokens"]
         total_turns += metrics["turns"]
-    # calculate screenshot statistics
-    screenshot_successful = 0
-    screenshot_failed = 0
-    for r in successful:
-        if r["screenshot_path"] is not None:
-            screenshot_successful += 1
-        else:
-            # count as failed if app was generated (has app_dir) but screenshot missing
-            screenshot_failed += 1
 
     print(f"\n{'=' * 80}")
     print("Bulk Generation Summary")
     print(f"{'=' * 80}")
-    print(f"Total prompts: {len(PROMPTS)}")
+    print(f"Total prompts: {len(selected_prompts)}")
     print(f"Successful: {len(successful)}")
     print(f"Failed: {len(failed)}")
-    print(f"\nScreenshots captured: {screenshot_successful}")
-    print(f"Screenshot failures: {screenshot_failed}")
-    if screenshot_failed > 0:
-        print("  (Screenshot logs available in JSON output)")
     print(f"\nTotal cost: ${total_cost:.4f}")
     print(f"Total input tokens: {total_input_tokens}")
     print(f"Total output tokens: {total_output_tokens}")
@@ -264,29 +284,12 @@ def main(
     print(f"\n{'=' * 80}\n")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = Path(apps_dir) / Path(f"bulk_run_results_{timestamp}.json")
+    backend_suffix = f"_{backend}" if backend != "claude" else ""
+    output_file = Path(apps_dir) / Path(f"bulk_run_results{backend_suffix}_{timestamp}.json")
 
-    # Add run metadata for eval script and MLflow
-    run_metadata = {
-        "run_timestamp": timestamp,
-        "n_jobs": n_jobs,
-        "use_subagents": use_subagents,
-        "screenshot_concurrency": screenshot_concurrency,
-        "screenshot_wait_time": screenshot_wait_time,
-        "mcp_binary": mcp_binary if mcp_binary else "cargo run",
-        "io_config": io_config,
-        "wipe_db": wipe_db,
-        "total_prompts": len(PROMPTS),
-        "successful_apps": len(successful),
-        "failed_apps": len(failed),
-    }
-
-    output_data = {
-        "metadata": run_metadata,
-        "results": results,
-    }
-
-    output_file.write_text(json.dumps(output_data, indent=2))
+    # ensure directory exists
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(json.dumps(results, indent=2))
     print(f"Results saved to {output_file}")
 
 

@@ -32,11 +32,21 @@ ANTHROPIC_API_KEY=sk-ant-...
 ```bash
 cd klaudbiusz
 
-# Generate a single app
-uv run cli/main.py "Create a customer churn analysis dashboard"
+# Generate a single app (Claude backend, default)
+uv run cli/single_run.py "Create a customer churn analysis dashboard"
 
-# Batch generate from prompts
+# Use LiteLLM backend with specific model
+uv run cli/single_run.py "Create a customer churn analysis dashboard" \
+  --backend=litellm --model=openrouter/minimax/minimax-m2
+
+# Batch generate from prompts (databricks set by default)
 uv run cli/bulk_run.py
+
+# Batch generate with test prompts
+uv run cli/bulk_run.py --prompts=test
+
+# Batch generate with LiteLLM backend
+uv run cli/bulk_run.py --backend=litellm --model=gemini/gemini-2.5-pro
 ```
 
 ### Evaluate Generated Apps
@@ -45,13 +55,13 @@ uv run cli/bulk_run.py
 cd klaudbiusz
 
 # Evaluate all apps
-uv run python cli/evaluate_all.py
+uv run cli/evaluate_all.py
 
 # Partial evaluation (filter apps)
-uv run python cli/evaluate_all.py --limit 5                    # First 5 apps
-uv run python cli/evaluate_all.py --apps app1 app2             # Specific apps
-uv run python cli/evaluate_all.py --pattern "customer*"        # Pattern matching
-uv run python cli/evaluate_all.py --skip 10 --limit 5          # Skip first 10, evaluate next 5
+uv run cli/evaluate_all.py --limit 5                    # First 5 apps
+uv run cli/evaluate_all.py --apps app1 app2             # Specific apps
+uv run cli/evaluate_all.py --pattern "customer*"        # Pattern matching
+uv run cli/evaluate_all.py --skip 10 --limit 5          # Skip first 10, evaluate next 5
 
 # Evaluate single app
 uv run cli/evaluate_app.py ../app/customer-churn-analysis
@@ -133,8 +143,8 @@ klaudbiusz/
 ### Development Workflow
 
 1. Write natural language prompt
-2. Generate: `uv run cli/bulk_run.py`
-3. Evaluate: `python3 cli/evaluate_all.py`
+2. Generate: `uv run cli/single_run.py "your prompt"` or `uv run cli/bulk_run.py`
+3. Evaluate: `uv run cli/evaluate_all.py`
 4. Review: `cat EVALUATION_REPORT.md`
 5. Deploy apps that pass checks
 

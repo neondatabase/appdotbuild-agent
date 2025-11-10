@@ -19,6 +19,8 @@ test("capture app screenshot", async () => {
   const targetUrl = process.env.TARGET_URL || "/";
   const targetPort = process.env.TARGET_PORT || "8000";
   const timeout = parseInt(process.env.WAIT_TIME || "30000");
+  const maxHeight = 10000;
+  const format = "png";
 
   // resolve hostname to IP to avoid SSL protocol errors with service binding
   const { stdout } = await execAsync("getent hosts app | awk '{ print $1 }'");
@@ -67,15 +69,38 @@ test("capture app screenshot", async () => {
         timeout: timeout,
       });
 
-      // take full page screenshot
-      await page.screenshot({
-        path: "/screenshots/screenshot.png",
+      // take full page screenshot with height limit
+      const screenshotOptions: any = {
+        path: `/screenshots/screenshot.${format}`,
         fullPage: true,
-      });
+        type: format as "png" | "jpeg",
+      };
 
-      console.log("Screenshot saved to /screenshots/screenshot.png");
+      // clip to max height if needed
+      const bodyHandle = await page.$("body");
+      const boundingBox = await bodyHandle?.boundingBox();
+      if (boundingBox && boundingBox.height > maxHeight) {
+        screenshotOptions.clip = {
+          x: 0,
+          y: 0,
+          width: boundingBox.width,
+          height: maxHeight,
+        };
+        screenshotOptions.fullPage = false;
+        console.log(`Height limited: ${boundingBox.height}px → ${maxHeight}px`);
+      }
+
+      await page.screenshot(screenshotOptions);
+
+      // compress PNG with oxipng (lossless, ~20-40% reduction)
+      const screenshotPath = `/screenshots/screenshot.${format}`;
+      console.log(`Compressing ${screenshotPath} with oxipng...`);
+      await execAsync(`oxipng -o 2 --strip all ${screenshotPath}`);
+
+      console.log(`Screenshot saved to ${screenshotPath}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       console.error(`Failed to screenshot app: ${errorMessage}`);
       screenshotError = errorMessage;
 
@@ -85,10 +110,15 @@ test("capture app screenshot", async () => {
     }
 
     // save browser logs as text (always, regardless of screenshot success)
-    const logText = logs.map((log) => {
-      const prefix = log.type === "pageerror" ? "[ERROR]" : `[${log.level?.toUpperCase()}]`;
-      return `${log.timestamp} ${prefix} ${log.message}`;
-    }).join("\n");
+    const logText = logs
+      .map((log) => {
+        const prefix =
+          log.type === "pageerror"
+            ? "[ERROR]"
+            : `[${log.level?.toUpperCase()}]`;
+        return `${log.timestamp} ${prefix} ${log.message}`;
+      })
+      .join("\n");
 
     await writeFile("/screenshots/logs.txt", logText, "utf-8");
 

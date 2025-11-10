@@ -5,13 +5,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
-import coloredlogs
 import fire
 import litellm
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+from shared import ScaffoldTracker, Tracker, build_mcp_command, setup_logging, validate_mcp_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +31,7 @@ class MCPSession:
     def __init__(self, mcp_binary: str | None = None):
         self.mcp_binary = mcp_binary
         self.project_root = Path(__file__).parent.parent.parent
-        self.mcp_manifest = self.project_root / "edda" / "edda_mcp" / "Cargo.toml"
-
-        if mcp_binary is None and not self.mcp_manifest.exists():
-            raise RuntimeError(f"edda-mcp Cargo.toml not found at {self.mcp_manifest}")
+        self.mcp_manifest = validate_mcp_manifest(mcp_binary, self.project_root)
 
         self._context = None
         self._session_context = None
@@ -45,23 +44,10 @@ class MCPSession:
             "DATABRICKS_WAREHOUSE_ID": os.getenv("DATABRICKS_WAREHOUSE_ID", ""),
         }
 
-        if self.mcp_binary:
-            server_params = StdioServerParameters(
-                command=self.mcp_binary, args=["--with-workspace-tools=true", "--with-deployment=false"], env=env
-            )
-        else:
-            server_params = StdioServerParameters(
-                command="cargo",
-                args=[
-                    "run",
-                    "--manifest-path",
-                    str(self.mcp_manifest),
-                    "--",
-                    "--with-workspace-tools=true",
-                    "--with-deployment=false",
-                ],
-                env=env,
-            )
+        command, args = build_mcp_command(self.mcp_binary, self.mcp_manifest)
+        # add workspace tools flag for LiteLLM backend (works for both binary and cargo run)
+        args.append("--with-workspace-tools=true")
+        server_params = StdioServerParameters(command=command, args=args, env=env)
 
         self._context = stdio_client(server_params)
         read, write = await self._context.__aenter__()
@@ -85,6 +71,7 @@ class LiteLLMAgent:
         model: str,
         mcp_session: ClientSession,
         system_prompt: str,
+        app_name: str,
         max_turns: int = 75,
         temperature: float = 0.7,
         suppress_logs: bool = False,
@@ -97,8 +84,8 @@ class LiteLLMAgent:
         self.suppress_logs = suppress_logs
         self.messages: list[dict[str, Any]] = []
         self.tools: list[dict[str, Any]] = []
-        self.app_dir: str | None = None
-        self._pending_scaffold_calls: dict[str, str] = {}
+        self.tracker = Tracker(uuid4(), app_name, suppress_logs)
+        self.scaffold_tracker = ScaffoldTracker()
 
     async def initialize(self):
         tools_list = await self.mcp_session.list_tools()
@@ -140,7 +127,7 @@ class LiteLLMAgent:
                     messages=self.messages,
                     tools=self.tools if self.tools else None,
                     temperature=self.temperature,
-                    max_tokens=4096,
+                    max_tokens=8192,  # increased to handle longer tool arguments
                 )
 
                 if hasattr(response, "usage") and response.usage:  # type: ignore[attr-defined]
@@ -154,13 +141,17 @@ class LiteLLMAgent:
                 message = choice.message  # type: ignore[attr-defined]
 
                 if message.content:
-                    if not self.suppress_logs:
-                        logger.info(f"💬 {message.content}")
+                    self.tracker.log_text("assistant", message.content)
                     self.messages.append({"role": "assistant", "content": message.content})
 
                 if message.tool_calls:
                     if not self.suppress_logs:
                         logger.info(f"🔧 Executing {len(message.tool_calls)} tool(s)")
+
+                    # log each tool call via tracker
+                    for tc in message.tool_calls:
+                        args = tc.function.arguments if isinstance(tc.function.arguments, dict) else {}
+                        self.tracker.log_tool_call(tc.function.name or "unknown", args, tc.id)
 
                     self.messages.append(
                         {
@@ -185,8 +176,12 @@ class LiteLLMAgent:
                     continue
 
                 if choice.finish_reason == "stop":
-                    if not self.suppress_logs:
-                        logger.info(f"🏁 Generation complete after {turn} turns")
+                    self.tracker.log_session_complete(
+                        turns=turn,
+                        cost_usd=total_cost,
+                        input_tokens=total_input_tokens,
+                        output_tokens=total_output_tokens,
+                    )
                     break
 
                 turn += 1
@@ -200,7 +195,7 @@ class LiteLLMAgent:
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
             turns=turn,
-            app_dir=self.app_dir,
+            app_dir=self.scaffold_tracker.app_dir,
         )
 
     async def _execute_tools(self, tool_calls) -> list[dict[str, Any]]:
@@ -219,33 +214,25 @@ class LiteLLMAgent:
                 logger.info(f"   → {tool_name}({', '.join(f'{k}={v}' for k, v in arguments.items())})")
 
             if tool_name == "scaffold_data_app" and "work_dir" in arguments:
-                self._pending_scaffold_calls[tc.id] = arguments["work_dir"]
+                self.scaffold_tracker.track(tc.id, arguments["work_dir"])
 
             try:
                 result = await self.mcp_session.call_tool(tool_name, arguments)
-
-                if tc.id in self._pending_scaffold_calls:
-                    self.app_dir = self._pending_scaffold_calls.pop(tc.id)
+                self.scaffold_tracker.resolve(tc.id)
 
                 content = str(result.content[0].text if result.content else "")  # type: ignore[attr-defined]
-
-                if not self.suppress_logs:
-                    truncated = content[:200] + "..." if len(content) > 200 else content
-                    logger.info(f"   ✅ {truncated}")
-
+                self.tracker.log_tool_result(tc.id, content, is_error=False)
                 results.append({"role": "tool", "tool_call_id": tc.id, "content": content})
 
             except Exception as e:
                 error_msg = f"Error: {e}"
-                if not self.suppress_logs:
-                    logger.warning(f"   ❌ {error_msg}")
-
+                self.tracker.log_tool_result(tc.id, error_msg, is_error=True)
                 results.append({"role": "tool", "tool_call_id": tc.id, "content": error_msg})
 
         return results
 
 
-class MultiProviderAppBuilder:
+class LiteLLMAppBuilder:
     def __init__(
         self,
         app_name: str,
@@ -258,12 +245,6 @@ class MultiProviderAppBuilder:
         self.mcp_binary = mcp_binary
         self.suppress_logs = suppress_logs
         litellm.drop_params = True
-
-    def _setup_logging(self) -> None:
-        if self.suppress_logs:
-            logging.getLogger().setLevel(logging.ERROR)
-        else:
-            coloredlogs.install(level="INFO")
 
     def _build_system_prompt(self) -> str:
         return """You are an AI assistant that builds Databricks data applications.
@@ -303,24 +284,38 @@ All file operations are restricted to the app directory for security.
 Be concise and to the point."""
 
     async def run_async(self, prompt: str) -> GenerationMetrics:
-        self._setup_logging()
+        setup_logging(self.suppress_logs, self.mcp_binary)
 
-        async with MCPSession(self.mcp_binary) as session:
+        mcp_session = MCPSession(self.mcp_binary)
+        try:
+            session = await mcp_session.__aenter__()
+
             system_prompt = self._build_system_prompt()
 
             agent = LiteLLMAgent(
                 model=self.model,
                 mcp_session=session,
                 system_prompt=system_prompt,
+                app_name=self.app_name,
                 suppress_logs=self.suppress_logs,
             )
             await agent.initialize()
 
-            # get current dir
-            local_dir = Path(__file__).parent.resolve()
-            full_app_dir = local_dir / "app" / self.app_name
-            user_prompt = f"App name: {self.app_name}\nApp directory: {full_app_dir}\n\nTask: {prompt}"
+            # compute absolute path for MCP tool (scaffold_data_app requires absolute path)
+            app_dir = Path.cwd() / "app" / self.app_name
+            user_prompt = f"App name: {self.app_name}\nApp directory: {app_dir}\n\nTask: {prompt}"
             metrics = await agent.run(user_prompt)
+
+            # save trajectory via tracker
+            await agent.tracker.save(
+                prompt=prompt,
+                cost_usd=metrics.cost_usd,
+                total_tokens=metrics.input_tokens + metrics.output_tokens,
+                turns=metrics.turns,
+                backend="litellm",
+                model=self.model,
+                app_dir=metrics.app_dir,
+            )
 
             if not self.suppress_logs:
                 logger.info(f"\n{'=' * 80}")
@@ -332,6 +327,12 @@ Be concise and to the point."""
                 logger.info(f"{'=' * 80}\n")
 
             return metrics
+        finally:
+            # explicitly cleanup to avoid asyncio context issues with multiprocessing
+            try:
+                await mcp_session.__aexit__(None, None, None)
+            except Exception:
+                pass  # suppress cleanup errors in multiprocessing
 
     def run(self, prompt: str) -> GenerationMetrics:
         return asyncio.run(self.run_async(prompt))
@@ -347,7 +348,7 @@ def cli(
     if app_name is None:
         app_name = f"app-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
-    builder = MultiProviderAppBuilder(
+    builder = LiteLLMAppBuilder(
         app_name=app_name,
         model=model,
         mcp_binary=mcp_binary,

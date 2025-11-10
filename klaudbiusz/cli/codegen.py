@@ -1,15 +1,12 @@
 import asyncio
 import logging
-import os
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 from uuid import UUID, uuid4
 
-import coloredlogs
 from claude_agent_sdk import (
     AgentDefinition,
     AssistantMessage,
@@ -22,9 +19,7 @@ from claude_agent_sdk import (
     query,
 )
 from dotenv import load_dotenv
-
-if TYPE_CHECKING:
-    from asyncpg import Pool
+from shared import ScaffoldTracker, Tracker, build_mcp_command, setup_logging, validate_mcp_manifest
 
 try:
     import asyncpg  # type: ignore[import-untyped]
@@ -87,80 +82,7 @@ class GenerationMetrics(TypedDict):
     app_dir: NotRequired[str | None]
 
 
-class TrackerDB:
-    """Simple Neon/Postgres tracker for message logging."""
-
-    def __init__(self, wipe_on_start: bool = True):
-        load_dotenv()
-        self.database_url = os.getenv("DATABASE_URL")
-        self.wipe_on_start = wipe_on_start
-        self.pool: Pool | None = None
-
-    @property
-    def is_connected(self) -> bool:
-        return self.pool is not None
-
-    async def init(self) -> None:
-        """Initialize DB connection and schema."""
-        if not self.database_url or not asyncpg:
-            return
-
-        try:
-            self.pool = await asyncpg.create_pool(self.database_url, min_size=1, max_size=5)
-            assert self.pool is not None
-
-            async with self.pool.acquire() as conn:
-                # use advisory lock to prevent concurrent schema modifications
-                # lock id: 123456789 (arbitrary unique identifier for this table)
-                await conn.execute("SELECT pg_advisory_lock(123456789)")
-                try:
-                    # use transaction to make drop+create atomic
-                    async with conn.transaction():
-                        if self.wipe_on_start:
-                            await conn.execute("DROP TABLE IF EXISTS messages")
-
-                        await conn.execute("""
-                            CREATE TABLE IF NOT EXISTS messages (
-                                id UUID PRIMARY KEY,
-                                role TEXT NOT NULL,
-                                message_type TEXT NOT NULL,
-                                message TEXT NOT NULL,
-                                datetime TIMESTAMP NOT NULL,
-                                run_id UUID NOT NULL
-                            )
-                        """)
-                finally:
-                    # release advisory lock
-                    await conn.execute("SELECT pg_advisory_unlock(123456789)")
-        except Exception as e:
-            print(f"⚠️  DB init failed: {e}", file=sys.stderr)
-            self.pool = None
-
-    async def log(self, run_id: UUID, role: str, message_type: str, message: str) -> None:
-        if not self.is_connected or self.pool is None:
-            return
-
-        try:
-            async with self.pool.acquire() as conn:
-                await conn.execute(
-                    "INSERT INTO messages (id, role, message_type, message, datetime, run_id) VALUES ($1, $2, $3, $4, $5, $6)",
-                    uuid4(),
-                    role,
-                    message_type,
-                    message,
-                    datetime.now(timezone.utc).replace(tzinfo=None),
-                    run_id,
-                )
-        except Exception as e:
-            print(f"⚠️  DB log failed: {e}", file=sys.stderr)
-
-    async def close(self) -> None:
-        """Close DB connection pool."""
-        if self.is_connected and self.pool is not None:
-            await self.pool.close()
-
-
-class AppBuilder:
+class ClaudeAppBuilder:
     def __init__(
         self,
         app_name: str,
@@ -168,40 +90,25 @@ class AppBuilder:
         suppress_logs: bool = False,
         use_subagents: bool = False,
         mcp_binary: str | None = None,
-        mcp_extra_args: list[str] | None = None,
     ):
+        load_dotenv()
         self.project_root = Path(__file__).parent.parent.parent
-        self.mcp_manifest = self.project_root / "edda" / "edda_mcp" / "Cargo.toml"
+        self.mcp_manifest = validate_mcp_manifest(mcp_binary, self.project_root)
 
-        if mcp_binary is None and not self.mcp_manifest.exists():
-            raise RuntimeError(f"edda-mcp Cargo.toml not found at {self.mcp_manifest}")
-
-        self.tracker = TrackerDB(wipe_on_start=wipe_db)
+        self.wipe_db = wipe_db
         self.run_id: UUID = uuid4()
         self.app_name = app_name
         self.use_subagents = use_subagents
         self.suppress_logs = suppress_logs
         self.mcp_binary = mcp_binary
-        self.mcp_extra_args = mcp_extra_args or []
-        self.app_dir: str | None = None
-        # track tool_use_id -> (tool_name, work_dir) to capture app_dir from results
-        self._pending_scaffold_calls: dict[str, str] = {}
-
-    def _setup_logging(self) -> None:
-        if self.suppress_logs:
-            logging.getLogger().setLevel(logging.ERROR)
-        else:
-            coloredlogs.install(level="INFO")
-            mcp_msg = f"Using MCP binary: {self.mcp_binary}" if self.mcp_binary else "Using cargo run for MCP server"
-            logger.info(mcp_msg)
+        self.tracker = Tracker(self.run_id, app_name, suppress_logs)
+        self.scaffold_tracker = ScaffoldTracker()
 
     async def run_async(self, prompt: str) -> GenerationMetrics:
         start_time = time.time()
 
-        self._setup_logging()
-        await self.tracker.init()
-        self.run_id = uuid4()
-        await self.tracker.log(self.run_id, "user", "prompt", f"run_id: {self.run_id}, prompt: {prompt}")
+        setup_logging(self.suppress_logs, self.mcp_binary)
+        await self.tracker.init(wipe_db=self.wipe_db)
 
         agents = {}
         if self.use_subagents:
@@ -240,30 +147,13 @@ Use up to 10 tools per call to speed up the process.\n"""
         # The CLI doesn't support per-agent tool permissions yet.
         # Instead, we rely on system prompt instructions to enforce delegation.
 
-        if self.mcp_binary is not None:
-            mcp_config = {
-                "type": "stdio",
-                "command": self.mcp_binary,
-                "args": ["--disallow-deployment"] + self.mcp_extra_args,
-                "env": {},
-            }
-        else:
-            mcp_config = {
-                "type": "stdio",
-                "command": "cargo",
-                "args": [
-                    "run",
-                    "--manifest-path",
-                    str(self.mcp_manifest),
-                    "--",
-                    "--disallow-deployment",
-                ] + self.mcp_extra_args,
-                "env": {},
-            }
-
-        if not self.suppress_logs:
-            import json
-            logger.info(f"MCP config: {json.dumps(mcp_config, indent=2)}")
+        command, args = build_mcp_command(self.mcp_binary, self.mcp_manifest)
+        mcp_config = {
+            "type": "stdio",
+            "command": command,
+            "args": args,
+            "env": {},
+        }
 
         options = ClaudeAgentOptions(
             system_prompt={
@@ -275,7 +165,7 @@ Use up to 10 tools per call to speed up the process.\n"""
             disallowed_tools=disallowed_tools,
             agents=agents,
             max_turns=75,
-            mcp_servers={"edda": mcp_config},
+            mcp_servers={"edda": mcp_config},  # type: ignore[arg-type]
             max_buffer_size=3 * 1024 * 1024,
         )
 
@@ -292,7 +182,9 @@ Use up to 10 tools per call to speed up the process.\n"""
         }
 
         # inject app_name into user prompt to avoid caching issues with system prompt
-        user_prompt = f"App name: {self.app_name}\nApp directory: ./app/{self.app_name}\n\nTask: {prompt}"
+        # use absolute path for MCP tool (scaffold_data_app requires absolute path)
+        app_dir = Path.cwd() / "app" / self.app_name
+        user_prompt = f"App name: {self.app_name}\nApp directory: {app_dir}\n\nTask: {prompt}"
 
         try:
             async for message in query(prompt=user_prompt, options=options):
@@ -313,23 +205,8 @@ Use up to 10 tools per call to speed up the process.\n"""
                             "output_tokens": msg.usage.get("output_tokens", 0),
                             "turns": msg.num_turns,
                             "generation_time_sec": generation_time_sec,
-                            "app_dir": self.app_dir,
+                            "app_dir": self.scaffold_tracker.app_dir,
                         }
-
-                        # Save generation metrics to app directory for eval script
-                        if self.app_dir:
-                            import json
-                            metrics_file = Path(self.app_dir) / "generation_metrics.json"
-                            try:
-                                metrics_file.write_text(json.dumps({
-                                    "input_tokens": metrics["input_tokens"],
-                                    "output_tokens": metrics["output_tokens"],
-                                    "turns": metrics["turns"],
-                                    "cost_usd": metrics["cost_usd"],
-                                    "generation_time_sec": metrics["generation_time_sec"],
-                                }, indent=2))
-                            except Exception as e:
-                                logger.warning(f"Failed to save generation metrics: {e}")
                     case _:
                         pass
         except Exception as e:
@@ -338,6 +215,17 @@ Use up to 10 tools per call to speed up the process.\n"""
             raise
         finally:
             await self.tracker.close()
+
+        # save trajectory via tracker
+        await self.tracker.save(
+            prompt=prompt,
+            cost_usd=metrics["cost_usd"],
+            total_tokens=metrics["input_tokens"] + metrics["output_tokens"],
+            turns=metrics["turns"],
+            backend="claude",
+            model="claude-sonnet-4-5-20250929",
+            app_dir=self.scaffold_tracker.app_dir,
+        )
 
         return metrics
 
@@ -348,41 +236,15 @@ Use up to 10 tools per call to speed up the process.\n"""
             description=input_dict.get("description", ""),
             prompt=input_dict.get("prompt", ""),
         )
-        if not self.suppress_logs:
-            logger.info(f"🚀 Delegating to subagent: {tool_input.subagent_type}")
-            logger.info(f"   Task: {tool_input.description}")
-            logger.info(f"   Instructions: {truncate(tool_input.prompt, 200)}")
-        await self.tracker.log(
-            self.run_id,
-            "assistant",
-            "subagent_invoke",
-            f"subagent={tool_input.subagent_type}, task={tool_input.description}, prompt={tool_input.prompt}",
-        )
+        self.tracker.log_subagent_invoke(tool_input.subagent_type, tool_input.description, tool_input.prompt)
 
     async def _log_todo_update(self, block: ToolUseBlock, truncate) -> None:
         input_dict = block.input or {}
         todos = input_dict.get("todos", [])
-
-        if not self.suppress_logs and todos:
-            completed = sum(1 for t in todos if t.get("status") == "completed")
-            in_progress = [t for t in todos if t.get("status") == "in_progress"]
-
-            logger.info(f"📋 Todo update: {completed}/{len(todos)} completed")
-            for todo in in_progress:
-                logger.info(f"   ▶ {todo.get('activeForm', todo.get('content', 'Unknown'))}")
-
-        await self.tracker.log(
-            self.run_id,
-            "assistant",
-            "todo_update",
-            f"todos={len(todos)}, completed={sum(1 for t in todos if t.get('status') == 'completed')}",
-        )
+        self.tracker.log_todo_update(todos)
 
     async def _log_generic_tool(self, block: ToolUseBlock, truncate) -> None:
-        params = ", ".join(f"{k}={v}" for k, v in (block.input or {}).items())
-        if not self.suppress_logs:
-            logger.info(f"🔧 Tool: {block.name}({truncate(params, 150)})")
-        await self.tracker.log(self.run_id, "assistant", "tool_call", f"{block.name}({params})")
+        self.tracker.log_tool_call(block.name, block.input or {}, block.id)
 
     async def _log_assistant_message(self, message: AssistantMessage) -> None:
         def truncate(text: str, max_len: int = 300) -> str:
@@ -391,16 +253,14 @@ Use up to 10 tools per call to speed up the process.\n"""
         for block in message.content:
             match block:
                 case TextBlock():
-                    if not self.suppress_logs:
-                        logger.info(f"💬 {block.text}")
-                    await self.tracker.log(self.run_id, "assistant", "text", block.text)
+                    self.tracker.log_text("assistant", block.text)
                 case ToolUseBlock(name="TodoWrite"):
                     await self._log_todo_update(block, truncate)
                 case ToolUseBlock(name="Task"):
                     await self._log_tool_use(block, truncate)
                 case ToolUseBlock(name="mcp__edda__scaffold_data_app"):
                     if block.input is not None and "work_dir" in block.input:
-                        self._pending_scaffold_calls[block.id] = block.input["work_dir"]
+                        self.scaffold_tracker.track(block.id, block.input["work_dir"])
                     await self._log_generic_tool(block, truncate)
                 case ToolUseBlock():
                     await self._log_generic_tool(block, truncate)
@@ -412,22 +272,13 @@ Use up to 10 tools per call to speed up the process.\n"""
         for block in message.content:
             match block:
                 case ToolResultBlock(tool_use_id=tool_id):
-                    if tool_id in self._pending_scaffold_calls and not block.is_error:
-                        self.app_dir = self._pending_scaffold_calls.pop(tool_id)
+                    if not block.is_error:
+                        self.scaffold_tracker.resolve(tool_id)
                     result_text = str(block.content)
                     if result_text:
-                        if not self.suppress_logs:
-                            logger.info(f"✅ Tool result: {truncate(result_text)}")
-                        await self.tracker.log(self.run_id, "user", "tool_result", result_text)
-                case ToolResultBlock(is_error=True):
-                    if not self.suppress_logs:
-                        logger.warning(f"❌ Tool error: {truncate(str(block.content))}")
-                    await self.tracker.log(self.run_id, "user", "tool_error", str(block.content))
+                        self.tracker.log_tool_result(tool_id, result_text, block.is_error or False)
 
     async def _log_result_message(self, message: ResultMessage) -> None:
-        def truncate(text: str, max_len: int = 300) -> str:
-            return text if len(text) <= max_len else text[:max_len] + "..."
-
         usage_dict = message.usage or {}
         usage = UsageMetrics(
             input_tokens=usage_dict.get("input_tokens", 0),
@@ -436,22 +287,18 @@ Use up to 10 tools per call to speed up the process.\n"""
             cache_read_input_tokens=usage_dict.get("cache_read_input_tokens", 0),
         )
 
-        if not self.suppress_logs:
-            logger.info(f"🏁 Session complete: {message.num_turns} turns, ${message.total_cost_usd:.4f}")
-            logger.info(
-                f"   Tokens - in: {usage.input_tokens}, out: {usage.output_tokens}, cache_create: {usage.cache_creation_input_tokens}, cache_read: {usage.cache_read_input_tokens}"
-            )
-            if message.result:
-                logger.info(f"Final result: {truncate(message.result)}")
-
-        await self.tracker.log(
-            self.run_id,
-            "result",
-            "complete",
-            f"turns={message.num_turns}, cost=${message.total_cost_usd:.4f}, tokens_in={usage.input_tokens}, tokens_out={usage.output_tokens}, cache_create={usage.cache_creation_input_tokens}, cache_read={usage.cache_read_input_tokens}, result={message.result or 'N/A'}",
+        self.tracker.log_session_complete(
+            turns=message.num_turns,
+            cost_usd=message.total_cost_usd or 0.0,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_create=usage.cache_creation_input_tokens,
+            cache_read=usage.cache_read_input_tokens,
+            result=message.result,
         )
 
     async def _log_message(self, message) -> None:
+        """Route message to appropriate logging handler."""
         match message:
             case AssistantMessage():
                 await self._log_assistant_message(message)
@@ -461,5 +308,5 @@ Use up to 10 tools per call to speed up the process.\n"""
                 await self._log_result_message(message)
 
     def run(self, prompt: str, wipe_db: bool = True) -> GenerationMetrics:
-        self.tracker.wipe_on_start = wipe_db
+        self.wipe_db = wipe_db
         return asyncio.run(self.run_async(prompt))
