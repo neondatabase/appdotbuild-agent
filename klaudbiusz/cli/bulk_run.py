@@ -8,17 +8,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
 
-from dotenv import load_dotenv
-from joblib import Parallel, delayed
-
+# Disable LiteLLM's async logging to avoid event loop issues with joblib
+import litellm
 from codegen import ClaudeAppBuilder
 from codegen import GenerationMetrics as ClaudeGenerationMetrics
 from codegen_multi import LiteLLMAppBuilder
+from dotenv import load_dotenv
+from joblib import Parallel, delayed
 from prompts_databricks import PROMPTS as DATABRICKS_PROMPTS
-from screenshot import screenshot_apps
 
-# Disable LiteLLM's async logging to avoid event loop issues with joblib
-import litellm
 litellm.turn_off_message_logging = True
 litellm.drop_params = True  # silently drop unsupported params instead of warning
 
@@ -38,36 +36,6 @@ class RunResult(TypedDict):
     metrics: GenerationMetrics | None
     error: str | None
     app_dir: str | None
-    screenshot_path: str | None
-    browser_logs_path: str | None
-
-
-def enrich_results_with_screenshots(results: list[RunResult]) -> None:
-    """Enrich results by checking filesystem for screenshots and logs.
-
-    Modifies results in-place, adding screenshot_path and has_logs flags.
-    """
-    for result in results:
-        app_dir = result.get("app_dir")
-        if not app_dir:
-            continue
-
-        screenshot_path = Path(app_dir) / "screenshot_output" / "screenshot.png"
-        logs_path = Path(app_dir) / "screenshot_output" / "logs.txt"
-
-        result["screenshot_path"] = str(screenshot_path) if screenshot_path.exists() else None
-
-        # check if logs exist and are non-empty
-        if logs_path.exists():
-            try:
-                if logs_path.stat().st_size > 0:
-                    result["browser_logs_path"] = str(logs_path)
-                else:
-                    result["browser_logs_path"] = None
-            except Exception:
-                result["browser_logs_path"] = None
-        else:
-            result["browser_logs_path"] = None
 
 
 def run_single_generation(
@@ -83,6 +51,7 @@ def run_single_generation(
     # Ensure LiteLLM is configured fresh in each worker process
     if backend == "litellm":
         import litellm
+
         litellm.turn_off_message_logging = True
         litellm.drop_params = True
 
@@ -97,7 +66,11 @@ def run_single_generation(
         match backend:
             case "claude":
                 codegen = ClaudeAppBuilder(
-                    app_name=app_name, wipe_db=wipe_db, suppress_logs=suppress_logs, use_subagents=use_subagents, mcp_binary=mcp_binary
+                    app_name=app_name,
+                    wipe_db=wipe_db,
+                    suppress_logs=suppress_logs,
+                    use_subagents=use_subagents,
+                    mcp_binary=mcp_binary,
                 )
                 metrics = codegen.run(prompt, wipe_db=wipe_db)
                 app_dir = metrics.get("app_dir") if metrics else None
@@ -128,8 +101,6 @@ def run_single_generation(
             "metrics": metrics,
             "error": None,
             "app_dir": app_dir,
-            "screenshot_path": None,  # filled in later by enrichment
-            "browser_logs_path": None,  # filled in later by enrichment
         }
     except TimeoutError as e:
         signal.alarm(0)  # cancel timeout
@@ -140,8 +111,6 @@ def run_single_generation(
             "metrics": None,
             "error": str(e),
             "app_dir": None,
-            "screenshot_path": None,
-            "browser_logs_path": None,
         }
     except Exception as e:
         signal.alarm(0)  # cancel timeout
@@ -152,8 +121,6 @@ def run_single_generation(
             "metrics": None,
             "error": str(e),
             "app_dir": None,
-            "screenshot_path": None,
-            "browser_logs_path": None,
         }
 
 
@@ -164,8 +131,6 @@ def main(
     wipe_db: bool = False,
     n_jobs: int = -1,
     use_subagents: bool = False,
-    screenshot_concurrency: int = 5,
-    screenshot_wait_time: int = 120000,
     mcp_binary: str | None = None,
 ) -> None:
     """Bulk app generation from predefined prompt sets.
@@ -177,8 +142,6 @@ def main(
         wipe_db: Whether to wipe database on start
         n_jobs: Number of parallel jobs (-1 for all cores)
         use_subagents: Whether to enable subagent delegation (claude backend only)
-        screenshot_concurrency: Number of parallel screenshot captures
-        screenshot_wait_time: Wait time for screenshot capture (ms)
         mcp_binary: Optional path to pre-built edda-mcp binary (default: use cargo run)
 
     Usage:
@@ -191,6 +154,9 @@ def main(
         # LiteLLM backend
         python bulk_run.py --backend=litellm --model=openrouter/minimax/minimax-m2
         python bulk_run.py --prompts=test --backend=litellm --model=gemini/gemini-2.5-pro
+
+        # Optional: Run screenshots after generation
+        python screenshot.py ./app --concurrency=5 --wait-time=120000
     """
     # bulk run always suppresses logs
     suppress_logs = True
@@ -221,15 +187,13 @@ def main(
     if backend == "claude":
         print(f"Wipe DB: {wipe_db}")
         print(f"Use subagents: {use_subagents}")
-    print(f"MCP binary: {mcp_binary if mcp_binary else 'cargo run (default)'}")
-    print(f"Screenshot concurrency: {screenshot_concurrency}\n")
+    print(f"MCP binary: {mcp_binary if mcp_binary else 'cargo run (default)'}\n")
 
     # generate all apps
-    # Use multiprocessing for better isolation (MCP sessions are created in each worker process)
-    backend_type = "multiprocessing"
-
-    results: list[RunResult] = Parallel(n_jobs=n_jobs, backend=backend_type, verbose=10)(  # type: ignore[assignment]
-        delayed(run_single_generation)(app_name, prompt, backend, model, wipe_db, use_subagents, suppress_logs, mcp_binary)
+    results: list[RunResult] = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)(  # type: ignore[assignment]
+        delayed(run_single_generation)(
+            app_name, prompt, backend, model, wipe_db, use_subagents, suppress_logs, mcp_binary
+        )
         for app_name, prompt in selected_prompts.items()
     )
 
@@ -244,25 +208,11 @@ def main(
             failed.append(r)
 
     apps_dir = "./app/"
-    # batch screenshot all successful apps
+    # get apps directory from first successful app (used for output file path)
     if successful:
-        # get apps directory from first successful app
         first_app_dir = next((r["app_dir"] for r in successful if r["app_dir"]), None)
         if first_app_dir:
             apps_dir = str(Path(first_app_dir).parent)
-            print(f"\n{'=' * 80}")
-            print(f"Batch screenshotting {len(successful)} apps...")
-            print(f"{'=' * 80}\n")
-
-            try:
-                screenshot_apps(
-                    apps_dir, concurrency=screenshot_concurrency, wait_time=screenshot_wait_time, capture_logs=True
-                )
-            except Exception as e:
-                print(f"Screenshot batch failed: {e}")
-
-            # enrich results with screenshot info from filesystem
-            enrich_results_with_screenshots(results)
 
     successful_with_metrics: list[RunResult] = []
     for r in successful:
@@ -281,15 +231,6 @@ def main(
         total_input_tokens += metrics["input_tokens"]
         total_output_tokens += metrics["output_tokens"]
         total_turns += metrics["turns"]
-    # calculate screenshot statistics
-    screenshot_successful = 0
-    screenshot_failed = 0
-    for r in successful:
-        if r["screenshot_path"] is not None:
-            screenshot_successful += 1
-        else:
-            # count as failed if app was generated (has app_dir) but screenshot missing
-            screenshot_failed += 1
 
     print(f"\n{'=' * 80}")
     print("Bulk Generation Summary")
@@ -297,10 +238,6 @@ def main(
     print(f"Total prompts: {len(selected_prompts)}")
     print(f"Successful: {len(successful)}")
     print(f"Failed: {len(failed)}")
-    print(f"\nScreenshots captured: {screenshot_successful}")
-    print(f"Screenshot failures: {screenshot_failed}")
-    if screenshot_failed > 0:
-        print("  (Screenshot logs available in JSON output)")
     print(f"\nTotal cost: ${total_cost:.4f}")
     print(f"Total input tokens: {total_input_tokens}")
     print(f"Total output tokens: {total_output_tokens}")
