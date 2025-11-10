@@ -232,106 +232,92 @@ def check_build_success(app_dir: Path, template: str = "unknown") -> tuple[bool,
     return success, {"build_time_sec": round(build_time, 1), "has_dockerfile": False}
 
 
-def check_runtime_success(app_dir: Path, container_name: str, _template: str = "unknown") -> tuple[bool, dict]:
+def _prepare_runtime_env(app_dir: Path, container_name: str = "") -> dict[str, str]:
+    """Prepare environment variables for runtime check."""
+    env = os.environ.copy()
+
+    # Databricks credentials - required
+    if not env.get("DATABRICKS_HOST") or not env.get("DATABRICKS_TOKEN"):
+        print("  ⚠️  Warning: Missing DATABRICKS_HOST or DATABRICKS_TOKEN")
+
+    # OAuth credentials with mock fallback for eval
+    env.setdefault("DATABRICKS_CLIENT_ID", "eval-mock-client-id")
+    env.setdefault("DATABRICKS_CLIENT_SECRET", "eval-mock-client-secret")
+    env.setdefault("DATABRICKS_APP_NAME", app_dir.name)
+    env.setdefault("DATABRICKS_WAREHOUSE_ID", "")
+    env.setdefault("DATABRICKS_APP_PORT", "8000")
+    env.setdefault("FLASK_RUN_HOST", "0.0.0.0")
+
+    # Container name for docker scripts
+    if container_name:
+        env["CONTAINER_NAME"] = container_name
+
+    return env
+
+
+def check_runtime_success(app_dir: Path, container_name: str, template: str = "unknown") -> tuple[bool, dict]:
     """Metric 2: App starts and responds to requests.
 
-    Uses start/stop scripts for npm-based apps.
-    Docker apps are handled with direct docker commands (no start.sh support).
+    Uses template-specific start/stop scripts in cli/eval/<template>/.
     """
     print("  [2/7] Checking runtime success...")
 
     # Clean up any existing processes/containers before starting
-    _stop_app(app_dir)
+    _stop_app(app_dir, template)
 
     dockerfile = app_dir / "Dockerfile"
     process = None
 
     try:
-        # START: Launch the app based on type
+        # Determine which template script to use
         if dockerfile.exists():
-            # Docker-based runtime
-            env_file = app_dir.parent.parent / ".env"
-            env_args = ["--env-file", str(env_file)] if env_file.exists() else []
-
-            # Add Databricks env vars from environment
-            env_vars = []
-            for var in ["DATABRICKS_HOST", "DATABRICKS_TOKEN", "DATABRICKS_WAREHOUSE_ID"]:
-                if var in os.environ:
-                    env_vars.extend(["-e", f"{var}={os.environ[var]}"])
-
-            # Add OAuth credentials (required by @dbx/sdk)
-            client_id = os.environ.get("DATABRICKS_CLIENT_ID", "eval-mock-client-id")
-            client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET", "eval-mock-client-secret")
-            app_name = os.environ.get("DATABRICKS_APP_NAME", app_dir.name)
-            env_vars.extend(["-e", f"DATABRICKS_CLIENT_ID={client_id}"])
-            env_vars.extend(["-e", f"DATABRICKS_CLIENT_SECRET={client_secret}"])
-            env_vars.extend(["-e", f"DATABRICKS_APP_NAME={app_name}"])
-
-            # Add server plugin requirements
-            app_port = os.environ.get("DATABRICKS_APP_PORT", "8000")
-            flask_host = os.environ.get("FLASK_RUN_HOST", "0.0.0.0")
-            env_vars.extend(["-e", f"DATABRICKS_APP_PORT={app_port}"])
-            env_vars.extend(["-e", f"FLASK_RUN_HOST={flask_host}"])
-
-            success, _stdout, _stderr = run_command(
-                [
-                    "docker", "run", "-d", "-p", "8000:8000",
-                    "--name", container_name,
-                    *env_args, *env_vars,
-                    f"eval-{app_dir.name}",
-                ],
-                timeout=30,
-            )
-
-            if not success:
-                return False, {}
-
-            # Wait for Docker container to start
-            time.sleep(5)
-
+            script_dir = "docker"
+            wait_time = 5  # Docker containers start faster
+        elif template == "dbx-sdk":
+            script_dir = "dbx-sdk"
+            wait_time = 10
+        elif template == "trpc":
+            script_dir = "trpc"
+            wait_time = 10
         else:
-            # npm-based runtime using start.sh script
-            start_script = Path(__file__).parent / "eval" / "start.sh"
-            if not start_script.exists():
-                print(f"  ⚠️  Eval start.sh not found at {start_script}")
-                return False, {}
+            # Unknown template - fail with clear error
+            print(f"  ⚠️  Unknown template: {template}")
+            return False, {}
 
-            # Prepare environment variables
-            env = os.environ.copy()
-            if not env.get("DATABRICKS_HOST") or not env.get("DATABRICKS_TOKEN"):
-                print(f"  ⚠️  Missing DATABRICKS_HOST or DATABRICKS_TOKEN")
-                return False, {}
+        # Get template-specific start script
+        start_script = Path(__file__).parent / "eval" / script_dir / "start.sh"
+        if not start_script.exists():
+            print(f"  ⚠️  Start script not found: {start_script}")
+            return False, {}
 
-            # Add OAuth credentials with mock values if not provided
-            env.setdefault("DATABRICKS_CLIENT_ID", "eval-mock-client-id")
-            env.setdefault("DATABRICKS_CLIENT_SECRET", "eval-mock-client-secret")
-            env.setdefault("DATABRICKS_APP_NAME", app_dir.name)
-            env.setdefault("DATABRICKS_WAREHOUSE_ID", "")
-            env.setdefault("DATABRICKS_APP_PORT", "8000")
-            env.setdefault("FLASK_RUN_HOST", "0.0.0.0")
+        # Prepare environment variables
+        env = _prepare_runtime_env(app_dir, container_name)
+        if not env.get("DATABRICKS_HOST") or not env.get("DATABRICKS_TOKEN"):
+            print(f"  ⚠️  Missing DATABRICKS_HOST or DATABRICKS_TOKEN")
+            return False, {}
 
-            # Start the app in background
-            process = subprocess.Popen(
-                ["bash", str(start_script)],
-                cwd=str(app_dir),
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
+        # Start the app in background
+        process = subprocess.Popen(
+            ["bash", str(start_script)],
+            cwd=str(app_dir),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
 
-            # Wait for npm app to start
-            time.sleep(10)
+        # Wait for app to start
+        time.sleep(wait_time)
 
-            # Check if process is still running
-            if process.poll() is not None:
-                _stdout, stderr = process.communicate(timeout=1)
-                print(f"  ⚠️  Process died during startup (exit code: {process.returncode})")
-                if stderr:
-                    print(f"  Error output:")
-                    for line in stderr.strip().split('\n')[:10]:
-                        print(f"    {line}")
-                return False, {}
+        # Check if process is still running (for npm apps)
+        if script_dir != "docker" and process.poll() is not None:
+            _stdout, stderr = process.communicate(timeout=1)
+            print(f"  ⚠️  Process died during startup (exit code: {process.returncode})")
+            if stderr:
+                print(f"  Error output:")
+                for line in stderr.strip().split('\n')[:10]:
+                    print(f"    {line}")
+            return False, {}
 
         # HEALTH CHECK: Try to reach the app
         start_time = time.time()
@@ -343,55 +329,67 @@ def check_runtime_success(app_dir: Path, container_name: str, _template: str = "
             )
             if success:
                 startup_time = time.time() - start_time
-                _stop_app(app_dir)
+                _stop_app(app_dir, template)
                 return True, {"startup_time_sec": round(startup_time, 1)}
 
-            # Try root endpoint as fallback (for npm apps)
-            if not dockerfile.exists():
+            # Try root endpoint as fallback (for npm apps only, not docker)
+            if script_dir != "docker":
                 success, _stdout, _stderr = run_command(
                     ["curl", "-f", "-s", "http://localhost:8000/"],
                     timeout=10,
                 )
                 if success:
                     startup_time = time.time() - start_time
-                    _stop_app(app_dir)
+                    _stop_app(app_dir, template)
                     return True, {"startup_time_sec": round(startup_time, 1)}
 
             time.sleep(5)
 
         # Failed to connect
-        _stop_app(app_dir)
+        _stop_app(app_dir, template)
         return False, {}
 
     except Exception:
         # Ensure cleanup on any exception
-        _stop_app(app_dir)
+        _stop_app(app_dir, template)
         return False, {}
 
 
-def _stop_app(app_dir: Path) -> bool:
-    """Stop app using eval stop.sh script template."""
+def _stop_app(app_dir: Path, template: str = "unknown") -> bool:
+    """Stop app using template-specific stop.sh script."""
     try:
-        # Use stop script from eval templates
-        stop_script_template = Path(__file__).parent / "eval" / "stop.sh"
-
-        if stop_script_template.exists():
-            success, _, _ = run_command(
-                ["bash", str(stop_script_template)],
-                cwd=str(app_dir),
-                timeout=10,
-            )
-            time.sleep(1)  # Give the OS time to release resources
-            return success
+        # Determine which template script to use
+        dockerfile = app_dir / "Dockerfile"
+        if dockerfile.exists():
+            script_dir = "docker"
+        elif template == "dbx-sdk":
+            script_dir = "dbx-sdk"
+        elif template == "trpc":
+            script_dir = "trpc"
         else:
-            # Fallback to manual cleanup
-            subprocess.run(
-                ["bash", "-c", "lsof -ti:8000 | xargs kill -9 2>/dev/null || true"],
-                capture_output=True,
-                timeout=5,
-            )
-            time.sleep(1)
-            return True
+            # Unknown template - try manual cleanup
+            script_dir = None
+
+        # Use template-specific stop script
+        if script_dir:
+            stop_script = Path(__file__).parent / "eval" / script_dir / "stop.sh"
+            if stop_script.exists():
+                success, _, _ = run_command(
+                    ["bash", str(stop_script)],
+                    cwd=str(app_dir),
+                    timeout=10,
+                )
+                time.sleep(1)  # Give the OS time to release resources
+                return success
+
+        # Fallback to manual cleanup
+        subprocess.run(
+            ["bash", "-c", "lsof -ti:8000 | xargs kill -9 2>/dev/null || true"],
+            capture_output=True,
+            timeout=5,
+        )
+        time.sleep(1)
+        return True
     except Exception:
         # Fallback to manual cleanup
         try:
@@ -1008,7 +1006,7 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
 
     finally:
         # Always cleanup any running apps/containers
-        _stop_app(app_dir)
+        _stop_app(app_dir, template)
 
     print(f"\nIssues: {len(issues)}")
 
