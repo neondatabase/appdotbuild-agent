@@ -46,7 +46,50 @@ except ImportError:
     anthropic = None
 
 from eval_metrics import calculate_appeval_100, eff_units
-from eval_checks import check_databricks_connectivity as _check_db_connectivity
+from eval_checks import check_databricks_connectivity as _check_db_connectivity, extract_sql_queries
+from template_detection import detect_template
+
+
+def get_backend_dir(app_dir: Path, template: str) -> Path:
+    """Get backend directory based on template type."""
+    if template == "dbx-sdk":
+        # DBX SDK uses backend/
+        if (app_dir / "backend").exists():
+            return app_dir / "backend"
+    elif template == "trpc":
+        # tRPC uses server/
+        if (app_dir / "server").exists():
+            return app_dir / "server"
+
+    # Fallback: try both
+    if (app_dir / "backend").exists():
+        return app_dir / "backend"
+    if (app_dir / "server").exists():
+        return app_dir / "server"
+
+    # Default to backend if neither exists
+    return app_dir / "backend"
+
+
+def get_frontend_dir(app_dir: Path, template: str) -> Path:
+    """Get frontend directory based on template type."""
+    if template == "dbx-sdk":
+        # DBX SDK uses frontend/
+        if (app_dir / "frontend").exists():
+            return app_dir / "frontend"
+    elif template == "trpc":
+        # tRPC uses client/
+        if (app_dir / "client").exists():
+            return app_dir / "client"
+
+    # Fallback: try both
+    if (app_dir / "frontend").exists():
+        return app_dir / "frontend"
+    if (app_dir / "client").exists():
+        return app_dir / "client"
+
+    # Default to frontend if neither exists
+    return app_dir / "frontend"
 
 
 @dataclass
@@ -83,6 +126,9 @@ class FullMetrics:
     # Efficiency metric (lower is better) - optional
     eff_units: float | None = None
 
+    # Template information
+    template_type: str = "unknown"
+
 
 @dataclass
 class EvalResult:
@@ -96,7 +142,7 @@ class EvalResult:
     details: dict[str, Any]
 
 
-def run_command(cmd: list[str], cwd: str | None = None, timeout: int = 300) -> tuple[bool, str, str]:
+def run_command(cmd: list[str], cwd: str | None = None, timeout: int = 300, env: dict[str, str] | None = None) -> tuple[bool, str, str]:
     """Run a shell command and return (success, stdout, stderr)."""
     try:
         result = subprocess.run(
@@ -105,6 +151,7 @@ def run_command(cmd: list[str], cwd: str | None = None, timeout: int = 300) -> t
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=env,
         )
         return result.returncode == 0, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
@@ -113,152 +160,353 @@ def run_command(cmd: list[str], cwd: str | None = None, timeout: int = 300) -> t
         return False, "", str(e)
 
 
-def check_build_success(app_dir: Path) -> tuple[bool, dict]:
-    """Metric 1: Docker build succeeds."""
+def check_build_success(app_dir: Path, template: str = "unknown") -> tuple[bool, dict]:
+    """Metric 1: Build succeeds - creates deployment artifacts (frontend build)."""
     print("  [1/7] Checking build success...")
-    start = time.time()
+    start_time = time.time()
 
     dockerfile = app_dir / "Dockerfile"
     has_dockerfile = dockerfile.exists()
 
-    if not has_dockerfile:
-        return False, {"build_time_sec": 0.0, "has_dockerfile": False}
+    if has_dockerfile:
+        # Docker-based build (comprehensive build including backend + frontend)
+        success, _stdout, _stderr = run_command(
+            ["docker", "build", "-t", f"eval-{app_dir.name}", "."],
+            cwd=str(app_dir),
+            timeout=300,
+        )
+        build_time = time.time() - start_time
+        return success, {"build_time_sec": round(build_time, 1), "has_dockerfile": True}
 
-    success, stdout, stderr = run_command(
-        ["docker", "build", "-t", f"eval-{app_dir.name}", "."],
-        cwd=str(app_dir),
-        timeout=300,
-    )
+    # Non-Docker build: build frontend
+    import json
 
-    build_time = time.time() - start
-    return success, {"build_time_sec": round(build_time, 1), "has_dockerfile": True}
+    if template == "dbx-sdk":
+        # DBX SDK: root package.json with backend/ directory
+        package_json = app_dir / "package.json"
+        if not package_json.exists():
+            return False, {"build_time_sec": 0.0, "has_dockerfile": False}
+
+        try:
+            pkg_data = json.loads(package_json.read_text())
+            scripts = pkg_data.get("scripts", {})
+        except Exception:
+            return False, {"build_time_sec": 0.0, "has_dockerfile": False}
+
+        # Build frontend using npm run build
+        if "build" in scripts:
+            success, _, _ = run_command(
+                ["npm", "run", "build"],
+                cwd=str(app_dir),
+                timeout=300,
+            )
+        else:
+            # No build script - failure for production apps
+            success = False
+
+    else:
+        # tRPC: separate server/ and client/ directories
+        client_dir = get_frontend_dir(app_dir, template)
+
+        # Build client (if has build script)
+        success = False
+        if client_dir.exists() and (client_dir / "package.json").exists():
+            try:
+                client_pkg = json.loads((client_dir / "package.json").read_text())
+                has_build = "build" in client_pkg.get("scripts", {})
+                if has_build:
+                    success, _, _ = run_command(
+                        ["npm", "run", "build"],
+                        cwd=str(client_dir),
+                        timeout=300,
+                    )
+                else:
+                    # No build script in client package.json
+                    success = False
+            except Exception:
+                success = False
+        else:
+            # No client directory or package.json - fail
+            success = False
+
+    build_time = time.time() - start_time
+    return success, {"build_time_sec": round(build_time, 1), "has_dockerfile": False}
 
 
-def check_runtime_success(app_dir: Path, container_name: str) -> tuple[bool, dict]:
-    """Metric 2: Container starts and health check responds."""
+def _prepare_runtime_env(app_dir: Path, container_name: str = "") -> dict[str, str]:
+    """Prepare environment variables for runtime check."""
+    env = os.environ.copy()
+
+    # Databricks credentials - required
+    if not env.get("DATABRICKS_HOST") or not env.get("DATABRICKS_TOKEN"):
+        print("  ⚠️  Warning: Missing DATABRICKS_HOST or DATABRICKS_TOKEN")
+
+    # OAuth credentials with mock fallback for eval
+    env.setdefault("DATABRICKS_CLIENT_ID", "eval-mock-client-id")
+    env.setdefault("DATABRICKS_CLIENT_SECRET", "eval-mock-client-secret")
+    env.setdefault("DATABRICKS_APP_NAME", app_dir.name)
+    env.setdefault("DATABRICKS_WAREHOUSE_ID", "")
+    env.setdefault("DATABRICKS_APP_PORT", "8000")
+    env.setdefault("FLASK_RUN_HOST", "0.0.0.0")
+
+    # Container name for docker scripts
+    if container_name:
+        env["CONTAINER_NAME"] = container_name
+
+    return env
+
+
+def check_runtime_success(app_dir: Path, container_name: str, template: str = "unknown") -> tuple[bool, dict]:
+    """Metric 2: App starts and responds to requests.
+
+    Uses template-specific start/stop scripts in cli/eval/<template>/.
+    Start scripts handle waiting and health checking internally.
+    """
     print("  [2/7] Checking runtime success...")
 
-    # Start container
-    env_file = app_dir.parent.parent / ".env"
-    env_args = ["--env-file", str(env_file)] if env_file.exists() else []
+    # Clean up any existing processes/containers before starting
+    _stop_app(app_dir, template)
 
-    # Add Databricks env vars from environment
-    env_vars = []
-    if "DATABRICKS_HOST" in os.environ:
-        env_vars.extend(["-e", f"DATABRICKS_HOST={os.environ['DATABRICKS_HOST']}"])
-    if "DATABRICKS_TOKEN" in os.environ:
-        env_vars.extend(["-e", f"DATABRICKS_TOKEN={os.environ['DATABRICKS_TOKEN']}"])
-    if "DATABRICKS_WAREHOUSE_ID" in os.environ:
-        env_vars.extend(["-e", f"DATABRICKS_WAREHOUSE_ID={os.environ['DATABRICKS_WAREHOUSE_ID']}"])
+    dockerfile = app_dir / "Dockerfile"
 
-    success, stdout, stderr = run_command(
-        [
-            "docker",
-            "run",
-            "-d",
-            "-p",
-            "8000:8000",
-            "--name",
-            container_name,
-            *env_args,
-            *env_vars,
-            f"eval-{app_dir.name}",
-        ],
-        timeout=30,
-    )
+    try:
+        # Determine which template script to use
+        if dockerfile.exists():
+            script_dir = "docker"
+        elif template == "dbx-sdk":
+            script_dir = "dbx-sdk"
+        elif template == "trpc":
+            script_dir = "trpc"
+        else:
+            # Unknown template - fail with clear error
+            print(f"  ⚠️  Unknown template: {template}")
+            return False, {}
 
-    if not success:
+        # Get template-specific start script
+        start_script = Path(__file__).parent / "eval" / script_dir / "start.sh"
+        if not start_script.exists():
+            print(f"  ⚠️  Start script not found: {start_script}")
+            return False, {}
+
+        # Prepare environment variables
+        env = _prepare_runtime_env(app_dir, container_name)
+        if not env.get("DATABRICKS_HOST") or not env.get("DATABRICKS_TOKEN"):
+            print(f"  ⚠️  Missing DATABRICKS_HOST or DATABRICKS_TOKEN")
+            return False, {}
+
+        # Run start script (includes startup, waiting, and health check)
+        start_time = time.time()
+        success, _, stderr = run_command(
+            ["bash", str(start_script)],
+            cwd=str(app_dir),
+            env=env,
+            timeout=30,  # Max 30 seconds for start + health check
+        )
+        startup_time = time.time() - start_time
+
+        # Cleanup regardless of success/failure
+        _stop_app(app_dir, template)
+
+        if success:
+            return True, {"startup_time_sec": round(startup_time, 1)}
+        else:
+            # Show error output from script
+            if stderr:
+                print(f"  ⚠️  Startup failed:")
+                for line in stderr.strip().split('\n')[:5]:
+                    print(f"    {line}")
+            return False, {}
+
+    except Exception as e:
+        # Ensure cleanup on any exception
+        _stop_app(app_dir, template)
+        print(f"  ⚠️  Exception during runtime check: {e}")
         return False, {}
 
-    # Wait for startup
-    time.sleep(5)
 
-    # Check health endpoint
-    start = time.time()
-    for _ in range(6):  # Try for 30 seconds
-        success, stdout, stderr = run_command(
-            ["curl", "-f", "-s", "http://localhost:8000/healthcheck"],
-            timeout=10,
+def _stop_app(app_dir: Path, template: str = "unknown") -> bool:
+    """Stop app using template-specific stop.sh script."""
+    try:
+        # Determine which template script to use
+        dockerfile = app_dir / "Dockerfile"
+        if dockerfile.exists():
+            script_dir = "docker"
+        elif template == "dbx-sdk":
+            script_dir = "dbx-sdk"
+        elif template == "trpc":
+            script_dir = "trpc"
+        else:
+            # Unknown template - try manual cleanup
+            script_dir = None
+
+        # Use template-specific stop script
+        if script_dir:
+            stop_script = Path(__file__).parent / "eval" / script_dir / "stop.sh"
+            if stop_script.exists():
+                success, _, _ = run_command(
+                    ["bash", str(stop_script)],
+                    cwd=str(app_dir),
+                    timeout=10,
+                )
+                time.sleep(1)  # Give the OS time to release resources
+                return success
+
+        # Fallback to manual cleanup
+        subprocess.run(
+            ["bash", "-c", "lsof -ti:8000 | xargs kill -9 2>/dev/null || true"],
+            capture_output=True,
+            timeout=5,
         )
-        if success:
-            startup_time = time.time() - start
-            return True, {"startup_time_sec": round(startup_time, 1)}
-        time.sleep(5)
+        time.sleep(1)
+        return True
+    except Exception:
+        # Fallback to manual cleanup
+        try:
+            subprocess.run(
+                ["bash", "-c", "lsof -ti:8000 | xargs kill -9 2>/dev/null || true"],
+                capture_output=True,
+                timeout=5,
+            )
+            time.sleep(1)
+        except:
+            pass
+        return False
 
-    return False, {}
 
-
-def install_dependencies(app_dir: Path) -> bool:
+def install_dependencies(app_dir: Path, template: str = "unknown") -> bool:
     """Install npm dependencies for both client and server."""
     print("  [0/7] Installing dependencies...")
 
-    # Install server dependencies
-    server_success, _, _ = run_command(
-        ["npm", "install"],
-        cwd=str(app_dir / "server"),
-        timeout=180,
-    )
+    # Check if root-level package.json exists (monorepo style)
+    root_pkg = app_dir / "package.json"
+    if root_pkg.exists():
+        root_success, _, _ = run_command(
+            ["npm", "install"],
+            cwd=str(app_dir),
+            timeout=180,
+        )
+        if root_success:
+            print("    ✅ Dependencies installed (root)")
+            return True
+        else:
+            print("    ⚠️  Root npm install failed")
 
-    if not server_success:
-        print("    ⚠️  Server npm install failed")
+    # Try server/ or backend/ based on template
+    server_dir = get_backend_dir(app_dir, template)
+    if server_dir.exists() and (server_dir / "package.json").exists():
+        server_success, _, _ = run_command(
+            ["npm", "install"],
+            cwd=str(server_dir),
+            timeout=180,
+        )
+        if not server_success:
+            print(f"    ⚠️  {server_dir.name} npm install failed")
+            return False
+    else:
+        print(f"    ⚠️  No {server_dir.name} directory or package.json")
         return False
 
-    # Install client dependencies
-    client_success, _, _ = run_command(
-        ["npm", "install"],
-        cwd=str(app_dir / "client"),
-        timeout=180,
-    )
-
-    if not client_success:
-        print("    ⚠️  Client npm install failed")
-        return False
+    # Try client/ or frontend/ based on template
+    client_dir = get_frontend_dir(app_dir, template)
+    if client_dir.exists() and (client_dir / "package.json").exists():
+        client_success, _, _ = run_command(
+            ["npm", "install"],
+            cwd=str(client_dir),
+            timeout=180,
+        )
+        if not client_success:
+            print(f"    ⚠️  {client_dir.name} npm install failed")
+            return False
 
     print("    ✅ Dependencies installed")
     return True
 
 
-def check_type_safety(app_dir: Path) -> bool:
-    """Metric 3: TypeScript compiles without errors."""
+def check_type_safety(app_dir: Path, template: str = "unknown") -> bool:
+    """Metric 3: TypeScript compiles without errors.
+
+    Uses template-specific typecheck.sh scripts.
+    """
     print("  [3/7] Checking type safety...")
 
-    # Check server
-    server_success, _, _ = run_command(
-        ["npx", "tsc", "--noEmit"],
-        cwd=str(app_dir / "server"),
+    # Determine which template script to use
+    dockerfile = app_dir / "Dockerfile"
+    if dockerfile.exists():
+        script_dir = "docker"
+    elif template == "dbx-sdk":
+        script_dir = "dbx-sdk"
+    elif template == "trpc":
+        script_dir = "trpc"
+    else:
+        # Unknown template - fail
+        print(f"  ⚠️  Unknown template: {template}")
+        return False
+
+    # Get template-specific typecheck script
+    typecheck_script = Path(__file__).parent / "eval" / script_dir / "typecheck.sh"
+    if not typecheck_script.exists():
+        print(f"  ⚠️  Typecheck script not found: {typecheck_script}")
+        return False
+
+    # Run typecheck script
+    success, _, _ = run_command(
+        ["bash", str(typecheck_script)],
+        cwd=str(app_dir),
         timeout=60,
     )
 
-    # Check client
-    client_success, _, _ = run_command(
-        ["npx", "tsc", "--noEmit"],
-        cwd=str(app_dir / "client"),
-        timeout=60,
-    )
-
-    return server_success and client_success
+    return success
 
 
-def check_tests_pass(app_dir: Path) -> tuple[bool, float, bool]:
-    """Metric 4: Tests pass with coverage."""
+def check_tests_pass(app_dir: Path, template: str = "unknown") -> tuple[bool, float, bool]:
+    """Metric 4: Tests pass with coverage.
+
+    Uses template-specific test.sh scripts.
+    """
     print("  [4/7] Checking tests pass...")
 
+    # Determine which template script to use
+    dockerfile = app_dir / "Dockerfile"
+    if dockerfile.exists():
+        script_dir = "docker"
+    elif template == "dbx-sdk":
+        script_dir = "dbx-sdk"
+    elif template == "trpc":
+        script_dir = "trpc"
+    else:
+        # Unknown template - fail
+        return False, 0.0, False
+
+    # Get template-specific test script
+    test_script = Path(__file__).parent / "eval" / script_dir / "test.sh"
+    if not test_script.exists():
+        print(f"  ⚠️  Test script not found: {test_script}")
+        return False, 0.0, False
+
+    # Check if test files exist (for has_tests flag)
+    server_dir = get_backend_dir(app_dir, template)
+    backend_dir = app_dir / "backend"
+    has_tests = False
+
+    if server_dir.exists() and (server_dir / "src").exists():
+        test_files = list((server_dir / "src").glob("*.test.ts")) + list((server_dir / "src").glob("**/*.test.ts"))
+        has_tests = len(test_files) > 0
+    elif backend_dir.exists() and (backend_dir / "src").exists():
+        test_files = list((backend_dir / "src").glob("*.test.ts")) + list((backend_dir / "src").glob("**/*.test.ts"))
+        has_tests = len(test_files) > 0
+
+    # Run test script
     success, stdout, stderr = run_command(
-        ["npm", "test", "--", "--experimental-test-coverage"],
-        cwd=str(app_dir / "server"),
+        ["bash", str(test_script)],
+        cwd=str(app_dir),
         timeout=120,
     )
 
-    # Check if tests exist
-    test_files = list((app_dir / "server" / "src").glob("*.test.ts")) + list((app_dir / "server" / "src").glob("**/*.test.ts"))
-    has_tests = len(test_files) > 0
-
-    # Parse coverage from output (node's test runner output format)
+    # Parse coverage from Node.js test runner output
     coverage_pct = 0.0
     output = stdout + stderr
     for line in output.split("\n"):
         if "all files" in line.lower() and "%" in line:
-            # Try to extract percentage
             parts = line.split("|")
             if len(parts) >= 2:
                 try:
@@ -269,39 +517,27 @@ def check_tests_pass(app_dir: Path) -> tuple[bool, float, bool]:
     return success, coverage_pct, has_tests
 
 
-def check_databricks_connectivity(app_dir: Path) -> bool:
+def check_databricks_connectivity(app_dir: Path, template: str = "trpc") -> bool:
     """Metric 5: Can connect to Databricks and execute queries."""
     print("  [5/7] Checking Databricks connectivity...")
-    return _check_db_connectivity(app_dir, 8000, run_command)
+    return _check_db_connectivity(app_dir, 8000, run_command, template)
 
 
-def check_data_validity_llm(app_dir: Path, prompt: str | None) -> tuple[bool, str]:
+def check_data_validity_llm(app_dir: Path, prompt: str | None, template: str = "trpc") -> tuple[bool, str]:
     """Metric 6: Binary check - does app return valid data from Databricks."""
     print("  [6/7] Checking data validity (LLM)...")
 
     if not anthropic or not prompt:
         return False, "Skipped: Anthropic client not available or no prompt"
 
-    # Extract SQL queries from source
-    index_ts = app_dir / "server" / "src" / "index.ts"
-    if not index_ts.exists():
-        return False, "No index.ts found"
+    # Extract SQL queries using template-aware extraction
+    queries = extract_sql_queries(app_dir, template)
 
-    content = index_ts.read_text()
-
-    # Extract first SQL query
-    sql_query = ""
-    in_query = False
-    for line in content.split("\n"):
-        if "query = `" in line:
-            in_query = True
-        if in_query:
-            sql_query += line + "\n"
-            if "`;" in line:
-                break
-
-    if not sql_query:
+    if not queries:
         return False, "No SQL query found"
+
+    # Use first query for validation
+    sql_query = queries[0]
 
     # Call LLM for validation - simplified to binary check
     try:
@@ -342,7 +578,7 @@ Respond with ONLY: YES or NO""",
         return False, f"LLM check failed: {str(e)}"
 
 
-def check_ui_functional_vlm(app_dir: Path, prompt: str | None) -> tuple[bool, str]:
+def check_ui_functional_vlm(app_dir: Path, _prompt: str | None) -> tuple[bool, str]:
     """Metric 7: VLM binary check - does UI render without errors?
 
     Returns: (passes: bool, details: str)
@@ -423,7 +659,7 @@ Respond with ONLY one word: PASS or FAIL""",
         return False, f"VLM check failed: {str(e)}"
 
 
-def check_local_runability(app_dir: Path) -> tuple[int, list[str]]:
+def check_local_runability(app_dir: Path, template: str = "unknown") -> tuple[int, list[str]]:
     """Metric 8: Local runability - how easy is it to run locally?"""
     print("  [8/9] Checking local runability...")
 
@@ -449,23 +685,32 @@ def check_local_runability(app_dir: Path) -> tuple[int, list[str]]:
     else:
         details.append("✗ No .env.example or .env.template")
 
-    # Check 3: Dependencies install cleanly
-    server_install, _, _ = run_command(
-        ["npm", "install", "--dry-run"],
-        cwd=str(app_dir / "server"),
-        timeout=60,
-    )
-    if server_install:
-        score += 1
-        details.append("✓ Server dependencies installable")
+    # Check 3: Dependencies install cleanly based on template
+    server_dir = get_backend_dir(app_dir, template)
+    if server_dir.exists():
+        server_install, _, _ = run_command(
+            ["npm", "install", "--dry-run"],
+            cwd=str(server_dir),
+            timeout=60,
+        )
+        if server_install:
+            score += 1
+            details.append(f"✓ {server_dir.name} dependencies installable")
+        else:
+            details.append(f"✗ {server_dir.name} npm install issues")
     else:
-        details.append("✗ Server npm install issues")
+        details.append("✗ No server/backend directory")
 
     # Check 4: npm start command defined
-    server_pkg = app_dir / "server" / "package.json"
-    if server_pkg.exists():
+    # For DBX SDK (root package.json) check root, for tRPC check server_dir
+    if template == "dbx-sdk":
+        pkg_path = app_dir / "package.json"
+    else:
+        pkg_path = server_dir / "package.json" if server_dir.exists() else None
+
+    if pkg_path and pkg_path.exists():
         try:
-            pkg_data = json.loads(server_pkg.read_text())
+            pkg_data = json.loads(pkg_path.read_text())
             if "start" in pkg_data.get("scripts", {}):
                 score += 1
                 details.append("✓ npm start command defined")
@@ -479,10 +724,15 @@ def check_local_runability(app_dir: Path) -> tuple[int, list[str]]:
     # Check 5: Test if app can start locally (lightweight check - just see if it's runnable)
     # We won't actually start it here as it's redundant with runtime check
     # Instead, check if entry point exists
-    entry_point = app_dir / "server" / "src" / "index.ts"
-    if entry_point.exists():
+    entry_point = None
+    if server_dir.exists():
+        entry_point = server_dir / "src" / "index.ts"
+        if not entry_point.exists():
+            entry_point = server_dir / "index.ts"
+
+    if entry_point and entry_point.exists():
         score += 1
-        details.append("✓ Entry point exists (server/src/index.ts)")
+        details.append(f"✓ Entry point exists ({entry_point.relative_to(app_dir)})")
     else:
         details.append("✗ No entry point found")
 
@@ -529,7 +779,7 @@ def check_deployability(app_dir: Path) -> tuple[int, list[str]]:
     # Check 4: No hardcoded secrets
     has_secrets = False
     for pattern in ["DATABRICKS_TOKEN=dapi", "password=", "api_key=", "secret="]:
-        success, stdout, _ = run_command(
+        success, _, _ = run_command(
             ["grep", "-r", "-i", pattern, ".", "--exclude-dir=node_modules", "--exclude-dir=.git"],
             cwd=str(app_dir),
             timeout=10,
@@ -563,18 +813,17 @@ def check_deployability(app_dir: Path) -> tuple[int, list[str]]:
     return score, details
 
 
-def cleanup_container(container_name: str):
-    """Stop and remove container."""
-    run_command(["docker", "stop", container_name], timeout=10)
-    run_command(["docker", "rm", container_name], timeout=10)
-
-
 def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
     """Run full evaluation on an app."""
     print(f"\nEvaluating: {app_dir.name}")
     print("=" * 60)
 
+    # Detect template type
+    template = detect_template(app_dir)
+    print(f"  Template: {template}")
+
     metrics = FullMetrics()
+    metrics.template_type = template
     issues = []
     details = {}
     container_name = f"eval-{app_dir.name}-{int(time.time())}"
@@ -583,27 +832,32 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
 
     try:
         # Install dependencies first (needed for TypeScript and tests)
-        deps_installed = install_dependencies(app_dir)
+        deps_installed = install_dependencies(app_dir, template)
 
         # Metric 1: Build
-        build_success, build_meta = check_build_success(app_dir)
+        build_success, build_meta = check_build_success(app_dir, template)
         metrics.build_success = build_success
         metrics.build_time_sec = build_meta.get("build_time_sec", 0.0)
         metrics.has_dockerfile = build_meta.get("has_dockerfile", False)
         if not build_success:
-            issues.append("Docker build failed")
+            if build_meta.get("has_dockerfile"):
+                issues.append("Docker build failed")
+            else:
+                issues.append("Build failed (npm install)")
 
-        # Metric 2: Runtime (only if build succeeded)
-        if build_success:
-            runtime_success, runtime_meta = check_runtime_success(app_dir, container_name)
-            metrics.runtime_success = runtime_success
-            metrics.startup_time_sec = runtime_meta.get("startup_time_sec", 0.0)
-            if not runtime_success:
+        # Metric 2: Runtime (always try, not just if build succeeded)
+        runtime_success, runtime_meta = check_runtime_success(app_dir, container_name, template)
+        metrics.runtime_success = runtime_success
+        metrics.startup_time_sec = runtime_meta.get("startup_time_sec", 0.0)
+        if not runtime_success:
+            if build_meta.get("has_dockerfile"):
                 issues.append("Container failed to start or healthcheck failed")
+            else:
+                issues.append("App failed to start or respond")
 
         # Metric 3: Type safety (requires dependencies)
         if deps_installed:
-            type_safety = check_type_safety(app_dir)
+            type_safety = check_type_safety(app_dir, template)
             metrics.type_safety = type_safety
             # Only flag TS errors as issues if they cause build/runtime problems
             # (Since apps use tsx which skips type checking, TS strictness is informational)
@@ -614,7 +868,7 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
 
         # Metric 4: Tests (requires dependencies)
         if deps_installed:
-            tests_pass, coverage, has_tests = check_tests_pass(app_dir)
+            tests_pass, coverage, has_tests = check_tests_pass(app_dir, template)
             metrics.tests_pass = tests_pass
             metrics.test_coverage_pct = coverage
             metrics.has_tests = has_tests
@@ -625,14 +879,14 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
 
         # Metric 5: Databricks connectivity (only if runtime succeeded)
         if runtime_success:
-            db_success = check_databricks_connectivity(app_dir)
+            db_success = check_databricks_connectivity(app_dir, template)
             metrics.databricks_connectivity = db_success
             if not db_success:
                 issues.append("Databricks connectivity failed")
 
             # Metric 6: Data validity (LLM - binary check) - NOT INCLUDED IN SCORE
             if db_success:
-                data_returned, data_details = check_data_validity_llm(app_dir, prompt)
+                data_returned, data_details = check_data_validity_llm(app_dir, prompt, template)
                 metrics.data_returned = data_returned
                 if not data_returned:
                     issues.append(f"Data validity concerns: {data_details}")
@@ -644,7 +898,7 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
                 issues.append(f"UI concerns: {ui_details}")
 
         # Metric 8: Local runability (DevX)
-        local_score, local_details = check_local_runability(app_dir)
+        local_score, local_details = check_local_runability(app_dir, template)
         metrics.local_runability_score = local_score
         details["local_runability"] = local_details
         if local_score < 3:
@@ -692,8 +946,8 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
         )
 
     finally:
-        # Always cleanup container if it exists (regardless of success/failure)
-        cleanup_container(container_name)
+        # Always cleanup any running apps/containers
+        _stop_app(app_dir, template)
 
     print(f"\nIssues: {len(issues)}")
 
@@ -707,23 +961,37 @@ def evaluate_app(app_dir: Path, prompt: str | None = None) -> EvalResult:
     )
 
 
-def load_prompts_from_bulk_results(bulk_results_file: Path) -> dict[str, str]:
-    """Load app prompts from bulk_run results JSON."""
+def load_prompts_from_bulk_results(bulk_results_file: Path) -> tuple[dict[str, str], dict[str, Any]]:
+    """Load app prompts and metadata from bulk_run results JSON.
+
+    Returns:
+        Tuple of (prompts_dict, metadata_dict)
+    """
     if not bulk_results_file.exists():
-        return {}
+        return {}, {}
 
     try:
         data = json.loads(bulk_results_file.read_text())
+
+        # Handle new format with metadata wrapper
+        if "metadata" in data and "results" in data:
+            metadata = data["metadata"]
+            results = data["results"]
+        else:
+            # Legacy format without metadata wrapper
+            metadata = {}
+            results = data
+
         prompts = {}
-        for result in data:
+        for result in results:
             app_dir = result.get("app_dir")
             prompt = result.get("prompt")
             if app_dir and prompt:
                 app_name = Path(app_dir).name
                 prompts[app_name] = prompt
-        return prompts
+        return prompts, metadata
     except Exception:
-        return {}
+        return {}, {}
 
 
 def main():
@@ -736,9 +1004,9 @@ def main():
     script_dir = Path(__file__).parent
     apps_dir = script_dir.parent / "app"
 
-    # Load prompts from latest bulk results
-    results_files = sorted(script_dir.glob("../bulk_run_results_*.json"), reverse=True)
-    prompts = load_prompts_from_bulk_results(results_files[0]) if results_files else {}
+    # Load prompts and metadata from latest bulk results
+    results_files = sorted(apps_dir.glob("bulk_run_results_*.json"), reverse=True)
+    prompts, bulk_metadata = load_prompts_from_bulk_results(results_files[0]) if results_files else ({}, {})
 
     if sys.argv[1] == "--all":
         # Evaluate all apps
@@ -749,10 +1017,19 @@ def main():
                 result = evaluate_app(app_dir, prompt)
                 results.append(asdict(result))
 
-        # Save combined results
+        # Save combined results with bulk run metadata
+        output_data = {
+            "bulk_run_metadata": bulk_metadata,
+            "eval_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "results": results,
+        }
         output_file = script_dir / f"eval_results_{int(time.time())}.json"
-        output_file.write_text(json.dumps(results, indent=2))
+        output_file.write_text(json.dumps(output_data, indent=2))
         print(f"\n\nResults saved to: {output_file}")
+        if bulk_metadata:
+            print("Bulk run metadata:")
+            for key, value in bulk_metadata.items():
+                print(f"  {key}: {value}")
 
     else:
         # Evaluate single app

@@ -118,10 +118,17 @@ def generate_summary_report(results: list[dict]) -> dict:
     """Generate summary statistics from evaluation results."""
     total = len(results)
 
+    # Template distribution
+    template_counts = Counter()
+    for r in results:
+        template = r["metrics"].get("template_type", "unknown")
+        template_counts[template] += 1
+
     # Overall statistics - All 9 metrics
     stats = {
         "total_apps": total,
         "evaluated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "template_distribution": dict(template_counts),
         "metrics_summary": {
             # Metric 1-4: Core functionality
             "build_success": sum(1 for r in results if r["metrics"]["build_success"]),
@@ -214,6 +221,13 @@ def generate_markdown_report(results: list[dict], summary: dict) -> str:
     md.append("# App Evaluation Report")
     md.append(f"\n**Generated:** {summary['evaluated_at']}")
     md.append(f"\n**Total Apps Evaluated:** {summary['total_apps']}")
+
+    # Template distribution
+    if "template_distribution" in summary:
+        md.append("\n### Template Distribution")
+        for template, count in sorted(summary["template_distribution"].items()):
+            pct = (count / summary['total_apps'] * 100) if summary['total_apps'] > 0 else 0
+            md.append(f"- **{template}:** {count} apps ({pct:.1f}%)")
 
     # Executive Summary - All 9 metrics
     md.append("\n## Executive Summary\n")
@@ -461,6 +475,7 @@ def generate_csv_report(results: list[dict]) -> str:
     header = [
         "app_name",
         "timestamp",
+        "template_type",
         # Metric 1-4: Core functionality
         "build_success",
         "runtime_success",
@@ -496,6 +511,7 @@ def generate_csv_report(results: list[dict]) -> str:
         row = [
             result["app_name"],
             result["timestamp"],
+            metrics.get("template_type", "unknown"),
             # Metric 1-4
             1 if metrics["build_success"] else 0,
             1 if metrics["runtime_success"] else 0,
@@ -533,7 +549,9 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python evaluate_all.py                          # Evaluate all apps
+  python evaluate_all.py                          # Evaluate all apps in ../app
+  python evaluate_all.py --dir /path/to/apps      # Evaluate apps in custom directory
+  python evaluate_all.py --staging                # Report to staging MLflow experiment
   python evaluate_all.py --apps app1 app2         # Evaluate specific apps
   python evaluate_all.py --pattern "customer*"    # Evaluate apps matching pattern
   python evaluate_all.py --limit 5                # Evaluate first 5 apps
@@ -541,6 +559,18 @@ Examples:
   python evaluate_all.py --start-from app5        # Start from specific app
   python evaluate_all.py --limit 10 --skip 5      # Evaluate 10 apps starting from 6th
         """
+    )
+
+    parser.add_argument(
+        '--dir',
+        metavar='PATH',
+        help='Directory containing apps to evaluate (default: ../app)'
+    )
+
+    parser.add_argument(
+        '--staging',
+        action='store_true',
+        help='Report results to staging MLflow experiment (/Shared/edda-staging-evaluations)'
     )
 
     filter_group = parser.add_argument_group('app filtering')
@@ -629,7 +659,12 @@ def main():
     args = parse_args()
 
     script_dir = Path(__file__).parent
-    apps_dir = script_dir.parent / "app"
+
+    # Use custom directory if provided, otherwise default to ../app
+    if args.dir:
+        apps_dir = Path(args.dir).resolve()
+    else:
+        apps_dir = script_dir.parent / "app"
 
     if not apps_dir.exists():
         print(f"Error: Apps directory not found: {apps_dir}")
@@ -645,6 +680,7 @@ def main():
     app_dirs = filter_app_dirs(all_app_dirs, args)
 
     print(f"🔍 Evaluating {len(app_dirs)} apps (out of {len(all_app_dirs)} total)...")
+    print(f"   Directory: {apps_dir}")
     if args.apps:
         print(f"   Filter: specific apps: {', '.join(args.apps)}")
     if args.pattern:
@@ -744,11 +780,17 @@ def main():
     try:
         from mlflow_tracker import EvaluationTracker
 
-        tracker = EvaluationTracker()
+        # Determine experiment name based on --staging flag
+        experiment_name = "/Shared/edda-staging-evaluations" if args.staging else None
+
+        tracker = EvaluationTracker(experiment_name=experiment_name)
         if tracker.enabled:
             # Start MLflow run
             run_name = f"eval-{timestamp}"
-            tags = {"mode": "evaluation"}
+            tags = {
+                "mode": "evaluation",
+                "environment": "staging" if args.staging else "production"
+            }
 
             # Add git commit hash if available
             git_hash = get_git_commit_hash()
@@ -776,9 +818,9 @@ def main():
             # End run
             tracker.end_run()
 
-            print(f"✓ MLflow tracking complete")
+            print("✓ MLflow tracking complete")
             print(f"  Run ID: {run_id}")
-            print(f"  View: ML → Experiments → /Shared/klaudbiusz-evaluations")
+            print(f"  View: ML → Experiments → {tracker.experiment_name}")
         else:
             print("⚠️  MLflow tracking disabled (credentials not set)")
     except Exception as e:
@@ -809,7 +851,7 @@ def main():
     print(f"  8. Local Runability:      {metrics['local_runability_avg']:.1f}/5 ⭐")
     print(f"  9. Deployability:         {metrics['deployability_avg']:.1f}/5 ⭐")
 
-    print(f"\nQuality Distribution:")
+    print("\nQuality Distribution:")
     qual = summary["quality_distribution"]
     print(f"  🟢 Excellent: {len(qual['excellent'])}")
     print(f"  🟡 Good:      {len(qual['good'])}")

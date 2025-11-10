@@ -166,6 +166,11 @@ class EvaluationTracker:
             if total_apps > 0:
                 mlflow.log_metric("total_apps", total_apps)
 
+            # Log template distribution metrics
+            template_dist = summary.get('template_distribution', {})
+            for template_name, count in template_dist.items():
+                mlflow.log_metric(f"template_{template_name}_count", count)
+
             # Log average scores from individual apps
             apps = evaluation_report.get('apps', [])
             if apps:
