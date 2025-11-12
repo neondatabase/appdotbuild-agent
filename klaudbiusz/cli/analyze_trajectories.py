@@ -38,9 +38,20 @@ def load_trajectory(path: Path) -> list[TrajectoryStep]:
     return steps
 
 
-def format_tool_arguments(args: dict) -> str:
-    """Format tool arguments as readable JSON."""
-    return json.dumps(args, indent=2)
+def format_tool_arguments(args: dict, max_length: int = 8192) -> str:
+    """Format tool arguments as readable JSON, truncating long strings."""
+
+    def truncate_value(value):
+        if isinstance(value, str) and len(value) > max_length:
+            return f"[truncated {len(value)} chars]"
+        elif isinstance(value, dict):
+            return {k: truncate_value(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [truncate_value(item) for item in value]
+        return value
+
+    truncated_args = truncate_value(args)
+    return json.dumps(truncated_args, indent=2)
 
 
 def format_trajectory_to_markdown(steps: list[TrajectoryStep]) -> str:
@@ -73,12 +84,16 @@ def format_trajectory_to_markdown(steps: list[TrajectoryStep]) -> str:
                     if result.get("is_error"):
                         lines.append("**⚠️ ERROR**")
                     lines.append("```")
-                    lines.append(result.get("content", ""))
+                    content = result.get("content", "")
+                    # truncate long tool results (e.g. base64 screenshots)
+                    if isinstance(content, str) and len(content) > 8192:
+                        lines.append(f"[truncated {len(content)} chars]")
+                    else:
+                        lines.append(content)
                     lines.append("```")
                     lines.append("")
 
         lines.append("---\n")
-
     return "\n".join(lines)
 
 
@@ -101,7 +116,6 @@ Keep in mind that agent itself is not directly controlled, but we can improve th
 Provide a concise analysis focusing on actionable insights."""
 
     logger.info(f"🔍 Analyzing trajectory: {app_name}")
-
     response = await litellm.acompletion(
         model=model,
         messages=[{"role": "user", "content": prompt}],
@@ -165,7 +179,6 @@ async def analyze_trajectories_async(
     trajectory_data = [
         (path.parent.name, format_trajectory_to_markdown(load_trajectory(path))) for path in trajectory_paths
     ]
-
     tasks = [
         analyze_single_trajectory(trajectory_md, app_name, map_model) for app_name, trajectory_md in trajectory_data
     ]

@@ -35,6 +35,7 @@ venv = ".venv"
 
 [dependency-groups]
 dev = [
+    "pdbpp>=0.11.7",
     "pyright>=1.1.406",
     "ruff>=0.14.3",
 ]
