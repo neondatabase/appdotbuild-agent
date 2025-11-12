@@ -77,7 +77,7 @@ impl DatabricksProvider {
         }
     }
 
-    #[tool(name = "databricks_find_tables", description = "Find tables in Databricks by searching across catalogs and schemas. Supports filtering by table name and pagination (default limit: 500). When catalog_name or schema_name is not provided, searches through all available catalogues / schemas.")]
+    #[tool(name = "databricks_find_tables", description = "Find tables in Databricks by searching across catalogs and schemas. Supports filtering by table name and pagination (default limit: 500). When catalog_name or schema_name is not provided, searches through all available catalogues / schemas. When filter is not provided, lists all tables.")]
     pub async fn find_tables(
         &self,
         Parameters(args): Parameters<DatabricksListTablesArgs>,

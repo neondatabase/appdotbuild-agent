@@ -14,7 +14,8 @@ import { strict as assert } from "node:assert";
 
 ## SQL Best Practices
 
-- Always try executing the query first before implementing in code to verify correctness and ensure it returns expected results
+- Always inspect the table schema and sample few rows before writing queries
+- Always try executing the query first before implementing in backend to verify correctness and ensure it returns expected results
 - **executeQuery REQUIRES Zod schema**: Pass the Zod schema object as second parameter, NOT a TypeScript type annotation
   ```typescript
   // ❌ WRONG - Do NOT use generic type parameter

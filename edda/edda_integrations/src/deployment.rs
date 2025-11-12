@@ -193,6 +193,8 @@ pub fn sync_workspace(app_info: &AppInfo, source_dir: &str) -> Result<()> {
             "public",
             "--exclude",
             "node_modules",
+            "--exclude",
+            ".env",
             ".",
             &app_info.source_path(),
         ]) // specific for trpc template
