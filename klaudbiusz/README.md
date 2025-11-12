@@ -127,7 +127,9 @@ klaudbiusz/
 │   └── DORA_METRICS.md             # DORA & agentic DevX
 ├── app/                             # Generated applications (gitignored)
 ├── cli/                             # Generation & evaluation scripts
+│   ├── single_run.py               # Single app generation
 │   ├── bulk_run.py                 # Batch app generation
+│   ├── analyze_trajectories.py     # Get LLM recommendations based on previous runs
 │   ├── evaluate_all.py             # Batch evaluation
 │   ├── evaluate_app.py             # Single app evaluation
 │   ├── archive_evaluation.sh       # Create evaluation archive
@@ -147,6 +149,13 @@ klaudbiusz/
 3. Evaluate: `uv run cli/evaluate_all.py`
 4. Review: `cat EVALUATION_REPORT.md`
 5. Deploy apps that pass checks
+
+### AI Assisted Edda Improvement Workflow
+
+1. Generate many apps with `uv run cli/bulk_run.py`
+2. Analyze the trajectories with `uv run cli/analyze_trajectories.py`
+3. Based on the report, improve Edda tools and scaffolding
+4. Rerun the evaluation to measure impact
 
 ### Archive & Clean Workflow
 
