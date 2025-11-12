@@ -136,7 +136,7 @@ def main(
     """Bulk app generation from predefined prompt sets.
 
     Args:
-        prompts: Prompt set to use ("databricks" or "test", default: "databricks")
+        prompts: Prompt set to use ("databricks", "test", or "web", default: "databricks")
         backend: Backend to use ("claude" or "litellm", default: "claude")
         model: LLM model (required if backend=litellm, e.g., "openrouter/minimax/minimax-m2")
         wipe_db: Whether to wipe database on start
@@ -151,9 +151,12 @@ def main(
         # Claude backend with test prompts
         python bulk_run.py --prompts=test
 
+        # Claude backend with web app prompts
+        python bulk_run.py --prompts=web
+
         # LiteLLM backend
         python bulk_run.py --backend=litellm --model=openrouter/minimax/minimax-m2
-        python bulk_run.py --prompts=test --backend=litellm --model=gemini/gemini-2.5-pro
+        python bulk_run.py --prompts=web --backend=litellm --model=gemini/gemini-2.5-pro
 
         # Optional: Run screenshots after generation
         python screenshot.py ./app --concurrency=5 --wait-time=120000
@@ -167,8 +170,10 @@ def main(
             from prompts_databricks import PROMPTS as selected_prompts
         case "test":
             from prompts_test import PROMPTS as selected_prompts
+        case "web":
+            from prompts_web import PROMPTS as selected_prompts
         case _:
-            raise ValueError(f"Unknown prompt set: {prompts}. Use 'databricks' or 'test'")
+            raise ValueError(f"Unknown prompt set: {prompts}. Use 'databricks', 'test', or 'web'")
 
     # validate backend-specific requirements
     if backend == "litellm" and not model:
