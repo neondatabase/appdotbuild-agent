@@ -9,7 +9,7 @@
     "db:push": "drizzle-kit push --force",
     "db:push-ci": "yes | npm run db:push",
     "lint": "eslint --cache src/index.ts",
-    "test": "node --test --import tsx src/*.test.ts"
+    "test": "sh -c 'ls src/*.test.ts src/*.test.tsx 2>/dev/null | grep -q . || (echo \"Error: No test files found (*.test.ts or *.test.tsx)\" && exit 1); node --test --import tsx src/*.test.ts'"
   },
   "dependencies": {
     "@databricks/sql": "^1.12.0",

@@ -36,17 +36,19 @@ pub struct InitiateProjectResult {
     pub work_dir: String,
     pub template_name: String,
     pub template_description: String,
+    pub file_tree: String,
 }
 
 impl ToolResultDisplay for InitiateProjectResult {
     fn display(&self) -> String {
         format!(
-            "Successfully copied {} files from {} template to {}\n\nTemplate: {}\n\n{}",
+            "Successfully copied {} files from {} template to {}\n\nTemplate: {}\n\n{}\n\nFile structure:\n{}",
             self.files_copied,
             self.template_name,
             self.work_dir,
             self.template_name,
-            self.template_description
+            self.template_description,
+            self.file_tree
         )
     }
 }
@@ -168,12 +170,75 @@ impl IOProvider {
         let template_description = template.description().unwrap_or("".to_string());
         let files = template.extract(work_dir)?;
 
+        // generate file tree
+        let file_tree = Self::generate_file_tree(work_dir, &files)?;
+
         Ok(InitiateProjectResult {
             files_copied: files.len(),
             work_dir: work_dir.display().to_string(),
             template_name,
             template_description,
+            file_tree,
         })
+    }
+
+    /// Generate a tree-style visualization of the file structure
+    /// Collapses directories with more than 10 files to avoid clutter
+    fn generate_file_tree(_base_dir: &Path, files: &[PathBuf]) -> Result<String> {
+        use std::collections::BTreeMap;
+
+        const MAX_FILES_TO_SHOW: usize = 10;
+
+        // build a tree structure
+        let mut tree: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+        for file in files {
+            let path_str = file.to_string_lossy().to_string();
+            let parts: Vec<&str> = path_str.split('/').collect();
+
+            if parts.len() == 1 {
+                // root level file
+                tree.entry("".to_string())
+                    .or_insert_with(Vec::new)
+                    .push(parts[0].to_string());
+            } else {
+                // file in subdirectory
+                let dir = parts[..parts.len() - 1].join("/");
+                let file_name = parts[parts.len() - 1].to_string();
+                tree.entry(dir)
+                    .or_insert_with(Vec::new)
+                    .push(file_name);
+            }
+        }
+
+        // format as tree
+        let mut output = String::new();
+        let mut sorted_dirs: Vec<_> = tree.keys().collect();
+        sorted_dirs.sort();
+
+        for dir in sorted_dirs {
+            let files_in_dir = &tree[dir];
+            if dir.is_empty() {
+                // root files - always show all
+                for file in files_in_dir {
+                    output.push_str(&format!("{}\n", file));
+                }
+            } else {
+                // directory
+                output.push_str(&format!("{}/\n", dir));
+                if files_in_dir.len() <= MAX_FILES_TO_SHOW {
+                    // show all files
+                    for file in files_in_dir {
+                        output.push_str(&format!("  {}\n", file));
+                    }
+                } else {
+                    // collapse large directories
+                    output.push_str(&format!("  ({} files)\n", files_in_dir.len()));
+                }
+            }
+        }
+
+        Ok(output)
     }
 
     #[tool(

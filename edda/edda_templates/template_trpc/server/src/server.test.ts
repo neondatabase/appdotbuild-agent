@@ -6,6 +6,8 @@ import type { Server } from "node:http";
 process.env["DATABRICKS_HOST"] =
   process.env["DATABRICKS_HOST"] || "https://dummy.databricks.com";
 process.env["DATABRICKS_TOKEN"] = process.env["DATABRICKS_TOKEN"] || "dummy_token";
+process.env["DATABRICKS_WAREHOUSE_ID"] =
+  process.env["DATABRICKS_WAREHOUSE_ID"] || "dummy_warehouse_id";
 
 test("server starts and responds to healthcheck", async () => {
   // dynamic import to ensure env vars are set first
@@ -34,3 +36,37 @@ test("server starts and responds to healthcheck", async () => {
     }
   }
 });
+
+// Example: Testing tRPC procedures directly without HTTP server
+// This is faster and simpler for most tests
+//
+// test("getUsers returns array of users", async () => {
+//   const { appRouter } = await import("./index");
+//   const { initTRPC } = await import("@trpc/server");
+//
+//   // create tRPC caller - no HTTP server needed
+//   const t = initTRPC.create();
+//   const caller = t.createCallerFactory(appRouter)({});
+//
+//   const result = await caller.getUsers();
+//
+//   // validate structure
+//   assert.ok(Array.isArray(result));
+//   if (result.length > 0) {
+//     assert.ok(result[0].id);
+//     assert.ok(result[0].name);
+//   }
+// });
+//
+// test("getMetrics with input parameter", async () => {
+//   const { appRouter } = await import("./index");
+//   const { initTRPC } = await import("@trpc/server");
+//
+//   const t = initTRPC.create();
+//   const caller = t.createCallerFactory(appRouter)({});
+//
+//   const result = await caller.getMetrics({ category: "sales" });
+//
+//   assert.ok(Array.isArray(result));
+//   // add assertions for your expected data structure
+// });

@@ -14,11 +14,38 @@ import { strict as assert } from "node:assert";
 
 ## Databricks Type Handling:
 
+- **executeQuery REQUIRES Zod schema**: Pass the Zod schema object as second parameter, NOT a TypeScript type annotation
+  ```typescript
+  // ❌ WRONG - Do NOT use generic type parameter
+  const result = await client.executeQuery<MyType>(sql);
+
+  // ✅ CORRECT - Pass Zod schema as parameter
+  const mySchema = z.object({ id: z.number(), name: z.string() });
+  const result = await client.executeQuery(sql, mySchema);
+  ```
 - **QueryResult access**: `executeQuery()` returns `{rows: T[], rowCount: number}`. Always use `.rows` property: `const {rows} = await client.executeQuery(...)` or `result.rows.map(...)`
 - **Type imports**: Use `import type { T }` (not `import { T }`) when `verbatimModuleSyntax` is enabled
 - **Column access**: Use bracket notation `row['column_name']` (TypeScript strict mode requirement)
 - **DATE/TIMESTAMP columns**: Databricks returns Date objects. Use `z.coerce.date()` in schemas (never `z.string()` for dates)
 - **Dynamic properties**: Cast explicitly `row['order_id'] as number`
+
+### Helper Utilities:
+
+**mapRows<T>(rows, schema)** - Validates and maps raw SQL rows using Zod schema:
+```typescript
+import { mapRows } from './databricks';
+
+// When you have raw rows and need manual mapping
+const rawRows = [{id: 1, name: "Alice"}, {id: 2, name: "Bob"}];
+const userSchema = z.object({ id: z.number(), name: z.string() });
+const users = mapRows(rawRows, userSchema);
+// users is now typed as { id: number; name: string }[]
+```
+
+Use this when:
+- Processing nested query results
+- Manually mapping row data before returning from tRPC
+- Need to validate data from non-Databricks sources
 
 ## Frontend Styling Guidelines:
 
