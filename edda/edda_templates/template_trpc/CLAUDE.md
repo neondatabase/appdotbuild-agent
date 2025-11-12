@@ -12,8 +12,9 @@ import { test } from "node:test";
 import { strict as assert } from "node:assert";
 ```
 
-## Databricks Type Handling:
+## SQL Best Practices
 
+- Always try executing the query first before implementing in code to verify correctness and ensure it returns expected results
 - **executeQuery REQUIRES Zod schema**: Pass the Zod schema object as second parameter, NOT a TypeScript type annotation
   ```typescript
   // ❌ WRONG - Do NOT use generic type parameter
@@ -45,7 +46,6 @@ const users = mapRows(rawRows, userSchema);
 Use this when:
 - Processing nested query results
 - Manually mapping row data before returning from tRPC
-- Need to validate data from non-Databricks sources
 
 ## Frontend Styling Guidelines:
 

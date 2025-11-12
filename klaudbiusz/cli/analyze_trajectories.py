@@ -38,19 +38,20 @@ def load_trajectory(path: Path) -> list[TrajectoryStep]:
     return steps
 
 
-def format_tool_arguments(args: dict, max_length: int = 8192) -> str:
+def truncate_long_strings(value, max_length: int = 8192):
+    """Recursively truncate long strings in nested structures."""
+    if isinstance(value, str) and len(value) > max_length:
+        return f"[truncated {len(value)} chars]"
+    elif isinstance(value, dict):
+        return {k: truncate_long_strings(v, max_length) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [truncate_long_strings(item, max_length) for item in value]
+    return value
+
+
+def format_tool_arguments(args: dict) -> str:
     """Format tool arguments as readable JSON, truncating long strings."""
-
-    def truncate_value(value):
-        if isinstance(value, str) and len(value) > max_length:
-            return f"[truncated {len(value)} chars]"
-        elif isinstance(value, dict):
-            return {k: truncate_value(v) for k, v in value.items()}
-        elif isinstance(value, list):
-            return [truncate_value(item) for item in value]
-        return value
-
-    truncated_args = truncate_value(args)
+    truncated_args = truncate_long_strings(args)
     return json.dumps(truncated_args, indent=2)
 
 
@@ -84,12 +85,8 @@ def format_trajectory_to_markdown(steps: list[TrajectoryStep]) -> str:
                     if result.get("is_error"):
                         lines.append("**⚠️ ERROR**")
                     lines.append("```")
-                    content = result.get("content", "")
-                    # truncate long tool results (e.g. base64 screenshots)
-                    if isinstance(content, str) and len(content) > 8192:
-                        lines.append(f"[truncated {len(content)} chars]")
-                    else:
-                        lines.append(content)
+                    content = truncate_long_strings(result.get("content", ""))
+                    lines.append(content if isinstance(content, str) else str(content))
                     lines.append("```")
                     lines.append("")
 
