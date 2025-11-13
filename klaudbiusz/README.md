@@ -54,17 +54,31 @@ cd klaudbiusz
 # Evaluate all apps
 uv run cli/evaluate_all.py
 
+# Parallel evaluation (faster for large batches)
+uv run cli/evaluate_all.py -j 4                         # Run 4 evaluations in parallel
+uv run cli/evaluate_all.py -j 0                         # Auto-detect CPU count
+uv run cli/evaluate_all.py --parallel 8                 # Long form
+
 # Partial evaluation (filter apps)
 uv run cli/evaluate_all.py --limit 5                    # First 5 apps
 uv run cli/evaluate_all.py --apps app1 app2             # Specific apps
 uv run cli/evaluate_all.py --pattern "customer*"        # Pattern matching
 uv run cli/evaluate_all.py --skip 10 --limit 5          # Skip first 10, evaluate next 5
+uv run cli/evaluate_all.py --start-from app5            # Start from specific app
+
+# Custom directory
+uv run cli/evaluate_all.py --dir /path/to/apps          # Evaluate apps in custom directory
+
+# Staging environment (for testing)
+uv run cli/evaluate_all.py --staging                    # Log to staging MLflow experiment
 
 # Evaluate single app
 uv run cli/evaluate_app.py ../app/customer-churn-analysis
 ```
 
 **Results are automatically logged to MLflow:** Navigate to `ML → Experiments → /Shared/klaudbiusz-evaluations` in Databricks UI / Googfooding.
+
+**Performance:** Parallel evaluation with `-j` can provide 3-4x speedup for large batches (e.g., 20 apps in 5 min vs 15+ min sequential).
 
 ## Evaluation Framework
 
@@ -143,7 +157,7 @@ klaudbiusz/
 
 1. Write natural language prompt
 2. Generate: `uv run cli/single_run.py "your prompt"` or `uv run cli/bulk_run.py`
-3. Evaluate: `uv run cli/evaluate_all.py`
+3. Evaluate: `uv run cli/evaluate_all.py -j 0` (parallel, auto-detect CPUs)
 4. Review: `cat EVALUATION_REPORT.md`
 5. Deploy apps that pass checks
 
@@ -169,9 +183,9 @@ shasum -a 256 -c klaudbiusz_evaluation_*.tar.gz.sha256
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.12+
 - uv (Python package manager)
-- Docker (for builds and runtime checks)
+- Docker (for Dagger containerized evaluations)
 - Node.js 18+ (for generated apps)
 - Databricks workspace with access token
 
