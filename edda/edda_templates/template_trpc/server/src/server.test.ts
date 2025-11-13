@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import type { Server } from "node:http";
+import superjson from "superjson";
 
 // set dummy env vars before importing index (only if not already set)
 process.env["DATABRICKS_HOST"] =
@@ -45,7 +46,7 @@ test("server starts and responds to healthcheck", async () => {
 //   const { initTRPC } = await import("@trpc/server");
 //
 //   // create tRPC caller - no HTTP server needed
-//   const t = initTRPC.create();
+//   const t = initTRPC.create({ transformer: superjson });
 //   const caller = t.createCallerFactory(appRouter)({});
 //
 //   const result = await caller.getUsers();
@@ -62,7 +63,7 @@ test("server starts and responds to healthcheck", async () => {
 //   const { appRouter } = await import("./index");
 //   const { initTRPC } = await import("@trpc/server");
 //
-//   const t = initTRPC.create();
+//   const t = initTRPC.create({ transformer: superjson });
 //   const caller = t.createCallerFactory(appRouter)({});
 //
 //   const result = await caller.getMetrics({ category: "sales" });

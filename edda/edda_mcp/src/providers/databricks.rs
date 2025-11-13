@@ -77,8 +77,8 @@ impl DatabricksProvider {
         }
     }
 
-    #[tool(name = "databricks_list_tables", description = "List accessible tables in a Databricks catalog and schema. Supports optional filtering by table name and pagination (default limit: 500).")]
-    pub async fn list_tables(
+    #[tool(name = "databricks_find_tables", description = "Find or list tables in Databricks Unity Catalog. - To list all tables in a schema: provide catalog_name + schema_name - To search by name: use the 'filter' parameter (supports wildcards) - To search across all catalogs/schemas: omit catalog_name/schema_name Supports pagination (default limit: 500).")]
+    pub async fn find_tables(
         &self,
         Parameters(args): Parameters<DatabricksListTablesArgs>,
     ) -> Result<CallToolResult, ErrorData> {

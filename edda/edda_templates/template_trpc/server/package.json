@@ -6,8 +6,6 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
-    "db:push": "drizzle-kit push --force",
-    "db:push-ci": "yes | npm run db:push",
     "lint": "eslint --cache src/index.ts",
     "test": "sh -c 'ls src/*.test.ts src/*.test.tsx 2>/dev/null | grep -q . || (echo \"Error: No test files found (*.test.ts or *.test.tsx)\" && exit 1); node --test --import tsx src/*.test.ts'"
   },
@@ -17,7 +15,6 @@
     "@types/express": "^5.0.3",
     "cors": "2.8.5",
     "dotenv": "16.4.7",
-    "drizzle-orm": "0.40.0",
     "express": "^5.1.0",
     "pg": "8.14.0",
     "superjson": "2.2.2",
@@ -27,7 +24,6 @@
   "devDependencies": {
     "@types/cors": "2.8.13",
     "@types/pg": "8.11.11",
-    "drizzle-kit": "^0.31.5",
     "eslint": "^9.37.0",
     "typescript": "~5.8.2"
   },

@@ -215,6 +215,7 @@ jobs:
         env:
           DATABRICKS_HOST: "dummy"
           DATABRICKS_TOKEN: "dummy"
+          DATABRICKS_WAREHOUSE_ID: "dummy"
 
   detect-release:
     name: Detect Version and Validate

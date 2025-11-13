@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use log::{debug, info};
+use log::debug;
 use reqwest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
-const SQL_WAREHOUSES_ENDPOINT: &str = "/api/2.0/sql/warehouses";
 const SQL_STATEMENTS_ENDPOINT: &str = "/api/2.0/sql/statements";
 const UNITY_CATALOG_TABLES_ENDPOINT: &str = "/api/2.1/unity-catalog/tables";
 const UNITY_CATALOG_CATALOGS_ENDPOINT: &str = "/api/2.1/unity-catalog/catalogs";
@@ -31,6 +30,7 @@ struct TableColumn {
     name: Option<String>,
     type_name: Option<String>,
     comment: Option<String>,
+    nullable: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +82,35 @@ fn apply_pagination<T>(items: Vec<T>, limit: usize, offset: usize) -> (Vec<T>, u
     (paginated, total, shown)
 }
 
+/// Validates that an identifier (catalog, schema, table name) contains only safe characters.
+/// Allows alphanumeric, underscore, hyphen, and dot (for qualified names).
+fn validate_identifier(id: &str) -> Result<()> {
+    if id.is_empty() {
+        return Err(anyhow!("Identifier cannot be empty"));
+    }
+
+    // allow alphanumeric, underscore, hyphen, and dot for qualified names
+    if !id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return Err(anyhow!("Invalid identifier '{}': contains unsafe characters", id));
+    }
+
+    Ok(())
+}
+
+/// Escapes a user-provided pattern for safe use in SQL LIKE clauses.
+/// - Escapes the backslash escape character itself
+/// - Escapes SQL wildcards (%, _) to treat them as literals
+/// - Converts glob-style wildcards (* and ?) to SQL wildcards
+/// Must be used with ESCAPE '\\' clause in SQL query.
+fn escape_like_pattern(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")  // escape the escape char first!
+        .replace('%', "\\%")    // escape SQL wildcard %
+        .replace('_', "\\_")    // escape SQL wildcard _
+        .replace('*', "%")      // convert glob * to SQL %
+        .replace('?', "_")      // convert glob ? to SQL _
+}
+
 // ============================================================================
 // Argument Types (shared between agent and MCP)
 // ============================================================================
@@ -105,8 +134,13 @@ pub struct DatabricksListSchemasArgs {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DatabricksListTablesArgs {
-    pub catalog_name: String,
-    pub schema_name: String,
+    /// Optional catalog name. If omitted, searches across all catalogs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_name: Option<String>,
+    /// Optional schema name. If omitted, searches across all schemas (requires catalog_name to also be omitted).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema_name: Option<String>,
+    /// Optional filter pattern for table name (supports wildcards when searching across catalogs/schemas)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
     #[serde(default = "default_limit")]
@@ -153,8 +187,8 @@ fn default_limit() -> usize {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListTablesRequest {
-    pub catalog_name: String,
-    pub schema_name: String,
+    pub catalog_name: Option<String>,
+    pub schema_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
     #[serde(default = "default_limit")]
@@ -196,6 +230,7 @@ pub struct ColumnMetadata {
     pub name: String,
     pub data_type: String,
     pub comment: Option<String>,
+    pub nullable: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -331,9 +366,10 @@ impl ToolResultDisplay for TableDetails {
         if !self.columns.is_empty() {
             lines.push(format!("\nColumns ({}):", self.columns.len()));
             for col in &self.columns {
-                let mut col_info = format!("  - {}: {}", col.name, col.data_type);
+                let nullable_str = if col.nullable { "nullable" } else { "required" };
+                let mut col_info = format!("  - {}: {} ({})", col.name, col.data_type, nullable_str);
                 if let Some(comment) = &col.comment {
-                    col_info.push_str(&format!(" ({})", comment));
+                    col_info.push_str(&format!(" - {}", comment));
                 }
                 lines.push(col_info);
             }
@@ -407,16 +443,11 @@ fn format_value(value: &Value) -> String {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct WarehouseListResponse {
-    warehouses: Vec<Warehouse>,
-}
 
-#[derive(Debug, Deserialize)]
-struct Warehouse {
-    id: String,
-    name: Option<String>,
-    state: String,
+#[derive(Debug, Serialize, Deserialize)]
+struct SqlParameter {
+    name: String,
+    value: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -428,7 +459,7 @@ struct SqlStatementRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    parameters: Option<Vec<Value>>,
+    parameters: Option<Vec<SqlParameter>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     row_limit: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -484,6 +515,7 @@ struct StatementResult {
 pub struct DatabricksRestClient {
     host: String,
     token: String,
+    warehouse_id: String,
     client: reqwest::Client,
 }
 
@@ -493,6 +525,8 @@ impl DatabricksRestClient {
             .map_err(|_| anyhow!("DATABRICKS_HOST environment variable not set"))?;
         let token = std::env::var("DATABRICKS_TOKEN")
             .map_err(|_| anyhow!("DATABRICKS_TOKEN environment variable not set"))?;
+        let warehouse_id = std::env::var("DATABRICKS_WAREHOUSE_ID")
+            .map_err(|_| anyhow!("DATABRICKS_WAREHOUSE_ID environment variable not set"))?;
 
         let host = if host.starts_with("http") {
             host
@@ -503,6 +537,7 @@ impl DatabricksRestClient {
         Ok(Self {
             host,
             token,
+            warehouse_id,
             client: reqwest::Client::new(),
         })
     }
@@ -567,27 +602,6 @@ impl DatabricksRestClient {
         })
     }
 
-    async fn get_available_warehouse(&self) -> Result<String> {
-        let url = format!("{}{}", self.host, SQL_WAREHOUSES_ENDPOINT);
-        let response: WarehouseListResponse = self
-            .api_request(reqwest::Method::GET, &url, None::<&()>)
-            .await?;
-
-        let running_warehouse = response
-            .warehouses
-            .into_iter()
-            .find(|w| w.state == "RUNNING")
-            .ok_or_else(|| anyhow!("No running SQL warehouse found"))?;
-
-        info!(
-            "Using warehouse: {} (ID: {})",
-            running_warehouse.name.as_deref().unwrap_or("Unknown"),
-            running_warehouse.id
-        );
-
-        Ok(running_warehouse.id)
-    }
-
     pub async fn execute_sql(
         &self,
         request: &ExecuteSqlRequest,
@@ -596,12 +610,59 @@ impl DatabricksRestClient {
         Ok(ExecuteSqlResult { rows })
     }
 
-    async fn execute_sql_impl(&self, sql: &str) -> Result<Vec<HashMap<String, Value>>> {
-        let warehouse_id = self.get_available_warehouse().await?;
+    /// Execute SQL with named parameters for safe dynamic queries
+    async fn execute_sql_with_params(
+        &self,
+        sql: &str,
+        parameters: Vec<SqlParameter>,
+    ) -> Result<Vec<HashMap<String, Value>>> {
+        let params = if parameters.is_empty() {
+            None
+        } else {
+            Some(parameters)
+        };
 
         let request = SqlStatementRequest {
             statement: sql.to_string(),
-            warehouse_id,
+            warehouse_id: self.warehouse_id.clone(),
+            catalog: None,
+            schema: None,
+            parameters: params,
+            row_limit: Some(10000), // higher limit for metadata queries
+            byte_limit: None,
+            disposition: "INLINE".to_string(),
+            format: "JSON_ARRAY".to_string(),
+            wait_timeout: Some(DEFAULT_WAIT_TIMEOUT.to_string()),
+            on_wait_timeout: Some("CONTINUE".to_string()),
+        };
+
+        let url = format!("{}{}", self.host, SQL_STATEMENTS_ENDPOINT);
+        let response: SqlStatementResponse = self
+            .api_request(reqwest::Method::POST, &url, Some(&request))
+            .await?;
+
+        // check if we need to poll for results
+        if let Some(status) = &response.status {
+            if status.state == "PENDING" || status.state == "RUNNING" {
+                return self.poll_for_results(&response.statement_id).await;
+            } else if status.state == "FAILED" {
+                let error_msg = status
+                    .error
+                    .as_ref()
+                    .and_then(|e| e.message.as_ref())
+                    .map(|m| m.as_str())
+                    .unwrap_or("Unknown error");
+                return Err(anyhow!("SQL execution failed: {}", error_msg));
+            }
+        }
+
+        self.process_statement_result(&response)
+    }
+
+    async fn execute_sql_impl(&self, sql: &str) -> Result<Vec<HashMap<String, Value>>> {
+        let request = SqlStatementRequest {
+            statement: sql.to_string(),
+            warehouse_id: self.warehouse_id.clone(),
             catalog: None,
             schema: None,
             parameters: None,
@@ -843,17 +904,138 @@ impl DatabricksRestClient {
     }
 
     pub async fn list_tables(&self, request: &ListTablesRequest) -> Result<ListTablesResult> {
-        let mut tables = self.list_tables_impl(
-            &request.catalog_name,
-            &request.schema_name,
-            true, // always exclude inaccessible tables
-        )
-        .await?;
+        match (&request.catalog_name, &request.schema_name) {
+            (Some(catalog), Some(schema)) => {
+                // Fast path - use REST API for specific catalog/schema
+                let mut tables = self.list_tables_impl(
+                    catalog,
+                    schema,
+                    true, // always exclude inaccessible tables
+                )
+                .await?;
 
-        // Apply filter if provided
+                // Apply filter if provided
+                if let Some(filter) = &request.filter {
+                    let filter_lower = filter.to_lowercase();
+                    tables.retain(|t| t.name.to_lowercase().contains(&filter_lower));
+                }
+
+                let (tables, total_count, shown_count) = apply_pagination(tables, request.limit, request.offset);
+
+                Ok(ListTablesResult {
+                    tables,
+                    total_count,
+                    shown_count,
+                    offset: request.offset,
+                    limit: request.limit,
+                })
+            }
+            _ => {
+                // Wildcard search - use system.information_schema.tables
+                self.list_tables_via_information_schema(request).await
+            }
+        }
+    }
+
+    /// Search tables across catalogs/schemas using system.information_schema
+    async fn list_tables_via_information_schema(&self, request: &ListTablesRequest) -> Result<ListTablesResult> {
+        // validate invalid combination
+        if request.catalog_name.is_none() && request.schema_name.is_some() {
+            return Err(anyhow!("schema_name requires catalog_name to be specified"));
+        }
+
+        // validate identifiers for SQL safety
+        if let Some(catalog) = &request.catalog_name {
+            validate_identifier(catalog)?;
+        }
+        if let Some(schema) = &request.schema_name {
+            validate_identifier(schema)?;
+        }
+
+        // build WHERE conditions with parameterized queries
+        let mut conditions = Vec::new();
+        let mut parameters = Vec::new();
+
+        if let Some(catalog) = &request.catalog_name {
+            conditions.push("table_catalog = :catalog".to_string());
+            parameters.push(SqlParameter {
+                name: "catalog".to_string(),
+                value: catalog.clone(),
+            });
+        }
+
+        if let Some(schema) = &request.schema_name {
+            conditions.push("table_schema = :schema".to_string());
+            parameters.push(SqlParameter {
+                name: "schema".to_string(),
+                value: schema.clone(),
+            });
+        }
+
         if let Some(filter) = &request.filter {
-            let filter_lower = filter.to_lowercase();
-            tables.retain(|t| t.name.to_lowercase().contains(&filter_lower));
+            // use dedicated escape function for LIKE patterns
+            let mut pattern = escape_like_pattern(filter);
+
+            // wrap pattern for substring match if no wildcards at boundaries
+            if !pattern.starts_with('%') && !pattern.ends_with('%') {
+                pattern = format!("%{}%", pattern);
+            }
+
+            conditions.push("table_name LIKE :pattern ESCAPE '\\\\'".to_string());
+            parameters.push(SqlParameter {
+                name: "pattern".to_string(),
+                value: pattern,
+            });
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        // build SQL query with parameter markers
+        let sql = format!(
+            "SELECT table_catalog, table_schema, table_name, table_type \
+             FROM system.information_schema.tables \
+             {} \
+             ORDER BY table_catalog, table_schema, table_name \
+             LIMIT {}",
+            where_clause,
+            request.limit + request.offset
+        );
+
+        // execute query with parameters
+        let rows = self.execute_sql_with_params(&sql, parameters).await?;
+
+        // parse results into TableInfo with explicit error handling
+        let mut tables = Vec::new();
+        for row in &rows {
+            let catalog = row.get("table_catalog")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing or invalid table_catalog in row: {:?}", row))?;
+
+            let schema = row.get("table_schema")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing or invalid table_schema in row: {:?}", row))?;
+
+            let name = row.get("table_name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing or invalid table_name in row: {:?}", row))?;
+
+            let table_type = row.get("table_type")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing or invalid table_type in row: {:?}", row))?;
+
+            tables.push(TableInfo {
+                name: name.to_string(),
+                catalog_name: catalog.to_string(),
+                schema_name: schema.to_string(),
+                table_type: table_type.to_string(),
+                full_name: format!("{}.{}.{}", catalog, schema, name),
+                owner: None,
+                comment: None,
+            });
         }
 
         let (tables, total_count, shown_count) = apply_pagination(tables, request.limit, request.offset);
@@ -945,16 +1127,23 @@ impl DatabricksRestClient {
             .await?;
 
         // Build column metadata
-        let columns = table_response
+        let columns: Result<Vec<_>> = table_response
             .columns
             .unwrap_or_default()
             .into_iter()
-            .map(|col| ColumnMetadata {
-                name: col.name.unwrap_or_else(|| "unknown".to_string()),
-                data_type: col.type_name.unwrap_or_else(|| "unknown".to_string()),
-                comment: col.comment,
+            .map(|col| {
+                let name = col.name.unwrap_or_else(|| "unknown".to_string());
+                Ok(ColumnMetadata {
+                    name: name.clone(),
+                    data_type: col.type_name.unwrap_or_else(|| "unknown".to_string()),
+                    comment: col.comment,
+                    nullable: col.nullable.ok_or_else(|| {
+                        anyhow!("Column '{}' missing nullable field from API", name)
+                    })?,
+                })
             })
             .collect();
+        let columns = columns?;
 
         // Get sample data and row count
         let sample_data = if sample_rows > 0 {

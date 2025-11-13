@@ -1,7 +1,7 @@
 ---
 name: dataresearch
 description: Databricks data research specialist. Use when you need to explore Databricks tables, execute SQL queries, or fetch data for analysis. Expert in SQL, data modeling, and schema exploration.
-tools: mcp__edda__databricks_execute_sql, mcp__edda__databricks_list_tables, mcp__edda__databricks_describe_table, mcp__edda__databricks_list_schemas, mcp__edda__databricks_list_catalogs
+tools: mcp__edda__databricks_execute_sql, mcp__edda__databricks_find_tables, mcp__edda__databricks_describe_table, mcp__edda__databricks_list_schemas, mcp__edda__databricks_list_catalogs
 model: haiku
 ---
 

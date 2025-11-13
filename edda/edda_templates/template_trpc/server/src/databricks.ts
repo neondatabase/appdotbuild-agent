@@ -24,7 +24,9 @@ import { z } from "zod";
 
 // Environment variables
 const authMode: string = process.env["DATABRICKS_AUTH_MODE"] || "pat";
-const serverHostname: string = process.env["DATABRICKS_HOST"] || "";
+const serverHostname: string = (process.env["DATABRICKS_HOST"] || "")
+  .replace(/^https?:\/\//, "") // strip http:// or https:// if present
+  .replace(/\/$/, ""); // strip trailing slash if present
 const warehouseId: string = process.env["DATABRICKS_WAREHOUSE_ID"] || "";
 const token: string = process.env["DATABRICKS_TOKEN"] || "";
 const clientId: string = process.env["DATABRICKS_CLIENT_ID"] || "";

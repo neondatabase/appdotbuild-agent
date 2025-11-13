@@ -200,7 +200,7 @@ impl DatabricksTool for DatabricksListTables {
     type Error = String;
 
     fn name(&self) -> String {
-        "databricks_list_tables".to_string()
+        "databricks_find_tables".to_string()
     }
 
     fn definition(&self) -> rig::completion::ToolDefinition {
@@ -253,18 +253,26 @@ impl DatabricksTool for DatabricksListTables {
         match client.list_tables(&request).await {
             Ok(result) => {
                 if result.tables.is_empty() {
-                    Ok(Ok(format!(
-                        "No tables found in '{}.{}'.",
-                        args.catalog_name, args.schema_name
-                    )))
+                    let location = match (&args.catalog_name, &args.schema_name) {
+                        (Some(c), Some(s)) => format!("'{}.{}'", c, s),
+                        (Some(c), None) => format!("catalog '{}'", c),
+                        (None, None) => "any catalog/schema".to_string(),
+                        _ => "specified location".to_string(),
+                    };
+                    Ok(Ok(format!("No tables found in {}.", location)))
                 } else {
                     Ok(Ok(result.display()))
                 }
             }
-            Err(e) => Ok(Err(format!(
-                "Failed to list tables in '{}.{}': {}",
-                args.catalog_name, args.schema_name, e
-            ))),
+            Err(e) => {
+                let location = match (&args.catalog_name, &args.schema_name) {
+                    (Some(c), Some(s)) => format!("'{}.{}'", c, s),
+                    (Some(c), None) => format!("catalog '{}'", c),
+                    (None, None) => "any catalog/schema".to_string(),
+                    _ => "specified location".to_string(),
+                };
+                Ok(Err(format!("Failed to list tables in {}: {}", location, e)))
+            }
         }
     }
 }

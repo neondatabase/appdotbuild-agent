@@ -16,7 +16,7 @@ const t = initTRPC.create({
 const publicProcedure = t.procedure;
 const router = t.router;
 
-const appRouter = router({
+export const appRouter = router({
   healthcheck: publicProcedure.query(() => {
     return { status: "ok", timestamp: new Date().toISOString() };
   }),
