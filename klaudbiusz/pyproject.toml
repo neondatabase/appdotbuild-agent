@@ -16,6 +16,8 @@ dependencies = [
     "mlflow>=2.15.0",
     "databricks-sdk>=0.70.0",
     "claude-agent-sdk>=0.1.6",
+    "dagger-io>=0.18.16",
+    "tenacity>=9.1.2",
 ]
 
 [tool.ruff]

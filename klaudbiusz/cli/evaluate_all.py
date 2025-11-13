@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Batch evaluation script for all generated apps.
+Batch evaluation script for all generated apps using Dagger containers.
 
-Runs lightweight evaluation on all apps and generates a comprehensive report.
+Runs lightweight evaluation on all apps in isolated Dagger containers
+and generates a comprehensive report.
 
 Usage:
     python evaluate_all.py
@@ -11,15 +12,16 @@ Usage:
     python evaluate_all.py --limit 5
     python evaluate_all.py --skip 10
     python evaluate_all.py --start-from app5
+    python evaluate_all.py --parallel 4
 """
 
 import argparse
+import asyncio
 import fnmatch
 import json
 import sys
 from datetime import datetime
 from dotenv import load_dotenv
-from joblib import Parallel, delayed
 
 # Load environment variables from .env file
 load_dotenv()
@@ -42,8 +44,10 @@ try:
 except ImportError:
     pass
 
-# Import evaluate_app from evaluate_app.py - all evaluation logic is there
-from evaluate_app import evaluate_app
+import dagger
+
+# Import async Dagger-based evaluation
+from evaluate_app_dagger import evaluate_app_async
 from eval_metrics import eff_units
 
 
@@ -666,7 +670,8 @@ def filter_app_dirs(app_dirs: list[Path], args) -> list[Path]:
     return filtered
 
 
-def evaluate_app_with_metadata(
+async def evaluate_app_with_metadata_async(
+    client: dagger.Client,
     app_dir: Path,
     prompt: str | None,
     gen_metrics: dict,
@@ -674,8 +679,8 @@ def evaluate_app_with_metadata(
     total: int
 ) -> dict | None:
     """
-    Wrapper for evaluate_app that adds generation metrics and handles errors.
-    Designed to work with joblib.Parallel.
+    Async wrapper for evaluate_app_async that adds generation metrics and handles errors.
+    Designed to work with asyncio.gather().
     """
     print(f"\n[{index}/{total}] {app_dir.name}")
 
@@ -684,7 +689,7 @@ def evaluate_app_with_metadata(
     port = 8000 + index
 
     try:
-        result = evaluate_app(app_dir, prompt, port)
+        result = await evaluate_app_async(client, app_dir, prompt, port)
         result_dict = asdict(result)
 
         # Add generation metrics if available
@@ -710,8 +715,8 @@ def evaluate_app_with_metadata(
         return None  # Return None for failed evaluations
 
 
-def main():
-    """Main entry point."""
+async def main_async():
+    """Async main entry point."""
     args = parse_args()
 
     script_dir = Path(__file__).parent
@@ -758,7 +763,7 @@ def main():
     if args.limit:
         print(f"   Filter: limit to {args.limit} apps")
     if args.parallel > 1:
-        print(f"   Parallelism: {args.parallel} workers")
+        print(f"   Parallelism: {args.parallel} workers (Dagger containers)")
     print("=" * 60)
 
     # Warn if parallelism is too high
@@ -773,39 +778,48 @@ def main():
     # Track timing
     eval_start_time = time.time()
 
-    # Run evaluations (sequential or parallel based on --parallel flag)
-    if args.parallel > 1:
-        print(f"🚀 Running {args.parallel} evaluations in parallel...")
+    # Run evaluations using Dagger with async/await
+    async with dagger.Connection() as client:
+        if args.parallel > 1:
+            print(f"🚀 Running {args.parallel} evaluations in parallel (Dagger containers)...")
 
-        # Use joblib for parallel execution
-        results = Parallel(n_jobs=args.parallel, backend="loky", verbose=5)(
-            delayed(evaluate_app_with_metadata)(
-                app_dir,
-                prompts.get(app_dir.name),
-                gen_metrics,
-                i,
-                len(app_dirs)
+            # Use asyncio.gather() for parallel execution with semaphore to limit concurrency
+            semaphore = asyncio.Semaphore(args.parallel)
+
+            async def evaluate_with_semaphore(index, app_dir):
+                async with semaphore:
+                    return await evaluate_app_with_metadata_async(
+                        client,
+                        app_dir,
+                        prompts.get(app_dir.name),
+                        gen_metrics,
+                        index,
+                        len(app_dirs)
+                    )
+
+            results = await asyncio.gather(
+                *[evaluate_with_semaphore(i, app_dir) for i, app_dir in enumerate(app_dirs, 1)],
+                return_exceptions=False
             )
-            for i, app_dir in enumerate(app_dirs, 1)
-        )
 
-        # Filter out None results (failed evaluations)
-        results = [r for r in results if r is not None]
+            # Filter out None results (failed evaluations)
+            results = [r for r in results if r is not None]
 
-    else:
-        # Sequential execution (existing logic)
-        print("🔄 Running evaluations sequentially...")
-        results = []
-        for i, app_dir in enumerate(app_dirs, 1):
-            result_dict = evaluate_app_with_metadata(
-                app_dir,
-                prompts.get(app_dir.name),
-                gen_metrics,
-                i,
-                len(app_dirs)
-            )
-            if result_dict is not None:
-                results.append(result_dict)
+        else:
+            # Sequential execution
+            print("🔄 Running evaluations sequentially (Dagger containers)...")
+            results = []
+            for i, app_dir in enumerate(app_dirs, 1):
+                result_dict = await evaluate_app_with_metadata_async(
+                    client,
+                    app_dir,
+                    prompts.get(app_dir.name),
+                    gen_metrics,
+                    i,
+                    len(app_dirs)
+                )
+                if result_dict is not None:
+                    results.append(result_dict)
 
     eval_duration = time.time() - eval_start_time
 
@@ -956,6 +970,11 @@ def main():
         print(f"\n🎉 Open in browser: file://{html_output.absolute()}")
     except Exception as e:
         print(f"⚠️  Could not generate HTML viewer: {e}")
+
+
+def main():
+    """Sync wrapper for async main."""
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":
