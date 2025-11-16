@@ -8,17 +8,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
 
-# Disable LiteLLM's async logging to avoid event loop issues with joblib
-import litellm
+from litellm_multiprocess_fix import patch_litellm_for_multiprocessing
+
+patch_litellm_for_multiprocessing()
+
 from codegen import ClaudeAppBuilder
 from codegen import GenerationMetrics as ClaudeGenerationMetrics
 from codegen_multi import LiteLLMAppBuilder
 from dotenv import load_dotenv
 from joblib import Parallel, delayed
 from prompts_databricks import PROMPTS as DATABRICKS_PROMPTS
-
-litellm.turn_off_message_logging = True
-litellm.drop_params = True  # silently drop unsupported params instead of warning
 
 # Unified type for metrics from both backends
 GenerationMetrics = ClaudeGenerationMetrics
@@ -48,12 +47,9 @@ def run_single_generation(
     suppress_logs: bool = True,
     mcp_binary: str | None = None,
 ) -> RunResult:
-    # Ensure LiteLLM is configured fresh in each worker process
+    # re-apply litellm patch in worker process (joblib uses spawn/fork)
     if backend == "litellm":
-        import litellm
-
-        litellm.turn_off_message_logging = True
-        litellm.drop_params = True
+        patch_litellm_for_multiprocessing()
 
     def timeout_handler(signum, frame):
         raise TimeoutError("Generation timed out after 1200 seconds")

@@ -347,6 +347,7 @@ def cli(
     app_name: str | None = None,
     model: str = "openrouter/minimax/minimax-m2",  # other good options: "openrouter/moonshotai/kimi-k2-thinking",  "gemini/gemini-2.5-pro",
     # some open-weights platform provide openai/anthropic-like API that can be used like 
+    # OPENAI_API_KEY=$DATABRICKS_TOKEN OPENAI_API_BASE=https://$DATABRICKS_HOST/serving-endpoints uv run cli/single_run.py "..." --backend=litellm --model="openai/databricks-gpt-oss-120b"
     # OPENAI_API_BASE="https://api.minimax.io/v1" OPENAI_API_KEY="$MINIMAX_API_KEY" uv run cli/single_run.py "..."" --backend=litellm --model="openai/MiniMax-M2"
     # ANTHROPIC_BASE_URL="https://api.minimax.io/anthropic" ANTHROPIC_API_KEY="$MINIMAX_API_KEY" uv run cli/single_run.py "..." --backend=litellm --model="anthropic/MiniMax-M2"
     suppress_logs: bool = False,
