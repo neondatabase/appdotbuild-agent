@@ -16,7 +16,7 @@ def detect_template(app_dir: Path) -> str:
         app_dir: Path to the application directory
 
     Returns:
-        Template type: "dbx-sdk", "trpc", or "unknown"
+        Template type: "dbx-sdk", "trpc", "vite", or "unknown"
     """
     # DBX SDK markers (new template)
     if _is_dbx_sdk_app(app_dir):
@@ -25,6 +25,10 @@ def detect_template(app_dir: Path) -> str:
     # tRPC markers (legacy template)
     if _is_trpc_app(app_dir):
         return "trpc"
+
+    # Vite markers (simple frontend apps)
+    if _is_vite_app(app_dir):
+        return "vite"
 
     return "unknown"
 
@@ -87,6 +91,39 @@ def _is_trpc_app(app_dir: Path) -> bool:
     return score >= 2
 
 
+def _is_vite_app(app_dir: Path) -> bool:
+    """Check if app uses Vite template (simple frontend apps)."""
+    score = 0
+
+    # Check for vite.config.ts/js
+    if (app_dir / "vite.config.ts").exists() or (app_dir / "vite.config.js").exists():
+        score += 2
+
+    # Check for single root package.json (not monorepo)
+    root_pkg = app_dir / "package.json"
+    if root_pkg.exists():
+        try:
+            import json
+            pkg_content = json.loads(root_pkg.read_text())
+            # Check for vite in devDependencies
+            dev_deps = pkg_content.get("devDependencies", {})
+            if "vite" in dev_deps:
+                score += 2
+            # Check for typical Vite scripts
+            scripts = pkg_content.get("scripts", {})
+            if "dev" in scripts and "vite" in scripts.get("dev", ""):
+                score += 1
+        except:
+            pass
+
+    # Check that it's NOT a monorepo (no separate server/client package.json files)
+    if not (app_dir / "server" / "package.json").exists() and not (app_dir / "client" / "package.json").exists():
+        score += 1
+
+    # Need at least 2 indicators
+    return score >= 2
+
+
 def get_template_info(template: str) -> dict:
     """
     Get template-specific configuration.
@@ -114,6 +151,15 @@ def get_template_info(template: str) -> dict:
             "package_json_location": "split",  # Separate server/ and client/
             "api_pattern": "/api/trpc/{procedure}",
             "sql_location": "inline",  # SQL embedded in TypeScript
+        }
+    elif template == "vite":
+        return {
+            "backend_dirs": [],  # Frontend-only
+            "frontend_dirs": ["src"],
+            "entry_points": ["src/main.tsx", "src/main.ts", "src/index.tsx", "src/index.ts"],
+            "package_json_location": "root",
+            "api_pattern": "none",  # No backend
+            "sql_location": "none",  # No SQL
         }
     else:
         # Fallback: try all common patterns

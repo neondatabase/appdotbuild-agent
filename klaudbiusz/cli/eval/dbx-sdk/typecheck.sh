@@ -1,25 +1,33 @@
 #!/bin/bash
-set -e
+# Don't use set -e
 
 # DBX SDK template typecheck script
 # Runs TypeScript type checking using npm run check or tsc directly
 
-# Source common functions
-source "$(dirname "$0")/common.sh"
-
-# Install dependencies if needed
-install_dependencies
+echo "Running type check..." >&2
 
 # Verify package.json exists
 if [ ! -f "package.json" ]; then
-    echo "❌ Error: No package.json found" >&2
+    echo "❌ No package.json found" >&2
     exit 1
 fi
 
 # Check if npm run check is available (standard for DBX SDK)
 if grep -q '"check"' package.json 2>/dev/null; then
-    exec npm run check
+    if npm run check 2>&1 >/dev/null; then
+        echo "✅ Type check passed" >&2
+        exit 0
+    else
+        echo "❌ Type check failed" >&2
+        exit 1
+    fi
 else
     # Fallback: run tsc directly
-    exec npx tsc --noEmit --skipLibCheck
+    if npx tsc --noEmit --skipLibCheck 2>&1 >/dev/null; then
+        echo "✅ Type check passed" >&2
+        exit 0
+    else
+        echo "❌ Type check failed" >&2
+        exit 1
+    fi
 fi
