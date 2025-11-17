@@ -69,17 +69,18 @@ def get_git_commit_hash() -> str | None:
     return None
 
 
-def load_prompts_and_metrics_from_bulk_run() -> tuple[dict[str, str], dict[str, dict]]:
+def load_prompts_and_metrics_from_bulk_run() -> tuple[dict[str, str], dict[str, dict], dict[str, str]]:
     """Load prompts and generation metrics using PROMPTS dict from bulk_run.
 
     Returns:
-        (prompts_dict, metrics_dict) where metrics_dict contains cost_usd, input_tokens, output_tokens, turns
+        (prompts_dict, metrics_dict, run_config_dict) where metrics_dict contains cost_usd, input_tokens, output_tokens, turns
+        and run_config_dict contains mcp_binary, backend, model
     """
     try:
         # Import PROMPTS from bulk_run.py
         from bulk_run import PROMPTS
     except ImportError:
-        return {}, {}
+        return {}, {}, {}
 
     # Look for bulk_run_results file
     script_dir = Path(__file__).parent
@@ -88,11 +89,21 @@ def load_prompts_and_metrics_from_bulk_run() -> tuple[dict[str, str], dict[str, 
         results_files = sorted(script_dir.glob("../app/bulk_run_results_*.json"), reverse=True)
 
     if not results_files:
-        return dict(PROMPTS), {}
+        return dict(PROMPTS), {}, {}
 
     # Load generation metrics from results file
     try:
         data = json.loads(results_files[0].read_text())
+
+        # Extract run configuration from first result
+        run_config = {}
+        if data and len(data) > 0:
+            first_result = data[0]
+            run_config = {
+                "mcp_binary": first_result.get("mcp_binary", "cargo run (default)"),
+                "backend": first_result.get("backend", "claude"),
+                "model": first_result.get("model"),
+            }
 
         # Create a prompt->metrics mapping
         prompt_to_metrics = {}
@@ -113,10 +124,10 @@ def load_prompts_and_metrics_from_bulk_run() -> tuple[dict[str, str], dict[str, 
             if prompt in prompt_to_metrics:
                 gen_metrics[app_name] = prompt_to_metrics[prompt]
 
-        return dict(PROMPTS), gen_metrics
+        return dict(PROMPTS), gen_metrics, run_config
 
     except Exception:
-        return dict(PROMPTS), {}
+        return dict(PROMPTS), {}, {}
 
 
 def generate_summary_report(results: list[dict]) -> dict:
@@ -599,6 +610,24 @@ Examples:
         help='Run N evaluations in parallel (default: 1 = sequential). Use -j 0 for auto (CPU count)'
     )
 
+    parser.add_argument(
+        '--mcp-binary',
+        metavar='PATH',
+        help='MCP binary path (overrides value from bulk_run results)'
+    )
+
+    parser.add_argument(
+        '--backend',
+        metavar='NAME',
+        help='Backend used (claude/litellm, overrides value from bulk_run results)'
+    )
+
+    parser.add_argument(
+        '--model',
+        metavar='NAME',
+        help='Model used (overrides value from bulk_run results)'
+    )
+
     filter_group = parser.add_argument_group('app filtering')
     filter_group.add_argument(
         '--apps',
@@ -742,7 +771,15 @@ async def main_async():
         sys.exit(1)
 
     # Load prompts and generation metrics from bulk_run.py and bulk_run_results
-    prompts, gen_metrics = load_prompts_and_metrics_from_bulk_run()
+    prompts, gen_metrics, run_config = load_prompts_and_metrics_from_bulk_run()
+
+    # Override run config with CLI args if provided
+    if args.mcp_binary:
+        run_config["mcp_binary"] = args.mcp_binary
+    if args.backend:
+        run_config["backend"] = args.backend
+    if args.model:
+        run_config["model"] = args.model
 
     # Get all app directories
     all_app_dirs = [d for d in sorted(apps_dir.iterdir()) if d.is_dir() and not d.name.startswith(".")]
@@ -924,12 +961,22 @@ async def main_async():
             run_id = tracker.start_run(run_name=run_name, tags=tags)
 
             # Log parameters
-            tracker.log_evaluation_parameters(
-                mode="evaluation",
-                total_apps=summary['total_apps'],
-                timestamp=timestamp,
-                model_version="claude-sonnet-4-5-20250929"
-            )
+            params = {
+                "mode": "evaluation",
+                "total_apps": summary['total_apps'],
+                "timestamp": timestamp,
+                "model_version": "claude-sonnet-4-5-20250929",
+            }
+
+            # Add run config parameters if available
+            if run_config.get("mcp_binary"):
+                params["mcp_binary"] = run_config["mcp_binary"]
+            if run_config.get("backend"):
+                params["backend"] = run_config["backend"]
+            if run_config.get("model"):
+                params["llm_model"] = run_config["model"]
+
+            tracker.log_evaluation_parameters(**params)
 
             # Log metrics from evaluation report
             tracker.log_evaluation_metrics(full_report)

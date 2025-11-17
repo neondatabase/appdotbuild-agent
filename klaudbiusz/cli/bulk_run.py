@@ -35,6 +35,9 @@ class RunResult(TypedDict):
     metrics: GenerationMetrics | None
     error: str | None
     app_dir: str | None
+    mcp_binary: str | None
+    backend: str
+    model: str | None
 
 
 def run_single_generation(
@@ -99,6 +102,9 @@ def run_single_generation(
             "metrics": metrics,
             "error": None,
             "app_dir": app_dir,
+            "mcp_binary": mcp_binary,
+            "backend": backend,
+            "model": model,
         }
     except TimeoutError as e:
         signal.alarm(0)  # cancel timeout
@@ -109,6 +115,9 @@ def run_single_generation(
             "metrics": None,
             "error": str(e),
             "app_dir": None,
+            "mcp_binary": mcp_binary,
+            "backend": backend,
+            "model": model,
         }
     except Exception as e:
         signal.alarm(0)  # cancel timeout
@@ -119,6 +128,9 @@ def run_single_generation(
             "metrics": None,
             "error": str(e),
             "app_dir": None,
+            "mcp_binary": mcp_binary,
+            "backend": backend,
+            "model": model,
         }
 
 
