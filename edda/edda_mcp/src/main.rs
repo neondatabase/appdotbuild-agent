@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use edda_mcp::paths;
 use edda_mcp::providers::{
     CombinedProvider, DatabricksProvider, DeploymentProvider, GoogleSheetsProvider, IOProvider,
-    WorkspaceTools,
+    ProviderType, WorkspaceTools,
 };
 use edda_mcp::session::SessionContext;
 use edda_mcp::trajectory::TrajectoryTrackingProvider;
@@ -220,6 +220,11 @@ async fn warmup_sandbox() -> Result<()> {
     Ok(())
 }
 
+/// helper to check if provider should be enabled based on config
+fn should_enable_provider(config: &edda_mcp::config::Config, provider: ProviderType) -> bool {
+    config.required_providers.contains(&provider)
+}
+
 /// check environment configuration and prerequisites
 async fn check_environment(config: &edda_mcp::config::Config) -> Result<()> {
     use edda_mcp::providers::ProviderType;
@@ -397,22 +402,26 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
     });
 
     // initialize all available providers
-    let databricks = DatabricksProvider::new().ok();
-    let deployment = if config.with_deployment {
-        DeploymentProvider::new().ok()
-    } else {
-        None
+    let databricks = match should_enable_provider(&config, ProviderType::Databricks) {
+        true => DatabricksProvider::new().ok(),
+        false => None,
     };
-    let google_sheets = GoogleSheetsProvider::new().await.ok();
+    let deployment = match config.with_deployment {
+        true => DeploymentProvider::new().ok(),
+        false => None,
+    };
+    let google_sheets = match should_enable_provider(&config, ProviderType::GoogleSheets) {
+        true => GoogleSheetsProvider::new().await.ok(),
+        false => None,
+    };
     let io = IOProvider::new(config.io_config.clone()).ok();
 
     // create session context (session_id populated earlier)
     let session_ctx = SessionContext::new(session_id.clone());
 
-    let workspace = if config.with_workspace_tools {
-        WorkspaceTools::new(session_ctx.clone()).ok()
-    } else {
-        None
+    let workspace = match config.with_workspace_tools {
+        true => WorkspaceTools::new(session_ctx.clone()).ok(),
+        false => None,
     };
 
     // print startup banner to stderr (won't interfere with stdio MCP transport)

@@ -14,7 +14,7 @@ use crate::session::SessionContext;
 use eyre::Result;
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, Implementation, PaginatedRequestParam, ProtocolVersion,
-    ServerCapabilities, ServerInfo,
+    RawContent, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler};
@@ -36,6 +36,17 @@ enum TargetProvider {
     GoogleSheets(Arc<GoogleSheetsProvider>),
     Io(Arc<IOProvider>),
     Workspace(Arc<WorkspaceTools>),
+}
+
+/// inject ENGINE_GUIDE into the first text content of a tool result
+fn inject_engine_guide(result: &mut CallToolResult) {
+    use crate::engine_guide::ENGINE_GUIDE;
+
+    if let Some(first_content) = result.content.first_mut() {
+        if let RawContent::Text(text_content) = &mut first_content.raw {
+            text_content.text = format!("{}\n\n---\n\n{}", ENGINE_GUIDE, text_content.text);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -302,7 +313,7 @@ impl ServerHandler for CombinedProvider {
         // intercept scaffold_data_app to set work_dir in session context
         if params.name == "scaffold_data_app" {
             if let Some(ref io) = self.io {
-                let result = io.call_tool(params.clone(), context.clone()).await?;
+                let mut result = io.call_tool(params.clone(), context.clone()).await?;
 
                 // extract work_dir from arguments and set it in session context
                 if let Some(args) = params.arguments {
@@ -319,6 +330,10 @@ impl ServerHandler for CombinedProvider {
                     }
                 }
 
+                if is_first_call {
+                    inject_engine_guide(&mut result);
+                }
+
                 return Ok(result);
             }
         }
@@ -331,17 +346,8 @@ impl ServerHandler for CombinedProvider {
             TargetProvider::Workspace(provider) => provider.call_tool(params, context).await,
         }?;
 
-        // inject engine guide on first tool call
         if is_first_call {
-            use crate::engine_guide::ENGINE_GUIDE;
-            use rmcp::model::RawContent;
-
-            // prepend engine guide to the first content item
-            if let Some(first_content) = result.content.first_mut() {
-                if let RawContent::Text(text_content) = &mut first_content.raw {
-                    text_content.text = format!("{}\n\n---\n\n{}", ENGINE_GUIDE, text_content.text);
-                }
-            }
+            inject_engine_guide(&mut result);
         }
 
         Ok(result)
