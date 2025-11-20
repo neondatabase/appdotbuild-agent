@@ -103,7 +103,7 @@ impl Default for Config {
             with_deployment: true,
             with_workspace_tools: false,
             required_providers: vec![
-                ProviderType::Databricks,
+                ProviderType::DatabricksRest,
                 ProviderType::Deployment,
                 ProviderType::Io,
             ],

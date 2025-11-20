@@ -124,7 +124,7 @@ def main() -> None:
             print(f"❌ Expected error for invalid arguments, got: {tool_call_response}")
             sys.exit(1)
 
-        print(f"✓ Tool call correctly rejected invalid arguments")
+        print("✓ Tool call correctly rejected invalid arguments")
 
         print("\n✅ Smoke test passed!")
 

@@ -31,8 +31,9 @@ class GenerationMetrics:
 
 
 class MCPSession:
-    def __init__(self, mcp_binary: str | None = None):
+    def __init__(self, mcp_binary: str | None = None, mcp_json_path: str | None = None):
         self.mcp_binary = mcp_binary
+        self.mcp_json_path = mcp_json_path
         self.project_root = Path(__file__).parent.parent.parent
         self.mcp_manifest = validate_mcp_manifest(mcp_binary, self.project_root)
 
@@ -47,9 +48,11 @@ class MCPSession:
             "DATABRICKS_WAREHOUSE_ID": os.getenv("DATABRICKS_WAREHOUSE_ID", ""),
         }
 
-        command, args = build_mcp_command(self.mcp_binary, self.mcp_manifest)
+        command, args = build_mcp_command(self.mcp_binary, self.mcp_manifest, self.mcp_json_path)
         # add workspace tools flag for LiteLLM backend (works for both binary and cargo run)
-        args.append("--with-workspace-tools=true")
+        # only if not using JSON override
+        if not self.mcp_json_path:
+            args.append("--with-workspace-tools=true")
         server_params = StdioServerParameters(command=command, args=args, env=env)
 
         self._context = stdio_client(server_params)
@@ -280,12 +283,14 @@ class LiteLLMAppBuilder:
         app_name: str,
         model: str,
         mcp_binary: str | None = None,
+        mcp_json_path: str | None = None,
         suppress_logs: bool = False,
         output_dir: str | None = None,
     ):
         self.app_name = app_name
         self.model = model
         self.mcp_binary = mcp_binary
+        self.mcp_json_path = mcp_json_path
         self.suppress_logs = suppress_logs
         self.output_dir = Path(output_dir) if output_dir else Path.cwd() / "app"
         litellm.drop_params = True
@@ -330,7 +335,7 @@ Be concise and to the point."""
     async def run_async(self, prompt: str) -> GenerationMetrics:
         setup_logging(self.suppress_logs, self.mcp_binary)
 
-        mcp_session = MCPSession(self.mcp_binary)
+        mcp_session = MCPSession(self.mcp_binary, self.mcp_json_path)
         try:
             session = await mcp_session.__aenter__()
 

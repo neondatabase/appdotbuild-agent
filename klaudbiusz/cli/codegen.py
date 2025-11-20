@@ -90,6 +90,7 @@ class ClaudeAppBuilder:
         suppress_logs: bool = False,
         use_subagents: bool = False,
         mcp_binary: str | None = None,
+        mcp_json_path: str | None = None,
         output_dir: str | None = None,
     ):
         load_dotenv()
@@ -102,6 +103,7 @@ class ClaudeAppBuilder:
         self.use_subagents = use_subagents
         self.suppress_logs = suppress_logs
         self.mcp_binary = mcp_binary
+        self.mcp_json_path = mcp_json_path
         self.output_dir = Path(output_dir) if output_dir else Path.cwd() / "app"
         self.tracker = Tracker(self.run_id, app_name, suppress_logs)
         self.scaffold_tracker = ScaffoldTracker()
@@ -130,7 +132,7 @@ class ClaudeAppBuilder:
                 )
 
         # workflow and template best practices are now in the MCP tool description
-        base_instructions = "Use Edda MCP tools to scaffold, build, and test the app as needed.\n"
+        base_instructions = "Use Edda MCP tools to scaffold, build, and test the app as needed.\n Use data from Databricks when relevant.\n"
 
         if self.use_subagents:
             base_instructions += """When you need to explore Databricks tables, schemas, or execute SQL queries, use the Task tool to delegate to the 'dataresearch' subagent. Do NOT use databricks_* tools directly.\n"""
@@ -149,7 +151,7 @@ Use up to 10 tools per call to speed up the process.\n"""
         # The CLI doesn't support per-agent tool permissions yet.
         # Instead, we rely on system prompt instructions to enforce delegation.
 
-        command, args = build_mcp_command(self.mcp_binary, self.mcp_manifest)
+        command, args = build_mcp_command(self.mcp_binary, self.mcp_manifest, self.mcp_json_path)
         mcp_config = {
             "type": "stdio",
             "command": command,
@@ -231,13 +233,21 @@ Use up to 10 tools per call to speed up the process.\n"""
         # Save generation_metrics.json to app directory for evaluation
         if self.scaffold_tracker.app_dir:
             import json
+
             metrics_file = Path(self.scaffold_tracker.app_dir) / "generation_metrics.json"
-            metrics_file.write_text(json.dumps({
-                "cost_usd": metrics["cost_usd"],
-                "input_tokens": metrics["input_tokens"],
-                "output_tokens": metrics["output_tokens"],
-                "turns": metrics["turns"],
-            }, indent=2))
+            metrics_file.write_text(
+                json.dumps(
+                    {
+                        "cost_usd": metrics["cost_usd"],
+                        "input_tokens": metrics["input_tokens"],
+                        "output_tokens": metrics["output_tokens"],
+                        "turns": metrics["turns"],
+                    },
+                    indent=2,
+                )
+            )
+
+        return metrics
 
     async def _log_tool_use(self, block: ToolUseBlock, truncate) -> None:
         input_dict = block.input or {}

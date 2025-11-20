@@ -13,9 +13,10 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ResultMessage,
+    SystemMessage,
     TextBlock,
-    ToolResultBlock,
     ToolUseBlock,
+    UserMessage,
     query,
 )
 from dotenv import load_dotenv
@@ -134,10 +135,16 @@ Provide a concise analysis focusing on actionable insights."""
     return response.choices[0].message.content  # type: ignore[attr-defined]
 
 
-def get_mcp_tools_description(mcp_binary: str | None, project_root: Path) -> str:
-    """Extract MCP tool definitions by querying the MCP server."""
+def get_mcp_tools_description(mcp_binary: str | None, project_root: Path, mcp_json_path: str | None = None) -> str:
+    """Extract MCP tool definitions by querying the MCP server.
+
+    Returns empty string if mcp_binary is not provided.
+    """
+    if mcp_binary is None:
+        return ""
+
     mcp_manifest = validate_mcp_manifest(mcp_binary, project_root)
-    command, args = build_mcp_command(mcp_binary, mcp_manifest)
+    command, args = build_mcp_command(mcp_binary, mcp_manifest, mcp_json_path)
 
     proc = subprocess.Popen(
         [command, *args],
@@ -229,7 +236,8 @@ def load_evaluation_report(eval_report_path: str | None) -> str:
 async def analyze_with_agent(
     concatenated_analyses: str,
     mcp_tools_doc: str,
-    template_path: Path,
+    template_path: Path | None,
+    mcp_source_path: Path | None,
     eval_report: str = "",
 ) -> str:
     """Use Claude Agent to analyze trajectories and provide recommendations."""
@@ -253,51 +261,85 @@ async def analyze_with_agent(
         "Upload",
     ]
 
+    # build optional context sections
+    template_section = ""
+    if template_path:
+        template_section = f"""
+
+## Template Source Code
+
+Location: {template_path}
+
+Explore the template structure to identify issues with scaffolding, CLAUDE.md guidance, or template organization.
+"""
+
+    mcp_tools_section = ""
+    if mcp_tools_doc:
+        mcp_tools_section = f"""
+
+## MCP Tools
+
+{mcp_tools_doc}
+"""
+
+    mcp_source_section = ""
+    if mcp_source_path:
+        mcp_source_section = f"""
+
+## MCP Source Code
+
+Location: {mcp_source_path}
+
+Explore the implementation to identify issues with tool definitions, descriptions, or implementations.
+
+Note: The MCP is designed with a single tool providing CLI-like interface. We can't add more tools, but can add more commands/subcommands to the existing tool.
+"""
+
     eval_section = ""
     if eval_report:
         eval_section = f"""
 
----
-
-# Evaluation Report
+## Evaluation Metrics
 
 {eval_report}
-
----
 """
+
+    # build task categories based on available context
+    categories = []
+    if template_path:
+        categories.append(
+            "1. **Template improvements**: Changes to template structure, CLAUDE.md guidance, or scaffolding"
+        )
+    if mcp_tools_doc or mcp_source_path:
+        categories.append(
+            f"{len(categories) + 1}. **Tool improvements**: Missing tools, unclear descriptions, or tool definition issues"
+        )
+    categories.append(
+        f"{len(categories) + 1}. **Root cause analysis**: Why agents failed or struggled in specific trajectories"
+    )
+
+    task_description = "\n".join(categories)
 
     base_instructions = f"""You are analyzing AI agent execution trajectories for a Databricks app generator.
 
-**Your task**: Provide actionable recommendations in three categories:
-1. **Template improvements**: Changes to template structure, CLAUDE.md guidance, or scaffolding
-2. **Tool improvements**: Missing tools, unclear descriptions, or tool definition issues
-3. **Root cause analysis**: Why agents failed or struggled in specific trajectories
-
-**Context provided**:
-- Trajectory analyses (below)
-- MCP tool definitions (below)
-- Template source code at: {template_path}
-{"- Evaluation metrics (below)" if eval_report else ""}
+**Your task**: Provide actionable recommendations in these categories:
+{task_description}
 
 **Instructions**:
-- Use Read, Glob, Grep to explore the template structure
 - Focus on systemic issues, not one-off failures
 - Be specific: reference file paths, tool names, trajectory patterns
 - Format recommendations as markdown with clear sections
+- Only analyze context that has been explicitly provided below
 
 ---
 
-# Trajectory Analyses
+## Trajectory Analyses
 
-{concatenated_analyses}
-
----
-
-{mcp_tools_doc}{eval_section}
+{concatenated_analyses}{template_section}{mcp_tools_section}{mcp_source_section}{eval_section}
 
 ---
 
-Explore the template and provide your analysis."""
+Analyze the data and provide your recommendations."""
 
     options = ClaudeAgentOptions(
         system_prompt=base_instructions,
@@ -325,13 +367,21 @@ Explore the template and provide your analysis."""
                             params = ", ".join(f"{k}={str(v)[:200]}" for k, v in args.items())
                             truncated = params if len(params) <= 200 else params[:200] + "..."
                             logger.info(f"🔧 Tool: {block.name}({truncated})")
-            case ToolResultBlock(is_error=True):
-                logger.warning(f"⚠️ Tool error: {str(block.content)[:200]}")
-            case ToolResultBlock():
-                pass
             case ResultMessage(result=result):
                 final_result = result
                 logger.info("✅ Agent completed analysis and produced final report")
+            case UserMessage():
+                for block in message.content:
+                    match block:
+                        case TextBlock():
+                            text_preview = block.text[:200] if len(block.text) > 200 else block.text
+                            logger.info(f"👤 User: {text_preview}{'...' if len(block.text) > 200 else ''}")
+                        case _:
+                            pass
+            case SystemMessage():
+                pass
+            case _:
+                logger.warning(f"Unknown message type: {type(message).__name__}")
 
     if final_result is None:
         raise RuntimeError("Agent did not produce a final report")
@@ -340,21 +390,26 @@ Explore the template and provide your analysis."""
 
 
 async def analyze_trajectories_async(
-    mcp_binary: str,
-    template_path: str,
+    mcp_binary: str | None,
+    template_path: str | None,
+    mcp_source_path: str | None,
     map_model: str = "anthropic/claude-haiku-4-5",
     output_file: str = "",
     trajectories_pattern: str = "./app/*/trajectory.jsonl",
     eval_report_path: str | None = None,
+    mcp_json_path: str | None = None,
 ):
     """Analyze trajectories using map-reduce approach with LLM, then agent-based analysis."""
     litellm.drop_params = True
 
-    template_path_resolved = Path(template_path)
+    template_path_resolved = Path(template_path) if template_path else None
+    mcp_source_path_resolved = Path(mcp_source_path) if mcp_source_path else None
     project_root = Path(__file__).parent.parent.parent
 
-    logger.info("📋 Extracting MCP tool definitions")
-    mcp_tools_doc = get_mcp_tools_description(mcp_binary, project_root)
+    mcp_tools_doc = ""
+    if mcp_binary:
+        logger.info("📋 Extracting MCP tool definitions")
+        mcp_tools_doc = get_mcp_tools_description(mcp_binary, project_root, mcp_json_path)
 
     eval_report = ""
     if eval_report_path:
@@ -380,7 +435,9 @@ async def analyze_trajectories_async(
 
     concatenated = "\n\n".join([f"## Analysis of {app_name}\n\n{analysis}" for app_name, analysis in analyses])
 
-    final_report = await analyze_with_agent(concatenated, mcp_tools_doc, template_path_resolved, eval_report)
+    final_report = await analyze_with_agent(
+        concatenated, mcp_tools_doc, template_path_resolved, mcp_source_path_resolved, eval_report
+    )
 
     output_file = output_file or f"/tmp/trajectory_analysis_{datetime.now().strftime('%d%m%y-%H%M%S')}.md"
 
@@ -390,22 +447,26 @@ async def analyze_trajectories_async(
 
 
 def cli(
-    mcp_binary: str,
-    template_path: str,
+    mcp_binary: str | None = None,
+    template_path: str | None = None,
+    mcp_source_path: str | None = None,
     trajectories_pattern: str = "./app/*/trajectory.jsonl",
     output_file: str = "",
     map_model: str = "anthropic/claude-haiku-4-5",
     eval_report: str | None = None,
+    mcp_json: str | None = None,
 ):
     """Analyze agent trajectories to find friction points and patterns.
 
     Args:
-        mcp_binary: Path to MCP binary (required)
-        template_path: Path to template directory (required)
+        mcp_binary: Path to MCP binary (optional)
+        template_path: Path to template directory (optional)
+        mcp_source_path: Path to MCP source code directory (optional)
         trajectories_pattern: Glob pattern to find trajectory files
         output_file: Path to save analysis report
         map_model: LiteLLM model identifier for individual trajectory analysis
         eval_report: Path to evaluation report JSON (optional)
+        mcp_json: Optional path to JSON config file for edda_mcp
     """
     coloredlogs.install(
         level=logging.INFO,
@@ -415,7 +476,16 @@ def cli(
 
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
     asyncio.run(
-        analyze_trajectories_async(mcp_binary, template_path, map_model, output_file, trajectories_pattern, eval_report)
+        analyze_trajectories_async(
+            mcp_binary,
+            template_path,
+            mcp_source_path,
+            map_model,
+            output_file,
+            trajectories_pattern,
+            eval_report,
+            mcp_json,
+        )
     )
 
 

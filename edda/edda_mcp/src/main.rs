@@ -1,8 +1,8 @@
 use clap::{Parser, Subcommand};
 use edda_mcp::paths;
 use edda_mcp::providers::{
-    CombinedProvider, DatabricksProvider, DeploymentProvider, GoogleSheetsProvider, IOProvider,
-    ProviderType, WorkspaceTools,
+    CombinedProvider, DatabricksCliProvider, DatabricksRestProvider, DeploymentProvider,
+    GoogleSheetsProvider, IOProvider, ProviderType, WorkspaceTools,
 };
 use edda_mcp::session::SessionContext;
 use edda_mcp::trajectory::TrajectoryTrackingProvider;
@@ -225,6 +225,16 @@ fn should_enable_provider(config: &edda_mcp::config::Config, provider: ProviderT
     config.required_providers.contains(&provider)
 }
 
+/// helper to check if DatabricksRest provider should be enabled (checks both DatabricksRest and legacy Databricks)
+fn should_enable_databricks_rest(config: &edda_mcp::config::Config) -> bool {
+    config.required_providers.contains(&ProviderType::DatabricksRest)
+}
+
+/// helper to check if DatabricksCli provider should be enabled
+fn should_enable_databricks_cli(config: &edda_mcp::config::Config) -> bool {
+    config.required_providers.contains(&ProviderType::DatabricksCli)
+}
+
 /// check environment configuration and prerequisites
 async fn check_environment(config: &edda_mcp::config::Config) -> Result<()> {
     use edda_mcp::providers::ProviderType;
@@ -247,10 +257,10 @@ async fn check_environment(config: &edda_mcp::config::Config) -> Result<()> {
         }
     }
 
-    // check databricks environment variables only if databricks or deployment is required
+    // check databricks environment variables only if databricks rest or deployment is required
     let databricks_required = config
         .required_providers
-        .contains(&ProviderType::Databricks)
+        .contains(&ProviderType::DatabricksRest)
         || config
             .required_providers
             .contains(&ProviderType::Deployment);
@@ -402,10 +412,17 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
     });
 
     // initialize all available providers
-    let databricks = match should_enable_provider(&config, ProviderType::Databricks) {
-        true => DatabricksProvider::new().ok(),
+    let databricks = match should_enable_databricks_rest(&config) {
+        true => DatabricksRestProvider::new().ok(),
         false => None,
     };
+
+    // enable DatabricksCli provider if explicitly requested in config
+    let databricks_cli = match should_enable_databricks_cli(&config) {
+        true => DatabricksCliProvider::new().ok(),
+        false => None,
+    };
+
     let deployment = match config.with_deployment {
         true => DeploymentProvider::new().ok(),
         false => None,
@@ -428,6 +445,9 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
     let mut providers_list = Vec::new();
     if databricks.is_some() {
         providers_list.push("Databricks");
+    }
+    if databricks_cli.is_some() {
+        providers_list.push("Databricks CLI");
     }
     if deployment.is_some() {
         providers_list.push("Deployment");
@@ -461,6 +481,7 @@ async fn run_server(config: edda_mcp::config::Config) -> Result<()> {
     let provider = CombinedProvider::new(
         session_ctx,
         databricks,
+        databricks_cli,
         deployment,
         google_sheets,
         io,

@@ -7,7 +7,6 @@ conflicts and machine environment pollution.
 
 import asyncio
 import json
-import os
 import sys
 import time
 from dataclasses import asdict

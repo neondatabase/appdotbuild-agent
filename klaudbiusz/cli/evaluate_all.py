@@ -876,11 +876,11 @@ async def main_async():
         if len(app_dirs) >= 5:
             print("\n⏳ Disconnecting from Dagger (may take up to 5 minutes)...")
 
-    except subprocess.TimeoutExpired as e:
+    except subprocess.TimeoutExpired:
         # Dagger session cleanup timed out, but evaluations completed successfully
         # This is a known issue with Dagger SDK - the cleanup can take longer than the 300s timeout
-        print(f"\n⚠️  Warning: Dagger session cleanup timed out (this is expected for large batches)")
-        print(f"   All evaluations completed successfully, continuing with report generation...")
+        print("\n⚠️  Warning: Dagger session cleanup timed out (this is expected for large batches)")
+        print("   All evaluations completed successfully, continuing with report generation...")
 
     eval_duration = time.time() - eval_start_time
 

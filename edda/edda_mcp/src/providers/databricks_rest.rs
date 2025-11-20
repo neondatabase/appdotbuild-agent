@@ -12,13 +12,13 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler};
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub struct DatabricksProvider {
+pub struct DatabricksRestProvider {
     client: Arc<DatabricksRestClient>,
     tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
-impl DatabricksProvider {
+impl DatabricksRestProvider {
     pub fn new() -> Result<Self> {
         let client = DatabricksRestClient::new()
             .map_err(|e| eyre::eyre!("Failed to create Databricks client: {}", e))?;
@@ -115,7 +115,7 @@ impl DatabricksProvider {
 }
 
 #[tool_handler]
-impl ServerHandler for DatabricksProvider {
+impl ServerHandler for DatabricksRestProvider {
     fn get_info(&self) -> ServerInfo {
         crate::mcp_helpers::internal_server_info()
     }

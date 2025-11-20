@@ -80,7 +80,7 @@ impl ToolResultDisplay for ValidateProjectResult {
         if self.success {
             let mut msg = format!("Validation passed: {}", self.message);
             if let Some(screenshot) = &self.screenshot_path {
-                msg.push_str(&format!("\n\nScreenshot: {}", screenshot));
+                msg.push_str(&format!("\n\nScreenshot: {}, review it to make sure the app is visually fine.", screenshot));
             }
             if let Some(logs) = &self.browser_logs {
                 msg.push_str(&format!("\n\nBrowser console logs:\n{}", logs));

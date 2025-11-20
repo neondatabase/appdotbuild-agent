@@ -1,10 +1,12 @@
-pub mod databricks;
+pub mod databricks_cli;
+pub mod databricks_rest;
 pub mod deployment;
 pub mod google_sheets;
 pub mod io;
 pub mod workspace;
 
-pub use databricks::DatabricksProvider;
+pub use databricks_cli::DatabricksCliProvider;
+pub use databricks_rest::DatabricksRestProvider;
 pub use deployment::DeploymentProvider;
 pub use google_sheets::GoogleSheetsProvider;
 pub use io::IOProvider;
@@ -22,8 +24,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub enum ProviderType {
-    Databricks,
+    /// Databricks REST API provider (backward compatible, maps to DatabricksRest)
+    #[serde(alias = "Databricks")]
+    DatabricksRest,
+    /// Databricks CLI provider (guidance only, no tools)
+    DatabricksCli,
     Deployment,
     GoogleSheets,
     Io,
@@ -31,14 +38,15 @@ pub enum ProviderType {
 }
 
 enum TargetProvider {
-    Databricks(Arc<DatabricksProvider>),
+    Databricks(Arc<DatabricksRestProvider>),
+    DatabricksCli(Arc<DatabricksCliProvider>),
     Deployment(Arc<DeploymentProvider>),
     GoogleSheets(Arc<GoogleSheetsProvider>),
     Io(Arc<IOProvider>),
     Workspace(Arc<WorkspaceTools>),
 }
 
-/// inject ENGINE_GUIDE into the first text content of a tool result
+/// inject engine guide into the first text content of a tool result
 fn inject_engine_guide(result: &mut CallToolResult) {
     use crate::engine_guide::ENGINE_GUIDE;
 
@@ -52,7 +60,8 @@ fn inject_engine_guide(result: &mut CallToolResult) {
 #[derive(Clone)]
 pub struct CombinedProvider {
     session_ctx: SessionContext,
-    databricks: Option<Arc<DatabricksProvider>>,
+    databricks: Option<Arc<DatabricksRestProvider>>,
+    databricks_cli: Option<Arc<DatabricksCliProvider>>,
     deployment: Option<Arc<DeploymentProvider>>,
     google_sheets: Option<Arc<GoogleSheetsProvider>>,
     io: Option<Arc<IOProvider>>,
@@ -63,7 +72,8 @@ pub struct CombinedProvider {
 impl CombinedProvider {
     pub fn new(
         session_ctx: SessionContext,
-        databricks: Option<DatabricksProvider>,
+        databricks: Option<DatabricksRestProvider>,
+        databricks_cli: Option<DatabricksCliProvider>,
         deployment: Option<DeploymentProvider>,
         google_sheets: Option<GoogleSheetsProvider>,
         io: Option<IOProvider>,
@@ -71,6 +81,7 @@ impl CombinedProvider {
         config: &crate::config::Config,
     ) -> Result<Self> {
         if databricks.is_none()
+            && databricks_cli.is_none()
             && deployment.is_none()
             && google_sheets.is_none()
             && io.is_none()
@@ -90,6 +101,7 @@ impl CombinedProvider {
         Ok(Self {
             session_ctx,
             databricks: databricks.map(Arc::new),
+            databricks_cli: databricks_cli.map(Arc::new),
             deployment: deployment.map(Arc::new),
             google_sheets: google_sheets.map(Arc::new),
             io: io.map(Arc::new),
@@ -107,6 +119,16 @@ impl CombinedProvider {
                 )
             })?;
             return Ok(TargetProvider::Databricks(provider));
+        }
+
+        if tool_name == "run_databricks_cli" {
+            let provider = self.databricks_cli.clone().ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "DatabricksCli provider not configured.",
+                    None,
+                )
+            })?;
+            return Ok(TargetProvider::DatabricksCli(provider));
         }
 
         if tool_name.starts_with("google_sheets_") {
@@ -174,10 +196,17 @@ impl CombinedProvider {
     pub fn check_availability(&self, required: &[ProviderType]) -> Result<()> {
         for provider in required {
             match provider {
-                ProviderType::Databricks => {
+                ProviderType::DatabricksRest => {
                     if self.databricks.is_none() {
                         return Err(eyre::eyre!(
-                            "Databricks provider is required but not configured. Environment variables DATABRICKS_HOST, DATABRICKS_TOKEN, DATABRICKS_WAREHOUSE_ID must be set."
+                            "DatabricksRest provider is required but not configured. Environment variables DATABRICKS_HOST, DATABRICKS_TOKEN, DATABRICKS_WAREHOUSE_ID must be set."
+                        ));
+                    }
+                }
+                ProviderType::DatabricksCli => {
+                    if self.databricks_cli.is_none() {
+                        return Err(eyre::eyre!(
+                            "DatabricksCli provider is required but not configured."
                         ));
                     }
                 }
@@ -218,6 +247,9 @@ impl ServerHandler for CombinedProvider {
         let mut providers = Vec::new();
         if self.databricks.is_some() {
             providers.push("Databricks");
+        }
+        if self.databricks_cli.is_some() {
+            providers.push("Databricks CLI");
         }
         if self.deployment.is_some() {
             providers.push("Deployment");
@@ -340,6 +372,7 @@ impl ServerHandler for CombinedProvider {
 
         let mut result = match self.resolve_provider(&params.name)? {
             TargetProvider::Databricks(provider) => provider.call_tool(params, context).await,
+            TargetProvider::DatabricksCli(provider) => provider.call_tool(params, context).await,
             TargetProvider::Deployment(provider) => provider.call_tool(params, context).await,
             TargetProvider::GoogleSheets(provider) => provider.call_tool(params, context).await,
             TargetProvider::Io(provider) => provider.call_tool(params, context).await,
@@ -362,6 +395,12 @@ impl ServerHandler for CombinedProvider {
 
         if let Some(ref databricks) = self.databricks {
             if let Ok(result) = databricks.list_tools(params.clone(), context.clone()).await {
+                tools.extend(result.tools);
+            }
+        }
+
+        if let Some(ref databricks_cli) = self.databricks_cli {
+            if let Ok(result) = databricks_cli.list_tools(params.clone(), context.clone()).await {
                 tools.extend(result.tools);
             }
         }

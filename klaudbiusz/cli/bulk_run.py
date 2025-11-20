@@ -49,6 +49,7 @@ def run_single_generation(
     use_subagents: bool = False,
     suppress_logs: bool = True,
     mcp_binary: str | None = None,
+    mcp_json: str | None = None,
     output_dir: str | None = None,
 ) -> RunResult:
     # re-apply litellm patch in worker process (joblib uses spawn/fork)
@@ -71,6 +72,7 @@ def run_single_generation(
                     suppress_logs=suppress_logs,
                     use_subagents=use_subagents,
                     mcp_binary=mcp_binary,
+                    mcp_json_path=mcp_json,
                     output_dir=output_dir,
                 )
                 metrics = codegen.run(prompt, wipe_db=wipe_db)
@@ -79,7 +81,12 @@ def run_single_generation(
                 if not model:
                     raise ValueError("--model is required when using --backend=litellm")
                 builder = LiteLLMAppBuilder(
-                    app_name=app_name, model=model, mcp_binary=mcp_binary, suppress_logs=suppress_logs, output_dir=output_dir
+                    app_name=app_name,
+                    model=model,
+                    mcp_binary=mcp_binary,
+                    mcp_json_path=mcp_json,
+                    suppress_logs=suppress_logs,
+                    output_dir=output_dir,
                 )
                 litellm_metrics = builder.run(prompt)
                 # convert LiteLLM metrics to dict format matching Claude SDK
@@ -142,6 +149,7 @@ def main(
     n_jobs: int = -1,
     use_subagents: bool = False,
     mcp_binary: str | None = None,
+    mcp_json: str | None = None,
     output_dir: str | None = None,
 ) -> None:
     """Bulk app generation from predefined prompt sets.
@@ -154,6 +162,7 @@ def main(
         n_jobs: Number of parallel jobs (-1 for all cores)
         use_subagents: Whether to enable subagent delegation (claude backend only)
         mcp_binary: Optional path to pre-built edda-mcp binary (default: use cargo run)
+        mcp_json: Optional path to JSON config file for edda_mcp
         output_dir: Custom output directory for generated apps (default: ./app)
 
     Usage:
@@ -166,6 +175,9 @@ def main(
         # LiteLLM backend
         python bulk_run.py --backend=litellm --model=openrouter/minimax/minimax-m2
         python bulk_run.py --prompts=test --backend=litellm --model=gemini/gemini-2.5-pro
+
+        # Custom MCP config
+        python bulk_run.py --mcp_json=./config/databricks-cli.json
 
         # Custom output directory
         python bulk_run.py --output-dir=/path/to/custom/folder
@@ -211,7 +223,7 @@ def main(
     # generate all apps
     results: list[RunResult] = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)(  # type: ignore[assignment]
         delayed(run_single_generation)(
-            app_name, prompt, backend, model, wipe_db, use_subagents, suppress_logs, mcp_binary, output_dir
+            app_name, prompt, backend, model, wipe_db, use_subagents, suppress_logs, mcp_binary, mcp_json, output_dir
         )
         for app_name, prompt in selected_prompts.items()
     )

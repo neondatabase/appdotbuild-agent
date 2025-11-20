@@ -5,6 +5,7 @@ Contains:
 - Shared data structures and helpers
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -302,32 +303,39 @@ def setup_logging(suppress_logs: bool, mcp_binary: str | None = None) -> None:
             logger.info("Using cargo run for MCP server")
 
 
-def build_mcp_command(mcp_binary: str | None, mcp_manifest: Path | None) -> tuple[str, list[str]]:
+def build_mcp_command(
+    mcp_binary: str | None,
+    mcp_manifest: Path | None,
+    mcp_json_path: str | None = None,
+) -> tuple[str, list[str]]:
     """Build MCP server command and arguments.
 
     Args:
         mcp_binary: Optional path to edda_mcp binary
         mcp_manifest: Path to Cargo.toml (if using cargo run)
+        mcp_json_path: Optional path to JSON config file
 
     Returns:
         Tuple of (command, args)
     """
     if mcp_binary is not None:
-        return (mcp_binary, ["--with-deployment=false"])
+        base_args: list[str] = []
+        command = mcp_binary
+    else:
+        if mcp_manifest is None:
+            raise ValueError("mcp_manifest required when mcp_binary is None")
+        base_args = ["run", "--manifest-path", str(mcp_manifest), "--"]
+        command = "cargo"
 
-    if mcp_manifest is None:
-        raise ValueError("mcp_manifest required when mcp_binary is None")
+    # If JSON config file provided, read and pass via --json flag
+    if mcp_json_path:
+        with open(mcp_json_path) as f:
+            config_json = json.dumps(json.load(f))
+        args = base_args + ["--json", config_json]
+    else:
+        args = base_args + ["--with-deployment=false"]
 
-    return (
-        "cargo",
-        [
-            "run",
-            "--manifest-path",
-            str(mcp_manifest),
-            "--",
-            "--with-deployment=false",
-        ],
-    )
+    return (command, args)
 
 
 def load_subagent_definitions(project_root: Path) -> dict[str, str]:

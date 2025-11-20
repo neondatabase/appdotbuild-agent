@@ -1,0 +1,5 @@
+{
+  "required_providers": ["DatabricksCli", "Io"],
+  "with_deployment": false,
+  "with_workspace_tools": false
+}
