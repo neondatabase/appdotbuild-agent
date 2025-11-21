@@ -68,12 +68,10 @@ class EvaluationTracker:
             # Get or create experiment
             try:
                 experiment = self.client.get_experiment_by_name(self.experiment_name)
-                if experiment:
-                    experiment_id = experiment.experiment_id
-                else:
-                    experiment_id = self.client.create_experiment(self.experiment_name)
-            except:
-                experiment_id = self.client.create_experiment(self.experiment_name)
+                if not experiment:
+                    self.client.create_experiment(self.experiment_name)
+            except Exception:
+                self.client.create_experiment(self.experiment_name)
 
             mlflow.set_experiment(experiment_name=self.experiment_name)
 

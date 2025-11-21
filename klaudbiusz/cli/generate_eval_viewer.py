@@ -13,9 +13,6 @@ def generate_html_viewer(eval_json_path: Path, output_path: Path):
     with open(eval_json_path) as f:
         data = json.load(f)
 
-    summary = data.get("summary", {})
-    apps = data.get("apps", [])
-
     # Embed the JSON data directly in the HTML
     json_data = json.dumps(data, indent=2)
 

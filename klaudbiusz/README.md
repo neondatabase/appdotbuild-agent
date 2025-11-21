@@ -30,29 +30,29 @@ cli/archive_evaluation.sh
 cli/cleanup_evaluation.sh
 
 # Generate a single app (Claude backend, default)
-uv run cli/single_run.py "Create a customer churn analysis dashboard"
+uv run cli/generation/single_run.py "Create a customer churn analysis dashboard"
 
 # Use LiteLLM backend with specific model
-uv run cli/single_run.py "Create a customer churn analysis dashboard" \
+uv run cli/generation/single_run.py "Create a customer churn analysis dashboard" \
   --backend=litellm --model=openrouter/minimax/minimax-m2
 
 # Batch generate from prompts (databricks set by default)
-uv run cli/bulk_run.py
+uv run cli/generation/bulk_run.py
 
 # Batch generate with test prompts
-uv run cli/bulk_run.py --prompts=test
+uv run cli/generation/bulk_run.py --prompts=test
 
 # Batch generate with LiteLLM backend
-uv run cli/bulk_run.py --backend=litellm --model=gemini/gemini-2.5-pro
+uv run cli/generation/bulk_run.py --backend=litellm --model=gemini/gemini-2.5-pro
 
 # Custom output directory
-uv run cli/bulk_run.py --output-dir=/path/to/custom/folder
+uv run cli/generation/bulk_run.py --output-dir=/path/to/custom/folder
 
 # Custom MCP binary (for testing modified edda_mcp)
-uv run cli/bulk_run.py --mcp-binary=/path/to/custom/edda_mcp
+uv run cli/generation/bulk_run.py --mcp-binary=/path/to/custom/edda_mcp
 
 # Combined example
-uv run cli/bulk_run.py \
+uv run cli/generation/bulk_run.py \
   --backend=litellm \
   --model=gemini/gemini-2.5-pro \
   --output-dir=./my-apps \
@@ -65,28 +65,28 @@ uv run cli/bulk_run.py \
 cd klaudbiusz
 
 # Evaluate all apps
-uv run cli/evaluate_all.py
+uv run cli/evaluation/evaluate_all.py
 
 # Parallel evaluation (faster for large batches)
-uv run cli/evaluate_all.py -j 4                         # Run 4 evaluations in parallel
-uv run cli/evaluate_all.py -j 0                         # Auto-detect CPU count
-uv run cli/evaluate_all.py --parallel 8                 # Long form
+uv run cli/evaluation/evaluate_all.py -j 4                         # Run 4 evaluations in parallel
+uv run cli/evaluation/evaluate_all.py -j 0                         # Auto-detect CPU count
+uv run cli/evaluation/evaluate_all.py --parallel 8                 # Long form
 
 # Partial evaluation (filter apps)
-uv run cli/evaluate_all.py --limit 5                    # First 5 apps
-uv run cli/evaluate_all.py --apps app1 app2             # Specific apps
-uv run cli/evaluate_all.py --pattern "customer*"        # Pattern matching
-uv run cli/evaluate_all.py --skip 10 --limit 5          # Skip first 10, evaluate next 5
-uv run cli/evaluate_all.py --start-from app5            # Start from specific app
+uv run cli/evaluation/evaluate_all.py --limit 5                    # First 5 apps
+uv run cli/evaluation/evaluate_all.py --apps app1 app2             # Specific apps
+uv run cli/evaluation/evaluate_all.py --pattern "customer*"        # Pattern matching
+uv run cli/evaluation/evaluate_all.py --skip 10 --limit 5          # Skip first 10, evaluate next 5
+uv run cli/evaluation/evaluate_all.py --start-from app5            # Start from specific app
 
 # Custom directory
-uv run cli/evaluate_all.py --dir /path/to/apps          # Evaluate apps in custom directory
+uv run cli/evaluation/evaluate_all.py --dir /path/to/apps          # Evaluate apps in custom directory
 
 # Staging environment (for testing)
-uv run cli/evaluate_all.py --staging                    # Log to staging MLflow experiment
+uv run cli/evaluation/evaluate_all.py --staging                    # Log to staging MLflow experiment
 
 # Evaluate single app
-uv run cli/evaluate_app.py ../app/customer-churn-analysis
+uv run cli/evaluation/evaluate_app.py ../app/customer-churn-analysis
 ```
 
 **Results are automatically logged to MLflow:** Navigate to `ML → Experiments → /Shared/klaudbiusz-evaluations` in Databricks UI / Googfooding.
@@ -151,11 +151,21 @@ klaudbiusz/
 │   └── DORA_METRICS.md             # DORA & agentic DevX
 ├── app/                             # Generated applications (gitignored)
 ├── cli/                             # Generation & evaluation scripts
-│   ├── single_run.py               # Single app generation
-│   ├── bulk_run.py                 # Batch app generation
-│   ├── analyze_trajectories.py     # Get LLM recommendations based on previous runs
-│   ├── evaluate_all.py             # Batch evaluation
-│   ├── evaluate_app.py             # Single app evaluation
+│   ├── generation/                 # App generation
+│   │   ├── prompts/               # Prompt collections
+│   │   ├── codegen.py             # Claude Agent SDK backend
+│   │   ├── codegen_multi.py       # LiteLLM backend
+│   │   ├── single_run.py          # Single app generation
+│   │   ├── bulk_run.py            # Batch app generation
+│   │   └── screenshot.py          # Batch screenshotting
+│   ├── evaluation/                 # App evaluation
+│   │   ├── evaluate_all.py        # Batch evaluation
+│   │   ├── evaluate_app.py        # Single app evaluation (legacy)
+│   │   ├── evaluate_app_dagger.py # Dagger-based evaluation
+│   │   ├── eval_checks.py         # Check functions
+│   │   └── eval_metrics.py        # Metric definitions
+│   ├── utils/                      # Shared utilities
+│   ├── analyze_trajectories.py     # Get LLM recommendations
 │   ├── archive_evaluation.sh       # Create evaluation archive
 │   └── cleanup_evaluation.sh       # Clean generated apps
 ├── EVALUATION_REPORT.md            # Latest results (gitignored)
@@ -169,14 +179,14 @@ klaudbiusz/
 ### Development Workflow
 
 1. Write natural language prompt
-2. Generate: `uv run cli/single_run.py "your prompt"` or `uv run cli/bulk_run.py`
-3. Evaluate: `uv run cli/evaluate_all.py -j 0` (parallel, auto-detect CPUs)
+2. Generate: `uv run cli/generation/single_run.py "your prompt"` or `uv run cli/generation/bulk_run.py`
+3. Evaluate: `uv run cli/evaluation/evaluate_all.py -j 0` (parallel, auto-detect CPUs)
 4. Review: `cat EVALUATION_REPORT.md`
 5. Deploy apps that pass checks
 
 ### AI Assisted Edda Improvement Workflow
 
-1. Generate many apps with `uv run cli/bulk_run.py`
+1. Generate many apps with `uv run cli/generation/bulk_run.py`
 2. Analyze the trajectories with `uv run cli/analyze_trajectories.py`
 3. Based on the report, improve Edda tools and scaffolding
 4. Rerun the evaluation to measure impact

@@ -19,7 +19,7 @@ from claude_agent_sdk import (
     query,
 )
 from dotenv import load_dotenv
-from shared import ScaffoldTracker, Tracker, build_mcp_command, setup_logging, validate_mcp_manifest
+from cli.utils.shared import ScaffoldTracker, Tracker, build_mcp_command, setup_logging, validate_mcp_manifest
 
 try:
     import asyncpg  # type: ignore[import-untyped]

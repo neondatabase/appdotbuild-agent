@@ -8,16 +8,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
 
-from litellm_multiprocess_fix import patch_litellm_for_multiprocessing
-
-patch_litellm_for_multiprocessing()
-
-from codegen import ClaudeAppBuilder
-from codegen import GenerationMetrics as ClaudeGenerationMetrics
-from codegen_multi import LiteLLMAppBuilder
 from dotenv import load_dotenv
 from joblib import Parallel, delayed
-from prompts_databricks import PROMPTS as DATABRICKS_PROMPTS
+
+from cli.generation.codegen import ClaudeAppBuilder
+from cli.generation.codegen import GenerationMetrics as ClaudeGenerationMetrics
+from cli.generation.codegen_multi import LiteLLMAppBuilder
+from cli.generation.prompts.databricks import PROMPTS as DATABRICKS_PROMPTS
+from cli.utils.litellm_multiprocess_fix import patch_litellm_for_multiprocessing
+
+patch_litellm_for_multiprocessing()
 
 # Unified type for metrics from both backends
 GenerationMetrics = ClaudeGenerationMetrics
@@ -194,9 +194,9 @@ def main(
     # load prompt set
     match prompts:
         case "databricks":
-            from prompts_databricks import PROMPTS as selected_prompts
+            from cli.generation.prompts.databricks import PROMPTS as selected_prompts
         case "test":
-            from prompts_test import PROMPTS as selected_prompts
+            from cli.generation.prompts.web import PROMPTS as selected_prompts
         case _:
             raise ValueError(f"Unknown prompt set: {prompts}. Use 'databricks' or 'test'")
 

@@ -20,7 +20,7 @@ from claude_agent_sdk import (
     query,
 )
 from dotenv import load_dotenv
-from shared import build_mcp_command, validate_mcp_manifest
+from cli.utils.shared import build_mcp_command, validate_mcp_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +152,9 @@ def get_mcp_tools_description(mcp_binary: str | None, project_root: Path, mcp_js
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+
+    if proc.stdin is None or proc.stdout is None:
+        raise RuntimeError("Failed to create subprocess pipes")
 
     init_request = (
         json.dumps(

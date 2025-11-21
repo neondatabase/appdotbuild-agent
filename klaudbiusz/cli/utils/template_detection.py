@@ -113,7 +113,7 @@ def _is_vite_app(app_dir: Path) -> bool:
             scripts = pkg_content.get("scripts", {})
             if "dev" in scripts and "vite" in scripts.get("dev", ""):
                 score += 1
-        except:
+        except Exception:
             pass
 
     # Check that it's NOT a monorepo (no separate server/client package.json files)

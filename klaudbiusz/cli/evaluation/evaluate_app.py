@@ -24,10 +24,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
+from cli.evaluation.eval_checks import check_databricks_connectivity as _check_db_connectivity, extract_sql_queries
+from cli.evaluation.eval_metrics import calculate_appeval_100, eff_units
+from cli.utils.template_detection import detect_template
+
 # Add the cli directory to Python path for imports
 sys.path.insert(0, str(Path(__file__).parent))
-
-from dotenv import load_dotenv
 
 # Load environment variables from .env file - try multiple locations
 env_paths = [
@@ -44,10 +48,6 @@ try:
     import anthropic
 except ImportError:
     anthropic = None
-
-from eval_metrics import calculate_appeval_100, eff_units
-from eval_checks import check_databricks_connectivity as _check_db_connectivity, extract_sql_queries
-from template_detection import detect_template
 
 
 def get_backend_dir(app_dir: Path, template: str) -> Path:
@@ -368,7 +368,7 @@ def _stop_app(app_dir: Path, template: str = "unknown", port: int = 8000) -> boo
                 timeout=5,
             )
             time.sleep(1)
-        except:
+        except Exception:
             pass
         return False
 

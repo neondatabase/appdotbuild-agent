@@ -20,35 +20,27 @@ import asyncio
 import fnmatch
 import json
 import sys
-from datetime import datetime
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 import time
 from collections import Counter, defaultdict
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
-# Load environment variables
-try:
-    from dotenv import load_dotenv
-    env_paths = [
-        Path(__file__).parent.parent.parent / "edda" / ".env",
-        Path(__file__).parent.parent / ".env",
-    ]
-    for env_path in env_paths:
-        if env_path.exists():
-            load_dotenv(env_path)
-            break
-except ImportError:
-    pass
-
 import dagger
+from dotenv import load_dotenv
 
-# Import async Dagger-based evaluation
-from evaluate_app_dagger import evaluate_app_async
-from eval_metrics import eff_units
+from cli.evaluation.eval_metrics import eff_units
+from cli.evaluation.evaluate_app_dagger import evaluate_app_async
+
+# Load environment variables from .env file
+env_paths = [
+    Path(__file__).parent.parent.parent / "edda" / ".env",
+    Path(__file__).parent.parent / ".env",
+]
+for env_path in env_paths:
+    if env_path.exists():
+        load_dotenv(env_path)
+        break
 
 
 def get_git_commit_hash() -> str | None:
@@ -78,7 +70,7 @@ def load_prompts_and_metrics_from_bulk_run() -> tuple[dict[str, str], dict[str, 
     """
     try:
         # Import PROMPTS from bulk_run.py
-        from bulk_run import PROMPTS
+        from cli.generation.bulk_run import PROMPTS
     except ImportError:
         return {}, {}, {}
 
@@ -890,10 +882,11 @@ async def main_async():
         estimated_sequential = eval_duration * args.parallel
         print(f"   ⚡ Parallelization saved ~{estimated_sequential - eval_duration:.1f}s (speedup: {estimated_sequential/eval_duration:.1f}x)")
 
-    # Generate summary and report
-    print("\n📊 Generating summary report...")
-    summary = generate_summary_report(results)
-    markdown = generate_markdown_report(results, summary)
+    # Generate summary and report (filter out None results)
+    valid_results = [r for r in results if r is not None]
+    print(f"\n📊 Generating summary report for {len(valid_results)} apps...")
+    summary = generate_summary_report(valid_results)
+    markdown = generate_markdown_report(valid_results, summary)
 
     # Determine output paths - save to app-eval directory
     output_dir = script_dir.parent / "app-eval"
@@ -919,7 +912,7 @@ async def main_async():
     # Save full results
     full_report = {
         "summary": summary,
-        "apps": results,
+        "apps": valid_results,
         "timestamp": timestamp,
         "evaluation_run_id": timestamp,
     }
@@ -932,14 +925,14 @@ async def main_async():
 
     # Save CSV report
     csv_output = output_dir / "evaluation_report.csv"
-    csv_content = generate_csv_report(results)
+    csv_content = generate_csv_report(valid_results)
     csv_output.write_text(csv_content)
     print(f"✓ CSV report saved: {csv_output}")
 
     # Log to MLflow
     print("\n📊 Logging to MLflow...")
     try:
-        from mlflow_tracker import EvaluationTracker
+        from cli.utils.mlflow_tracker import EvaluationTracker
 
         # Determine experiment name based on --staging flag
         experiment_name = "/Shared/edda-staging-evaluations" if args.staging else None

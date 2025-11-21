@@ -18,3 +18,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# Build artifacts
+.DS_Store
+.ruff_cache/

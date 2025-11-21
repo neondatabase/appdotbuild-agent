@@ -15,7 +15,7 @@ from tenacity import (
     before_sleep_log,
 )
 
-from dagger_utils import ExecResult
+from cli.utils.dagger_utils import ExecResult
 
 logger = logging.getLogger(__name__)
 

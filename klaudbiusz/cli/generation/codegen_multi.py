@@ -11,10 +11,10 @@ from uuid import uuid4
 import fire
 import litellm
 from dotenv import load_dotenv
-from litellm_multiprocess_fix import patch_litellm_for_multiprocessing
+from cli.utils.litellm_multiprocess_fix import patch_litellm_for_multiprocessing
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from shared import ScaffoldTracker, Tracker, build_mcp_command, setup_logging, validate_mcp_manifest
+from cli.utils.shared import ScaffoldTracker, Tracker, build_mcp_command, setup_logging, validate_mcp_manifest
 
 patch_litellm_for_multiprocessing()
 
@@ -336,6 +336,9 @@ Be concise and to the point."""
         setup_logging(self.suppress_logs, self.mcp_binary)
 
         mcp_session = MCPSession(self.mcp_binary, self.mcp_json_path)
+        agent = None
+        metrics = None
+
         try:
             session = await mcp_session.__aenter__()
 
@@ -366,16 +369,17 @@ Be concise and to the point."""
 
             return metrics
         finally:
-            # save trajectory via tracker
-            await agent.tracker.save(
-                prompt=prompt,
-                cost_usd=metrics.cost_usd,
-                total_tokens=metrics.input_tokens + metrics.output_tokens,
-                turns=metrics.turns,
-                backend="litellm",
-                model=self.model,
-                app_dir=metrics.app_dir,
-            )
+            # save trajectory via tracker (if agent and metrics were initialized)
+            if agent is not None and metrics is not None:
+                await agent.tracker.save(
+                    prompt=prompt,
+                    cost_usd=metrics.cost_usd,
+                    total_tokens=metrics.input_tokens + metrics.output_tokens,
+                    turns=metrics.turns,
+                    backend="litellm",
+                    model=self.model,
+                    app_dir=metrics.app_dir,
+                )
             # explicitly cleanup to avoid asyncio context issues with multiprocessing
             try:
                 await mcp_session.__aexit__(None, None, None)

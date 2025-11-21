@@ -2,8 +2,8 @@ import fire
 from datetime import datetime
 from dotenv import load_dotenv
 
-from codegen import ClaudeAppBuilder, GenerationMetrics as ClaudeGenerationMetrics
-from codegen_multi import LiteLLMAppBuilder
+from cli.generation.codegen import ClaudeAppBuilder, GenerationMetrics as ClaudeGenerationMetrics
+from cli.generation.codegen_multi import LiteLLMAppBuilder
 
 # Load environment variables from .env file
 load_dotenv()

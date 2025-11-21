@@ -12,6 +12,29 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+import dagger
+from dotenv import load_dotenv
+
+from cli.evaluation.evaluate_app import (
+    EvalResult,
+    FullMetrics,
+    check_data_validity_llm,
+    check_databricks_connectivity,
+    check_deployability,
+    check_local_runability,
+    check_ui_functional_vlm,
+    load_prompts_from_bulk_results,
+)
+from cli.utils.template_detection import detect_template
+from cli.utils.ts_workspace import (
+    build_app,
+    check_runtime,
+    check_types,
+    create_ts_workspace,
+    install_dependencies,
+    run_tests,
+)
+
 # Add the cli directory to Python path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -19,8 +42,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 agent_path = Path(__file__).parent.parent.parent / "agent"
 if str(agent_path) not in sys.path:
     sys.path.insert(0, str(agent_path))
-
-from dotenv import load_dotenv
 
 # Load environment variables
 env_paths = [
@@ -32,30 +53,6 @@ for env_path in env_paths:
     if env_path.exists():
         load_dotenv(env_path, override=True)
         break
-
-import dagger
-
-from ts_workspace import (
-    create_ts_workspace,
-    install_dependencies,
-    build_app,
-    check_runtime,
-    run_tests,
-    check_types,
-)
-
-# Import original helper functions and classes
-from evaluate_app import (
-    FullMetrics,
-    EvalResult,
-    check_databricks_connectivity,
-    check_data_validity_llm,
-    check_ui_functional_vlm,
-    check_local_runability,
-    check_deployability,
-    load_prompts_from_bulk_results,
-)
-from template_detection import detect_template
 
 
 async def evaluate_app_async(

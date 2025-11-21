@@ -7,8 +7,8 @@ evaluating TypeScript applications (tRPC, DBX-SDK, or Docker-based).
 from pathlib import Path
 import dagger
 
-from workspace import Workspace
-from dagger_utils import ExecResult
+from cli.utils.workspace import Workspace
+from cli.utils.dagger_utils import ExecResult
 
 
 async def create_ts_workspace(
