@@ -784,8 +784,12 @@ async def main_async():
     if args.model:
         run_config["model"] = args.model
 
-    # Get all app directories
-    all_app_dirs = [d for d in sorted(apps_dir.iterdir()) if d.is_dir() and not d.name.startswith(".")]
+    # Get all app directories (exclude hidden dirs and special dirs like 'logs')
+    excluded_dirs = {"logs", "node_modules", "__pycache__", ".git"}
+    all_app_dirs = [
+        d for d in sorted(apps_dir.iterdir())
+        if d.is_dir() and not d.name.startswith(".") and d.name not in excluded_dirs
+    ]
 
     # Filter based on command-line arguments
     app_dirs = filter_app_dirs(all_app_dirs, args)
