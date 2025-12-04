@@ -74,13 +74,14 @@ async def create_ts_workspace(
         workspace.ctr = workspace.ctr.with_env_variable("DATABRICKS_HOST", databricks_host)
     if databricks_token:
         workspace.ctr = workspace.ctr.with_env_variable("DATABRICKS_TOKEN", databricks_token)
+    if databricks_warehouse_id:
+        workspace.ctr = workspace.ctr.with_env_variable("DATABRICKS_WAREHOUSE_ID", databricks_warehouse_id)
 
     workspace.ctr = workspace.ctr.with_env_variable("DATABRICKS_APP_PORT", str(port))
-    workspace.ctr = workspace.ctr.with_env_variable("DATABRICKS_CLIENT_ID", "eval-mock-client-id")
-    workspace.ctr = workspace.ctr.with_env_variable("DATABRICKS_CLIENT_SECRET", "eval-mock-client-secret")
     workspace.ctr = workspace.ctr.with_env_variable("DATABRICKS_APP_NAME", app_dir.name)
-    workspace.ctr = workspace.ctr.with_env_variable("DATABRICKS_WAREHOUSE_ID", databricks_warehouse_id)
     workspace.ctr = workspace.ctr.with_env_variable("FLASK_RUN_HOST", "0.0.0.0")
+    # Note: Don't set DATABRICKS_CLIENT_ID/SECRET when using PAT auth (DATABRICKS_TOKEN)
+    # The Databricks SDK doesn't allow mixing OAuth and PAT auth methods
 
     # Expose port for health checks
     workspace.ctr = workspace.ctr.with_exposed_port(port)
@@ -110,11 +111,17 @@ async def build_app(workspace: Workspace) -> ExecResult:
     Returns:
         ExecResult with exit code, stdout, stderr
     """
-    return await workspace.exec(["bash", "/eval/build.sh"])
+    # Use update_ctr=True to persist build output (dist/) in the container
+    return await workspace.exec(["bash", "/eval/build.sh"], update_ctr=True)
 
 
 async def check_runtime(workspace: Workspace) -> ExecResult:
     """Check if the server can start without immediate errors.
+
+    Uses the template-specific start.sh script which handles:
+    - Starting the server via npm start
+    - Health checking the endpoints
+    - Proper cleanup
 
     Args:
         workspace: Configured TypeScript workspace
@@ -122,25 +129,8 @@ async def check_runtime(workspace: Workspace) -> ExecResult:
     Returns:
         ExecResult with exit code, stdout, stderr
     """
-    # Simple runtime check: try to start the server briefly
-    # If it starts and runs for 2 seconds without crashing, consider it successful
-    result = await workspace.exec([
-        "sh", "-c",
-        """
-        cd /app/server && \
-        (npx tsx src/index.ts > /tmp/server.log 2>&1 & echo $! > /tmp/server.pid) && \
-        sleep 2 && \
-        if kill -0 $(cat /tmp/server.pid) 2>/dev/null; then \
-            echo '✓ Server started successfully' && \
-            kill $(cat /tmp/server.pid) && \
-            exit 0; \
-        else \
-            echo '✗ Server crashed' && \
-            cat /tmp/server.log | head -20 && \
-            exit 1; \
-        fi
-        """
-    ])
+    # Use the start.sh script which handles npm start and health checks
+    result = await workspace.exec(["bash", "/eval/start.sh"])
     return result
 
 
