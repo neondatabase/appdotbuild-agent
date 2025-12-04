@@ -76,52 +76,46 @@ fi
 npm start > /tmp/app_stdout.log 2> /tmp/app_stderr.log &
 APP_PID=$!
 
-# Wait for app to start (5 seconds for npm apps)
-sleep 5
-
-# Check if process is still running
-if ! kill -0 $APP_PID 2>/dev/null; then
-    echo "❌ Error: Process died during startup" >&2
-    if [ -s /tmp/app_stderr.log ]; then
-        echo "--- App stderr ---" >&2
-        cat /tmp/app_stderr.log >&2
+# Poll until app responds or timeout (max 15 seconds, check every 0.5s)
+MAX_WAIT=30  # 30 iterations * 0.5s = 15 seconds max
+for i in $(seq 1 $MAX_WAIT); do
+    # Check if process died
+    if ! kill -0 $APP_PID 2>/dev/null; then
+        echo "❌ Error: Process died during startup" >&2
+        if [ -s /tmp/app_stderr.log ]; then
+            echo "--- App stderr ---" >&2
+            cat /tmp/app_stderr.log >&2
+        fi
+        if [ -s /tmp/app_stdout.log ]; then
+            echo "--- App stdout (last 50 lines) ---" >&2
+            tail -50 /tmp/app_stdout.log >&2
+        fi
+        echo "--- End of logs ---" >&2
+        exit 1
     fi
-    if [ -s /tmp/app_stdout.log ]; then
-        echo "--- App stdout (last 50 lines) ---" >&2
-        tail -50 /tmp/app_stdout.log >&2
-    fi
-    echo "--- End of logs ---" >&2
-    exit 1
-fi
 
-# Health check with retries (3 attempts, 2s timeout each, 1s apart)
-# Accept any HTTP response (not just 2xx) since apps may return 401 before auth
-for i in {1..3}; do
-    # Try healthcheck endpoint first
-    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 http://localhost:${DATABRICKS_APP_PORT}/healthcheck 2>&1)
+    # Try healthcheck endpoint (accept any HTTP response)
+    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 http://localhost:${DATABRICKS_APP_PORT}/healthcheck 2>&1)
     if [ "$RESPONSE" != "000" ]; then
         echo "✅ App ready (HTTP $RESPONSE)" >&2
         exit 0
     fi
 
     # Fallback to root endpoint
-    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 http://localhost:${DATABRICKS_APP_PORT}/ 2>&1)
+    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 http://localhost:${DATABRICKS_APP_PORT}/ 2>&1)
     if [ "$RESPONSE" != "000" ]; then
         echo "✅ App ready (HTTP $RESPONSE)" >&2
         exit 0
     fi
 
-    # Wait before retry (except on last attempt)
-    if [ $i -lt 3 ]; then
-        sleep 1
-    fi
+    # Wait before next check
+    sleep 0.5
 done
 
-# Failed to connect - show debug info
-echo "❌ Error: App failed health check on port ${DATABRICKS_APP_PORT}" >&2
-echo "--- Debug: checking if process is still alive ---" >&2
+# Timeout - show debug info
+echo "❌ Error: App failed to start within 15 seconds on port ${DATABRICKS_APP_PORT}" >&2
 if kill -0 $APP_PID 2>/dev/null; then
-    echo "Process $APP_PID is still running" >&2
+    echo "Process $APP_PID is still running but not responding" >&2
 else
     echo "Process $APP_PID has died" >&2
 fi
