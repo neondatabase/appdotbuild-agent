@@ -129,6 +129,10 @@ async def check_runtime(workspace: Workspace) -> ExecResult:
     Returns:
         ExecResult with exit code, stdout, stderr
     """
+    import time
+    # Add cache-busting env var to force Dagger to re-run the command
+    # Without this, Dagger caches the result and returns it instantly
+    workspace.ctr = workspace.ctr.with_env_variable("_EVAL_TIMESTAMP", str(time.time()))
     # Use the start.sh script which handles npm start and health checks
     result = await workspace.exec(["bash", "/eval/start.sh"])
     return result

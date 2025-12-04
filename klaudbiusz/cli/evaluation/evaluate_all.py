@@ -833,63 +833,50 @@ async def main_async():
     eval_start_time = time.time()
 
     # Run evaluations using Dagger with async/await
-    # Wrap in try-except to handle Dagger session cleanup timeout gracefully
-    import subprocess
     results = []
-    try:
-        async with dagger.Connection() as client:
-            if args.parallel > 1:
-                print(f"🚀 Running {args.parallel} evaluations in parallel (Dagger containers)...")
+    async with dagger.Connection() as client:
+        if args.parallel > 1:
+            print(f"🚀 Running {args.parallel} evaluations in parallel (Dagger containers)...")
 
-                # Use asyncio.gather() for parallel execution with semaphore to limit concurrency
-                semaphore = asyncio.Semaphore(args.parallel)
+            # Use asyncio.gather() for parallel execution with semaphore to limit concurrency
+            semaphore = asyncio.Semaphore(args.parallel)
 
-                async def evaluate_with_semaphore(index, app_dir):
-                    async with semaphore:
-                        return await evaluate_app_with_metadata_async(
-                            client,
-                            app_dir,
-                            prompts.get(app_dir.name),
-                            gen_metrics,
-                            index,
-                            len(app_dirs),
-                            fast_mode=args.fast,
-                        )
-
-                results = await asyncio.gather(
-                    *[evaluate_with_semaphore(i, app_dir) for i, app_dir in enumerate(app_dirs, 1)],
-                    return_exceptions=False
-                )
-
-                # Filter out None results (failed evaluations)
-                results = [r for r in results if r is not None]
-
-            else:
-                # Sequential execution
-                print("🔄 Running evaluations sequentially (Dagger containers)...")
-                results = []
-                for i, app_dir in enumerate(app_dirs, 1):
-                    result_dict = await evaluate_app_with_metadata_async(
+            async def evaluate_with_semaphore(index, app_dir):
+                async with semaphore:
+                    return await evaluate_app_with_metadata_async(
                         client,
                         app_dir,
                         prompts.get(app_dir.name),
                         gen_metrics,
-                        i,
+                        index,
                         len(app_dirs),
                         fast_mode=args.fast,
                     )
-                    if result_dict is not None:
-                        results.append(result_dict)
 
-        # Warn about disconnection delay for large batches (Dagger has 5min hardcoded timeout)
-        if len(app_dirs) >= 5:
-            print("\n⏳ Disconnecting from Dagger (may take up to 5 minutes)...")
+            results = await asyncio.gather(
+                *[evaluate_with_semaphore(i, app_dir) for i, app_dir in enumerate(app_dirs, 1)],
+                return_exceptions=False
+            )
 
-    except subprocess.TimeoutExpired:
-        # Dagger session cleanup timed out, but evaluations completed successfully
-        # This is a known issue with Dagger SDK - the cleanup can take longer than the 300s timeout
-        print("\n⚠️  Warning: Dagger session cleanup timed out (this is expected for large batches)")
-        print("   All evaluations completed successfully, continuing with report generation...")
+            # Filter out None results (failed evaluations)
+            results = [r for r in results if r is not None]
+
+        else:
+            # Sequential execution
+            print("🔄 Running evaluations sequentially (Dagger containers)...")
+            results = []
+            for i, app_dir in enumerate(app_dirs, 1):
+                result_dict = await evaluate_app_with_metadata_async(
+                    client,
+                    app_dir,
+                    prompts.get(app_dir.name),
+                    gen_metrics,
+                    i,
+                    len(app_dirs),
+                    fast_mode=args.fast,
+                )
+                if result_dict is not None:
+                    results.append(result_dict)
 
     eval_duration = time.time() - eval_start_time
 
