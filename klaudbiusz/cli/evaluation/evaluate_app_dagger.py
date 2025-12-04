@@ -154,10 +154,10 @@ async def evaluate_app_async(
             if not runtime_success:
                 issues.append("Runtime check failed")
                 print(f"    ⚠️  Runtime failed (exit {runtime_result.exit_code})")
-                if runtime_result.stdout:
-                    print(f"       stdout: {runtime_result.stdout[:300]}")
                 if runtime_result.stderr:
-                    print(f"       stderr: {runtime_result.stderr[:300]}")
+                    print(f"       stderr: {runtime_result.stderr[:1000]}")
+                if runtime_result.stdout:
+                    print(f"       stdout: {runtime_result.stdout[:1000]}")
             else:
                 print(f"    ✅ Runtime successful (startup: {startup_time:.1f}s)")
         except Exception as e:

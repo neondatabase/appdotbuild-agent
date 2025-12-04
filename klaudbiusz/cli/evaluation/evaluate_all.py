@@ -762,6 +762,10 @@ async def main_async():
         print(f"Error: Apps directory not found: {apps_dir}")
         sys.exit(1)
 
+
+    # Note: Base image is built from Dockerfile by Dagger (with BuildKit caching)
+    # No need to pre-build - Dagger handles it efficiently
+
     # Load prompts and generation metrics from bulk_run.py and bulk_run_results
     prompts, gen_metrics, run_config = load_prompts_and_metrics_from_bulk_run()
 
@@ -979,19 +983,16 @@ async def main_async():
             tracker.log_artifact_file(str(md_output))
             tracker.log_artifact_file(str(csv_output))
 
-            # Log trajectory files and app sources for each app
-            print("📝 Logging trajectories and app sources...")
+            # Log trajectory files for each app
+            print("📝 Logging trajectories...")
             trajectories_logged = 0
             traces_logged = 0
-            app_sources_logged = 0
             for app in full_report.get('apps', []):
                 app_dir_path = Path(app.get('app_dir', ''))
                 if app_dir_path.exists():
-                    app_name = app.get('app_name', 'unknown')
-
-                    # Log trajectory
                     trajectory_file = app_dir_path / "trajectory.jsonl"
                     if trajectory_file.exists():
+                        app_name = app.get('app_name', 'unknown')
                         try:
                             # Log trajectory as artifact
                             tracker.log_artifact_file(
@@ -1006,19 +1007,10 @@ async def main_async():
                         except Exception as e:
                             print(f"  ⚠️  Failed to log trajectory for {app_name}: {e}")
 
-                    # Log app source (automatically cleans node_modules)
-                    try:
-                        tracker.log_app_source(str(app_dir_path), app_name)
-                        app_sources_logged += 1
-                    except Exception as e:
-                        print(f"  ⚠️  Failed to log app source for {app_name}: {e}")
-
             if trajectories_logged > 0:
                 print(f"✓ Logged {trajectories_logged} trajectory artifacts")
             if traces_logged > 0:
                 print(f"✓ Logged {traces_logged} traces to Traces tab")
-            if app_sources_logged > 0:
-                print(f"✓ Logged {app_sources_logged} app source archives")
 
             # End run
             tracker.end_run()

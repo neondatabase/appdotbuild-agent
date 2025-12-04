@@ -26,11 +26,6 @@ retry_transport_errors = retry(
     before_sleep=before_sleep_log(logger, logging.WARNING),
 )
 
-# No retry for command execution errors (we want to see them immediately)
-no_retry = retry(
-    stop=stop_after_attempt(1),
-)
-
 
 class Workspace:
     """Dagger workspace for running containerized commands."""
@@ -80,7 +75,6 @@ class Workspace:
 
         return cls(ctr=ctr, client=client)
 
-    @no_retry  # Don't retry command failures - we want immediate feedback
     async def exec(self, command: list[str], cwd: str = ".", update_ctr: bool = False) -> ExecResult:
         """Execute a command in the workspace.
 
@@ -92,7 +86,8 @@ class Workspace:
         Returns:
             ExecResult with exit code, stdout, stderr
         """
-        result_ctr = self.ctr.with_workdir(cwd).with_exec(command)
+        # Use expect=dagger.ReturnType.ANY to capture non-zero exit codes without throwing
+        result_ctr = self.ctr.with_workdir(cwd).with_exec(command, expect=dagger.ReturnType.ANY)
         if update_ctr:
             # Sync to force execution and capture filesystem changes
             self.ctr = await result_ctr.sync()
