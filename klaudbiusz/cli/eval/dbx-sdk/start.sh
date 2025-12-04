@@ -76,8 +76,11 @@ fi
 npm start > /tmp/app_stdout.log 2> /tmp/app_stderr.log &
 APP_PID=$!
 
-# Poll until app responds or timeout (max 15 seconds, check every 0.5s)
-MAX_WAIT=30  # 30 iterations * 0.5s = 15 seconds max
+# Give npm a moment to spawn the node process
+sleep 1
+
+# Poll until app responds or timeout (max 10 seconds, check every 0.5s)
+MAX_WAIT=20  # 20 iterations * 0.5s = 10 seconds max
 for i in $(seq 1 $MAX_WAIT); do
     # Check if process died
     if ! kill -0 $APP_PID 2>/dev/null; then
@@ -95,15 +98,16 @@ for i in $(seq 1 $MAX_WAIT); do
     fi
 
     # Try healthcheck endpoint (accept any HTTP response)
-    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 http://localhost:${DATABRICKS_APP_PORT}/healthcheck 2>&1)
-    if [ "$RESPONSE" != "000" ]; then
+    # Use || true to prevent set -e from exiting on curl failure
+    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 http://localhost:${DATABRICKS_APP_PORT}/healthcheck 2>/dev/null || true)
+    if [ "$RESPONSE" != "000" ] && [ -n "$RESPONSE" ]; then
         echo "✅ App ready (HTTP $RESPONSE)" >&2
         exit 0
     fi
 
     # Fallback to root endpoint
-    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 http://localhost:${DATABRICKS_APP_PORT}/ 2>&1)
-    if [ "$RESPONSE" != "000" ]; then
+    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 http://localhost:${DATABRICKS_APP_PORT}/ 2>/dev/null || true)
+    if [ "$RESPONSE" != "000" ] && [ -n "$RESPONSE" ]; then
         echo "✅ App ready (HTTP $RESPONSE)" >&2
         exit 0
     fi
@@ -113,7 +117,7 @@ for i in $(seq 1 $MAX_WAIT); do
 done
 
 # Timeout - show debug info
-echo "❌ Error: App failed to start within 15 seconds on port ${DATABRICKS_APP_PORT}" >&2
+echo "❌ Error: App failed to start within 11 seconds on port ${DATABRICKS_APP_PORT}" >&2
 if kill -0 $APP_PID 2>/dev/null; then
     echo "Process $APP_PID is still running but not responding" >&2
 else
