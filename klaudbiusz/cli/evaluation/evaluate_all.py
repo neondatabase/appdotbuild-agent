@@ -598,8 +598,14 @@ Examples:
         '-j',
         type=int,
         metavar='N',
-        default=1,
-        help='Run N evaluations in parallel (default: 1 = sequential). Use -j 0 for auto (CPU count)'
+        default=4,
+        help='Run N evaluations in parallel (default: 4). Use -j 0 for auto (CPU count), -j 1 for sequential'
+    )
+
+    parser.add_argument(
+        '--fast',
+        action='store_true',
+        help='Skip slow LLM/VLM checks (DB connectivity, data validity, UI renders) for faster evaluation'
     )
 
     parser.add_argument(
@@ -707,7 +713,8 @@ async def evaluate_app_with_metadata_async(
     prompt: str | None,
     gen_metrics: dict,
     index: int,
-    total: int
+    total: int,
+    fast_mode: bool = False,
 ) -> dict | None:
     """
     Async wrapper for evaluate_app_async that adds generation metrics and handles errors.
@@ -720,7 +727,7 @@ async def evaluate_app_with_metadata_async(
     port = 8000 + index
 
     try:
-        result = await evaluate_app_async(client, app_dir, prompt, port)
+        result = await evaluate_app_async(client, app_dir, prompt, port, fast_mode=fast_mode)
         result_dict = asdict(result)
 
         # Add generation metrics if available
@@ -841,7 +848,8 @@ async def main_async():
                             prompts.get(app_dir.name),
                             gen_metrics,
                             index,
-                            len(app_dirs)
+                            len(app_dirs),
+                            fast_mode=args.fast,
                         )
 
                 results = await asyncio.gather(
@@ -863,7 +871,8 @@ async def main_async():
                         prompts.get(app_dir.name),
                         gen_metrics,
                         i,
-                        len(app_dirs)
+                        len(app_dirs),
+                        fast_mode=args.fast,
                     )
                     if result_dict is not None:
                         results.append(result_dict)

@@ -94,26 +94,26 @@ if ! kill -0 $APP_PID 2>/dev/null; then
     exit 1
 fi
 
-# Health check with retries (5 attempts, 3s timeout each, 2s apart)
+# Health check with retries (3 attempts, 2s timeout each, 1s apart)
 # Accept any HTTP response (not just 2xx) since apps may return 401 before auth
-for i in {1..5}; do
+for i in {1..3}; do
     # Try healthcheck endpoint first
-    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:${DATABRICKS_APP_PORT}/healthcheck 2>&1)
+    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 http://localhost:${DATABRICKS_APP_PORT}/healthcheck 2>&1)
     if [ "$RESPONSE" != "000" ]; then
         echo "✅ App ready (HTTP $RESPONSE)" >&2
         exit 0
     fi
 
     # Fallback to root endpoint
-    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:${DATABRICKS_APP_PORT}/ 2>&1)
+    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 http://localhost:${DATABRICKS_APP_PORT}/ 2>&1)
     if [ "$RESPONSE" != "000" ]; then
         echo "✅ App ready (HTTP $RESPONSE)" >&2
         exit 0
     fi
 
     # Wait before retry (except on last attempt)
-    if [ $i -lt 5 ]; then
-        sleep 2
+    if [ $i -lt 3 ]; then
+        sleep 1
     fi
 done
 
