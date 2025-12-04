@@ -72,16 +72,9 @@ if [ ! -f "package.json" ]; then
     exit 1
 fi
 
-# Debug: Show updated .env
-echo "--- Updated .env ---" >&2
-cat .env >&2
-echo "--- End .env ---" >&2
-
-# Start the app in background (capture stdout/stderr separately for debugging)
-echo "Starting app with: npm start" >&2
+# Start the app in background (capture stdout/stderr for debugging)
 npm start > /tmp/app_stdout.log 2> /tmp/app_stderr.log &
 APP_PID=$!
-echo "Started process $APP_PID" >&2
 
 # Wait for app to start (5 seconds for npm apps)
 sleep 5
@@ -101,21 +94,20 @@ if ! kill -0 $APP_PID 2>/dev/null; then
     exit 1
 fi
 
-# Health check with retries (5 attempts, 2s timeout each, 2s apart for slower Databricks SDK init)
+# Health check with retries (5 attempts, 3s timeout each, 2s apart)
+# Accept any HTTP response (not just 2xx) since apps may return 401 before auth
 for i in {1..5}; do
-    echo "Health check attempt $i on port ${DATABRICKS_APP_PORT}..." >&2
-    
-    # Try healthcheck endpoint first (accept any HTTP response, not just 2xx)
+    # Try healthcheck endpoint first
     RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:${DATABRICKS_APP_PORT}/healthcheck 2>&1)
     if [ "$RESPONSE" != "000" ]; then
-        echo "✅ App ready (healthcheck returned HTTP $RESPONSE)" >&2
+        echo "✅ App ready (HTTP $RESPONSE)" >&2
         exit 0
     fi
 
-    # Fallback to root endpoint for npm apps
+    # Fallback to root endpoint
     RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:${DATABRICKS_APP_PORT}/ 2>&1)
     if [ "$RESPONSE" != "000" ]; then
-        echo "✅ App ready (root returned HTTP $RESPONSE)" >&2
+        echo "✅ App ready (HTTP $RESPONSE)" >&2
         exit 0
     fi
 
