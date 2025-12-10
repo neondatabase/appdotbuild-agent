@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import fnmatch
 import json
+import os
 import sys
 import time
 from collections import Counter, defaultdict
@@ -26,11 +27,14 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
-import dagger
 from dotenv import load_dotenv
 
 from cli.evaluation.eval_metrics import eff_units
-from cli.evaluation.evaluate_app_dagger import evaluate_app_async
+
+
+def is_databricks_environment() -> bool:
+    """Detect if running in a Databricks environment."""
+    return os.path.exists("/databricks") or "DATABRICKS_RUNTIME_VERSION" in os.environ
 
 # Load environment variables from .env file
 env_paths = [
@@ -609,6 +613,13 @@ Examples:
     )
 
     parser.add_argument(
+        '--no-dagger',
+        action='store_true',
+        dest='no_dagger',
+        help='Use Docker CLI instead of Dagger for container orchestration (for environments without Dagger)'
+    )
+
+    parser.add_argument(
         '--mcp-binary',
         metavar='PATH',
         help='MCP binary path (overrides value from bulk_run results)'
@@ -707,52 +718,6 @@ def filter_app_dirs(app_dirs: list[Path], args) -> list[Path]:
     return filtered
 
 
-async def evaluate_app_with_metadata_async(
-    client: dagger.Client,
-    app_dir: Path,
-    prompt: str | None,
-    gen_metrics: dict,
-    index: int,
-    total: int,
-    fast_mode: bool = False,
-) -> dict | None:
-    """
-    Async wrapper for evaluate_app_async that adds generation metrics and handles errors.
-    Designed to work with asyncio.gather().
-    """
-    print(f"\n[{index}/{total}] {app_dir.name}")
-
-    # Assign unique port for parallel execution to avoid Docker port conflicts
-    # Base port 8000 + index, supports up to ~60k parallel workers
-    port = 8000 + index
-
-    try:
-        result = await evaluate_app_async(client, app_dir, prompt, port, fast_mode=fast_mode)
-        result_dict = asdict(result)
-
-        # Add generation metrics if available
-        if app_dir.name in gen_metrics:
-            result_dict["generation_metrics"] = gen_metrics[app_dir.name]
-
-            # Calculate eff_units from generation_metrics if not already present
-            if result_dict["metrics"].get("eff_units") is None:
-                gm = gen_metrics[app_dir.name]
-                tokens = gm.get("input_tokens", 0) + gm.get("output_tokens", 0)
-                result_dict["metrics"]["eff_units"] = eff_units(
-                    tokens_used=tokens if tokens > 0 else None,
-                    agent_turns=gm.get("turns"),
-                    validation_runs=gm.get("validation_runs", 0)
-                )
-
-        return result_dict
-
-    except KeyboardInterrupt:
-        raise  # Re-raise to allow user to stop
-    except Exception as e:
-        print(f"❌ Error evaluating {app_dir.name}: {e}")
-        return None  # Return None for failed evaluations
-
-
 async def main_async():
     """Async main entry point."""
     args = parse_args()
@@ -769,6 +734,10 @@ async def main_async():
         print(f"Error: Apps directory not found: {apps_dir}")
         sys.exit(1)
 
+    # Auto-detect Databricks environment and enable --no-dagger mode
+    if not args.no_dagger and is_databricks_environment():
+        print("🔍 Databricks environment detected - enabling --no-dagger mode")
+        args.no_dagger = True
 
     # Note: Base image is built from Dockerfile by Dagger (with BuildKit caching)
     # No need to pre-build - Dagger handles it efficiently
@@ -816,12 +785,14 @@ async def main_async():
         print(f"   Filter: starting from '{args.start_from}'")
     if args.limit:
         print(f"   Filter: limit to {args.limit} apps")
-    if args.parallel > 1:
+    if args.no_dagger:
+        print(f"   Mode: Local (no Dagger containers)")
+    elif args.parallel > 1:
         print(f"   Parallelism: {args.parallel} workers (Dagger containers)")
     print("=" * 60)
 
-    # Warn if parallelism is too high
-    if args.parallel > 1:
+    # Warn if parallelism is too high (only relevant for Dagger mode)
+    if not args.no_dagger and args.parallel > 1:
         if args.parallel > cpu_count:
             print(f"⚠️  Warning: Requested {args.parallel} parallel jobs but system has {cpu_count} CPUs")
             print(f"   Consider using --parallel {cpu_count} for optimal performance")
@@ -832,51 +803,103 @@ async def main_async():
     # Track timing
     eval_start_time = time.time()
 
-    # Run evaluations using Dagger with async/await
     results = []
-    async with dagger.Connection() as client:
-        if args.parallel > 1:
-            print(f"🚀 Running {args.parallel} evaluations in parallel (Dagger containers)...")
 
-            # Use asyncio.gather() for parallel execution with semaphore to limit concurrency
-            semaphore = asyncio.Semaphore(args.parallel)
+    if args.no_dagger:
+        # Docker CLI-based evaluation (no Dagger)
+        from cli.evaluation.evaluate_app_docker import evaluate_app_docker_with_metadata
 
-            async def evaluate_with_semaphore(index, app_dir):
-                async with semaphore:
-                    return await evaluate_app_with_metadata_async(
+        print("🔄 Running evaluations with Docker CLI (no Dagger)...")
+        for i, app_dir in enumerate(app_dirs, 1):
+            port = 8000 + i
+            result_dict = evaluate_app_docker_with_metadata(
+                app_dir,
+                prompts.get(app_dir.name),
+                gen_metrics,
+                i,
+                len(app_dirs),
+                port=port,
+                fast_mode=args.fast,
+            )
+            if result_dict is not None:
+                results.append(result_dict)
+    else:
+        # Dagger-based evaluation (import here to make dagger optional)
+        import dagger
+        from cli.evaluation.evaluate_app_dagger import evaluate_app_async
+
+        async def evaluate_app_with_metadata_async(
+            client: dagger.Client,
+            app_dir: Path,
+            prompt: str | None,
+            gen_metrics: dict,
+            index: int,
+            total: int,
+            fast_mode: bool = False,
+        ) -> dict | None:
+            """Async wrapper for evaluate_app_async that adds generation metrics."""
+            print(f"\n[{index}/{total}] {app_dir.name}")
+            port = 8000 + index
+
+            try:
+                result = await evaluate_app_async(client, app_dir, prompt, port, fast_mode=fast_mode)
+                result_dict = asdict(result)
+
+                if app_dir.name in gen_metrics:
+                    result_dict["generation_metrics"] = gen_metrics[app_dir.name]
+                    if result_dict["metrics"].get("eff_units") is None:
+                        gm = gen_metrics[app_dir.name]
+                        tokens = gm.get("input_tokens", 0) + gm.get("output_tokens", 0)
+                        result_dict["metrics"]["eff_units"] = eff_units(
+                            tokens_used=tokens if tokens > 0 else None,
+                            agent_turns=gm.get("turns"),
+                            validation_runs=gm.get("validation_runs", 0)
+                        )
+                return result_dict
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                print(f"❌ Error evaluating {app_dir.name}: {e}")
+                return None
+
+        async with dagger.Connection() as client:
+            if args.parallel > 1:
+                print(f"🚀 Running {args.parallel} evaluations in parallel (Dagger containers)...")
+
+                semaphore = asyncio.Semaphore(args.parallel)
+
+                async def evaluate_with_semaphore(index, app_dir):
+                    async with semaphore:
+                        return await evaluate_app_with_metadata_async(
+                            client,
+                            app_dir,
+                            prompts.get(app_dir.name),
+                            gen_metrics,
+                            index,
+                            len(app_dirs),
+                            fast_mode=args.fast,
+                        )
+
+                results = await asyncio.gather(
+                    *[evaluate_with_semaphore(i, app_dir) for i, app_dir in enumerate(app_dirs, 1)],
+                    return_exceptions=False
+                )
+                results = [r for r in results if r is not None]
+
+            else:
+                print("🔄 Running evaluations sequentially (Dagger containers)...")
+                for i, app_dir in enumerate(app_dirs, 1):
+                    result_dict = await evaluate_app_with_metadata_async(
                         client,
                         app_dir,
                         prompts.get(app_dir.name),
                         gen_metrics,
-                        index,
+                        i,
                         len(app_dirs),
                         fast_mode=args.fast,
                     )
-
-            results = await asyncio.gather(
-                *[evaluate_with_semaphore(i, app_dir) for i, app_dir in enumerate(app_dirs, 1)],
-                return_exceptions=False
-            )
-
-            # Filter out None results (failed evaluations)
-            results = [r for r in results if r is not None]
-
-        else:
-            # Sequential execution
-            print("🔄 Running evaluations sequentially (Dagger containers)...")
-            results = []
-            for i, app_dir in enumerate(app_dirs, 1):
-                result_dict = await evaluate_app_with_metadata_async(
-                    client,
-                    app_dir,
-                    prompts.get(app_dir.name),
-                    gen_metrics,
-                    i,
-                    len(app_dirs),
-                    fast_mode=args.fast,
-                )
-                if result_dict is not None:
-                    results.append(result_dict)
+                    if result_dict is not None:
+                        results.append(result_dict)
 
     eval_duration = time.time() - eval_start_time
 
