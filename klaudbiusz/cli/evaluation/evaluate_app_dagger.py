@@ -26,7 +26,7 @@ from cli.evaluation.evaluate_app import (
     check_ui_functional_vlm,
     load_prompts_from_bulk_results,
 )
-from cli.utils.template_detection import detect_template
+from cli.utils.template_detection import detect_template, get_actual_app_dir
 from cli.utils.ts_workspace import (
     build_app,
     check_runtime,
@@ -80,22 +80,35 @@ async def evaluate_app_async(
     print(f"\nEvaluating: {app_dir.name}")
     print("=" * 60)
 
-    # Detect template type
+    # Detect template type and resolve nested directories
     template = detect_template(app_dir)
+    actual_app_dir = get_actual_app_dir(app_dir)
     print(f"  Template: {template}")
 
-    # Skip only if template is unknown and has Dockerfile
-    if template == "unknown" and (app_dir / "Dockerfile").exists():
-        print("  ⚠️  Docker-only apps not yet supported with Dagger wrapper")
-        # Return minimal result
+    # Skip unsupported templates
+    if template == "python":
+        print("  ⚠️  Python apps not yet supported - skipping")
         metrics = FullMetrics()
-        metrics.template_type = "docker"
+        metrics.template_type = "python"
         return EvalResult(
             app_name=app_dir.name,
             app_dir=str(app_dir),
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             metrics=metrics,
-            issues=["Docker-only apps not yet supported"],
+            issues=["Python apps not yet supported"],
+            details={},
+        )
+
+    if template == "unknown":
+        print("  ⚠️  Unknown template - skipping")
+        metrics = FullMetrics()
+        metrics.template_type = "unknown"
+        return EvalResult(
+            app_name=app_dir.name,
+            app_dir=str(app_dir),
+            timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            metrics=metrics,
+            issues=["Unknown template - no eval scripts available"],
             details={},
         )
 
@@ -105,11 +118,11 @@ async def evaluate_app_async(
     details = {}
 
     try:
-        # Create Dagger workspace for this app
+        # Create Dagger workspace for this app (use actual_app_dir for nested apps)
         print("  [0/7] Creating Dagger workspace...")
         workspace = await create_ts_workspace(
             client=client,
-            app_dir=app_dir,
+            app_dir=actual_app_dir,
             template=template,
             port=port,
         )
@@ -189,7 +202,7 @@ async def evaluate_app_async(
             # Use unique test port to avoid conflicts
             test_port = port + 1000
             try:
-                test_result = await run_tests(workspace, test_port)
+                test_result = await run_tests(workspace, test_port, fast_mode=fast_mode)
                 tests_pass = test_result.exit_code == 0
                 metrics.tests_pass = tests_pass
 

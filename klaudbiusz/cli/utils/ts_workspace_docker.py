@@ -116,17 +116,20 @@ def check_types(workspace: DockerWorkspace) -> ExecResult:
     return result
 
 
-def run_tests(workspace: DockerWorkspace, test_port: int) -> ExecResult:
+def run_tests(workspace: DockerWorkspace, test_port: int, fast_mode: bool = False) -> ExecResult:
     """Run tests using test.sh script.
 
     Args:
         workspace: Configured Docker workspace
         test_port: Port to use for test server (to avoid conflicts)
+        fast_mode: If True, skip smoke tests and run only unit tests
 
     Returns:
         ExecResult with exit code, stdout, stderr
     """
-    # Set test port environment variable
-    workspace.exec(["sh", "-c", f"export TEST_PORT={test_port}"])
-    result = workspace.exec(["bash", "/eval/test.sh"], timeout=180)
+    # Set environment variables for test execution
+    env_prefix = f"TEST_PORT={test_port}"
+    if fast_mode:
+        env_prefix += " EVAL_FAST_MODE=true"
+    result = workspace.exec(["sh", "-c", f"{env_prefix} bash /eval/test.sh"], timeout=180)
     return result

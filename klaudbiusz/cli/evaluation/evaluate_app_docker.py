@@ -19,7 +19,7 @@ from cli.evaluation.evaluate_app import (
     check_local_runability,
     check_ui_functional_vlm,
 )
-from cli.utils.template_detection import detect_template
+from cli.utils.template_detection import detect_template, get_actual_app_dir
 from cli.utils.ts_workspace_docker import (
     build_app,
     check_runtime,
@@ -50,21 +50,35 @@ def evaluate_app_docker(
     print(f"\nEvaluating: {app_dir.name}")
     print("=" * 60)
 
-    # Detect template type
+    # Detect template type and resolve nested directories
     template = detect_template(app_dir)
+    actual_app_dir = get_actual_app_dir(app_dir)
     print(f"  Template: {template}")
 
-    # Skip only if template is unknown and has Dockerfile
-    if template == "unknown" and (app_dir / "Dockerfile").exists():
-        print("  ⚠️  Docker-only apps not yet supported with Docker wrapper")
+    # Skip unsupported templates
+    if template == "python":
+        print("  ⚠️  Python apps not yet supported - skipping")
         metrics = FullMetrics()
-        metrics.template_type = "docker"
+        metrics.template_type = "python"
         return EvalResult(
             app_name=app_dir.name,
             app_dir=str(app_dir),
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             metrics=metrics,
-            issues=["Docker-only apps not yet supported"],
+            issues=["Python apps not yet supported"],
+            details={},
+        )
+
+    if template == "unknown":
+        print("  ⚠️  Unknown template - skipping")
+        metrics = FullMetrics()
+        metrics.template_type = "unknown"
+        return EvalResult(
+            app_name=app_dir.name,
+            app_dir=str(app_dir),
+            timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            metrics=metrics,
+            issues=["Unknown template - no eval scripts available"],
             details={},
         )
 
@@ -75,10 +89,10 @@ def evaluate_app_docker(
 
     workspace = None
     try:
-        # Create Docker workspace for this app
+        # Create Docker workspace for this app (use actual_app_dir for nested apps)
         print("  [0/7] Creating Docker workspace...")
         workspace = create_ts_workspace_docker(
-            app_dir=app_dir,
+            app_dir=actual_app_dir,
             template=template,
             port=port,
         )
@@ -155,7 +169,7 @@ def evaluate_app_docker(
             print("  [4/7] Checking tests pass...")
             test_port = port + 1000
             try:
-                test_result = run_tests(workspace, test_port)
+                test_result = run_tests(workspace, test_port, fast_mode=fast_mode)
                 tests_pass = test_result.exit_code == 0
                 metrics.tests_pass = tests_pass
 

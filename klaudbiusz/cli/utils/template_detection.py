@@ -8,6 +8,26 @@ by examining the app structure and key files.
 from pathlib import Path
 
 
+def get_actual_app_dir(app_dir: Path) -> Path:
+    """Get the actual app directory, handling nested directories.
+
+    Some apps are scaffolded with a nested structure like:
+    app_name/app_name/package.json
+
+    This function returns the actual directory containing the app files.
+
+    Args:
+        app_dir: Path to the application directory (may be parent of nested structure)
+
+    Returns:
+        Path to the actual app directory with package.json/requirements.txt
+    """
+    nested = app_dir / app_dir.name
+    if nested.exists() and (nested / "package.json").exists():
+        return nested
+    return app_dir
+
+
 def detect_template(app_dir: Path) -> str:
     """
     Detect which template was used to generate the app.
@@ -16,8 +36,15 @@ def detect_template(app_dir: Path) -> str:
         app_dir: Path to the application directory
 
     Returns:
-        Template type: "dbx-sdk", "trpc", "vite", or "unknown"
+        Template type: "dbx-sdk", "trpc", "vite", "python", or "unknown"
     """
+    # Handle nested app directories (e.g., app_name/app_name/package.json)
+    app_dir = get_actual_app_dir(app_dir)
+
+    # Python app markers (skip these - not supported)
+    if _is_python_app(app_dir):
+        return "python"
+
     # DBX SDK markers (new template)
     if _is_dbx_sdk_app(app_dir):
         return "dbx-sdk"
@@ -31,6 +58,14 @@ def detect_template(app_dir: Path) -> str:
         return "vite"
 
     return "unknown"
+
+
+def _is_python_app(app_dir: Path) -> bool:
+    """Check if app is a Python app (not TypeScript)."""
+    has_requirements = (app_dir / "requirements.txt").exists()
+    has_pyproject = (app_dir / "pyproject.toml").exists()
+    has_no_package_json = not (app_dir / "package.json").exists()
+    return (has_requirements or has_pyproject) and has_no_package_json
 
 
 def _is_dbx_sdk_app(app_dir: Path) -> bool:

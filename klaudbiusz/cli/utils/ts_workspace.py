@@ -138,20 +138,24 @@ async def check_runtime(workspace: Workspace) -> ExecResult:
     return result
 
 
-async def run_tests(workspace: Workspace, test_port: int) -> ExecResult:
+async def run_tests(workspace: Workspace, test_port: int, fast_mode: bool = False) -> ExecResult:
     """Run tests using test.sh script.
 
     Args:
         workspace: Configured TypeScript workspace
         test_port: Port to use for test server (to avoid conflicts)
+        fast_mode: If True, skip smoke tests and run only unit tests
 
     Returns:
         ExecResult with exit code, stdout, stderr (includes coverage output)
     """
     # Set TEST_PORT env var for tests
     workspace.ctr = workspace.ctr.with_env_variable("TEST_PORT", str(test_port))
-    # Run tests directly without bash script to see actual npm test output
-    return await workspace.exec(["sh", "-c", "cd server && npm test || true"])
+    # Set EVAL_FAST_MODE to control whether smoke tests are skipped
+    if fast_mode:
+        workspace.ctr = workspace.ctr.with_env_variable("EVAL_FAST_MODE", "true")
+    # Run tests using test.sh script
+    return await workspace.exec(["bash", "/eval/test.sh"])
 
 
 async def check_types(workspace: Workspace) -> ExecResult:
