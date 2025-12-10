@@ -57,8 +57,6 @@ def run(
         case "claude":
             builder = ClaudeAppBuilder(
                 app_name=app_name,
-                mcp_binary=mcp_binary,
-                mcp_args=mcp_args,
                 output_dir=str(resolved_output_dir),
             )
             metrics = builder.run(prompt)

@@ -44,8 +44,6 @@ def run(
                 app_name=app_name,
                 wipe_db=False,
                 suppress_logs=False,
-                mcp_binary=mcp_binary,
-                mcp_args=parsed_mcp_args,
                 output_dir=output_dir,
             )
             metrics = builder.run(prompt, wipe_db=False)

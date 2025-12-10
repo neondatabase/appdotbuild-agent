@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -71,14 +72,16 @@ class DaggerAppGenerator:
 
     def __init__(
         self,
-        mcp_binary: Path,
         output_dir: Path,
         stream_logs: bool = True,
+        skill_path: Path | None = None,
+        databricks_binary: Path | None = None,
     ):
-        _check_binary_format(mcp_binary)
-        self.mcp_binary = mcp_binary
         self.output_dir = output_dir
         self.stream_logs = stream_logs
+        self.skill_path = skill_path or Path.home() / "dev/cli/experimental/apps-mcp/lib/skill/databricks-apps"
+        self.databricks_binary = databricks_binary or Path.home() / "dev/cli/cli_linux"
+        _check_binary_format(self.databricks_binary)
 
     async def generate_single(
         self,
@@ -86,7 +89,6 @@ class DaggerAppGenerator:
         app_name: str,
         backend: str = "claude",
         model: str | None = None,
-        mcp_args: list[str] | None = None,
     ) -> tuple[Path | None, Path, GenerationMetrics | None]:
         """Generate single app, export app dir + logs.
 
@@ -101,7 +103,7 @@ class DaggerAppGenerator:
         async with dagger.Connection(cfg) as client:
             container = await self._build_container(client)
             return await self._run_generation(
-                client, container, prompt, app_name, backend, model, mcp_args
+                client, container, prompt, app_name, backend, model
             )
 
     async def _run_generation(
@@ -112,12 +114,8 @@ class DaggerAppGenerator:
         app_name: str,
         backend: str,
         model: str | None,
-        mcp_args: list[str] | None,
     ) -> tuple[Path | None, Path, GenerationMetrics | None]:
         """Run generation in container and export results."""
-        # path inside container for generated app
-        app_output = f"/workspace/{app_name}"
-
         # build command using container_runner.py (already in image via Dockerfile COPY)
         cmd = [
             "python",
@@ -128,8 +126,6 @@ class DaggerAppGenerator:
         ]
         if model:
             cmd.append(f"--model={model}")
-        if mcp_args:
-            cmd.append(f"--mcp_args={json.dumps(mcp_args)}")
 
         # mount cache volume for python deps (safe for concurrent access)
         # note: npm cache is NOT cached to avoid corruption under parallel execution
@@ -158,26 +154,41 @@ class DaggerAppGenerator:
             log_file_local.write_text(full_log)
             raise
 
-        # export app directory (if it exists)
-        app_dir_local = self.output_dir / app_name
+        # export workspace and find app directory by generation_metrics.json
+        workspace_local = self.output_dir / f".workspace-{app_name}"
         try:
-            await result.directory(app_output).export(str(app_dir_local))
+            await result.directory("/workspace").export(str(workspace_local))
         except dagger.QueryError as e:
             if "no such file or directory" in str(e):
-                # agent didn't create an app directory (e.g. just answered a question)
                 return None, log_file_local, None
             raise
 
-        # read metrics from generation_metrics.json
-        metrics = _read_metrics_from_app(app_dir_local)
-        return app_dir_local, log_file_local, metrics
+        # find app directory containing generation_metrics.json
+        app_dir_local: Path | None = None
+        for metrics_file in workspace_local.rglob("generation_metrics.json"):
+            app_dir_local = metrics_file.parent
+            break
+
+        if app_dir_local is None:
+            # no app created, clean up workspace
+            shutil.rmtree(workspace_local, ignore_errors=True)
+            return None, log_file_local, None
+
+        # move app to final location and clean up
+        final_app_dir = self.output_dir / app_dir_local.name
+        if final_app_dir.exists():
+            shutil.rmtree(final_app_dir)
+        app_dir_local.rename(final_app_dir)
+        shutil.rmtree(workspace_local, ignore_errors=True)
+
+        metrics = _read_metrics_from_app(final_app_dir)
+        return final_app_dir, log_file_local, metrics
 
     async def generate_bulk(
         self,
         prompts: dict[str, str],
         backend: str = "claude",
         model: str | None = None,
-        mcp_args: list[str] | None = None,
         max_concurrency: int = 4,
         on_complete: Callable[[str, bool], None] | None = None,
     ) -> list[tuple[str, Path | None, Path | None, GenerationMetrics | None, str | None]]:
@@ -190,7 +201,6 @@ class DaggerAppGenerator:
             prompts: dict mapping app_name to prompt
             backend: "claude" or "litellm"
             model: model name (required for litellm)
-            mcp_args: optional MCP server args
             max_concurrency: max parallel generations
             on_complete: callback(app_name, success) called when each app finishes
 
@@ -211,7 +221,7 @@ class DaggerAppGenerator:
                 async with sem:
                     try:
                         app_dir, log_file, metrics = await self._run_generation(
-                            client, base_container, prompt, app_name, backend, model, mcp_args
+                            client, base_container, prompt, app_name, backend, model
                         )
                         if on_complete:
                             on_complete(app_name, True)
@@ -243,11 +253,18 @@ class DaggerAppGenerator:
         # build from Dockerfile (leverages BuildKit cache)
         container = context.docker_build()
 
-        # mount mcp binary from host (not baked into image)
+        # mount skill directory for Claude Code skills
+        container = container.with_directory(
+            "/workspace/.claude/skills/databricks-apps",
+            client.host().directory(str(self.skill_path)),
+            owner="klaudbiusz:klaudbiusz",
+        )
+
+        # mount databricks binary and add to PATH
         container = container.with_file(
-            "/usr/local/bin/edda_mcp",
-            client.host().file(str(self.mcp_binary)),
-            permissions=0o755,  # make executable
+            "/usr/local/bin/databricks",
+            client.host().file(str(self.databricks_binary)),
+            permissions=0o755,
         )
 
         # pass through env vars from host

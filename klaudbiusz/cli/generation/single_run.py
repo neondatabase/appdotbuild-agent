@@ -57,13 +57,12 @@ def run(
         app_name = f"app-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     generator = DaggerAppGenerator(
-        mcp_binary=Path(mcp_binary),
         output_dir=Path(output_dir) if output_dir else Path("./app"),
     )
 
     try:
         app_dir, log_file, metrics = asyncio.run(
-            generator.generate_single(prompt, app_name, backend, model, mcp_args)
+            generator.generate_single(prompt, app_name, backend, model)
         )
     finally:
         _restore_terminal_cursor()
