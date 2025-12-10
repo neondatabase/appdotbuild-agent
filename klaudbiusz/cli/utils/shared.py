@@ -275,9 +275,9 @@ class ScaffoldTracker:
             self.app_dir = self._pending.pop(tool_id)
 
     def detect_from_filesystem(self, search_root: Path | None = None) -> str | None:
-        """Fallback: detect scaffold by finding package.json at top level.
+        """Fallback: detect scaffold by finding marker files.
 
-        Globs for package.json and chooses the one closest to search_root.
+        Tries databricks.yml first (preferred), then falls back to package.json.
         This works in dagger environments where /workspace is the base.
 
         Args:
@@ -294,12 +294,22 @@ class ScaffoldTracker:
             return None
 
         logger.info(f"🔍 Searching for scaffolded app directory under {search_root}")
-        # glob for all package.json files
+
+        # Try databricks.yml first (official scaffold marker)
         marker_files = list(search_root.glob("**/databricks.yml"))
         if not marker_files:
-            logger.warning("⚠️ Could not detect scaffolded app directory from filesystem")
+            # Fallback to package.json (for manually created apps)
+            marker_files = list(search_root.glob("**/package.json"))
+            # Exclude node_modules
+            marker_files = [f for f in marker_files if "node_modules" not in str(f)]
 
-        file, *_ = marker_files
+        if not marker_files:
+            logger.warning("⚠️ Could not detect scaffolded app directory from filesystem")
+            return None
+
+        # Choose the shallowest match (closest to search_root)
+        marker_files.sort(key=lambda f: len(f.parts))
+        file = marker_files[0]
         app_dir = file.parent
         logger.info(f"✅ Detected scaffolded app directory: {app_dir}")
         return str(app_dir)
