@@ -3,11 +3,17 @@
 Contains:
 - Tracker: Unified logging and trajectory collection
 - Shared data structures and helpers
+- Environment detection utilities
 """
 
 import json
 import logging
 import os
+
+
+def is_databricks_environment() -> bool:
+    """Detect if running in a Databricks environment."""
+    return os.path.exists("/databricks") or "DATABRICKS_RUNTIME_VERSION" in os.environ
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any

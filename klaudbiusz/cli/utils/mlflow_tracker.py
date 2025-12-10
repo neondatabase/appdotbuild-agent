@@ -303,7 +303,6 @@ class EvaluationTracker:
             return
 
         try:
-            import shutil
             import tarfile
             import tempfile
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+why #!/usr/bin/env python3
 """Docker-based evaluation script for generated Databricks apps (no Dagger).
 
 Uses plain Docker CLI to run evaluations in isolated containers.

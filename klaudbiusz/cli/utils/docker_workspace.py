@@ -5,7 +5,6 @@ Useful for environments that have Docker but not Dagger (e.g., Databricks Jobs).
 """
 
 import logging
-import os
 import subprocess
 import uuid
 from pathlib import Path

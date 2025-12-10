@@ -30,11 +30,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from cli.evaluation.eval_metrics import eff_units
-
-
-def is_databricks_environment() -> bool:
-    """Detect if running in a Databricks environment."""
-    return os.path.exists("/databricks") or "DATABRICKS_RUNTIME_VERSION" in os.environ
+from cli.utils.shared import is_databricks_environment
 
 # Load environment variables from .env file
 env_paths = [
@@ -73,8 +69,8 @@ def load_prompts_and_metrics_from_bulk_run() -> tuple[dict[str, str], dict[str, 
         and run_config_dict contains mcp_binary, backend, model
     """
     try:
-        # Import PROMPTS from bulk_run.py
-        from cli.generation.bulk_run import PROMPTS
+        # Import PROMPTS from prompts module
+        from cli.prompts import DATABRICKS_PROMPTS as PROMPTS
     except ImportError:
         return {}, {}, {}
 
@@ -786,7 +782,7 @@ async def main_async():
     if args.limit:
         print(f"   Filter: limit to {args.limit} apps")
     if args.no_dagger:
-        print(f"   Mode: Local (no Dagger containers)")
+        print("   Mode: Local (no Dagger containers)")
     elif args.parallel > 1:
         print(f"   Parallelism: {args.parallel} workers (Dagger containers)")
     print("=" * 60)
