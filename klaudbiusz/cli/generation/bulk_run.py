@@ -77,12 +77,10 @@ def main(
         print(f"Model: {model}")
     print(f"Prompt set: {prompts}")
     print(f"Max concurrency: {max_concurrency}")
-    print(f"MCP binary: {mcp_binary}")
     out_path = Path(output_dir) if output_dir else Path("./app")
     print(f"Output dir: {out_path}\n")
 
     generator = DaggerAppGenerator(
-        mcp_binary=Path(mcp_binary),
         output_dir=out_path,
         stream_logs=False,  # disable TUI for bulk runs
     )
@@ -110,7 +108,6 @@ def main(
                 selected_prompts,
                 backend,
                 model,
-                mcp_args,
                 max_concurrency,
                 on_complete=on_complete,
             )

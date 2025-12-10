@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import shutil
 import sys
 import time
 from dataclasses import dataclass
@@ -19,7 +21,7 @@ from claude_agent_sdk import (
 )
 from dotenv import load_dotenv
 
-from cli.utils.shared import ScaffoldTracker, Tracker, build_mcp_command, setup_logging, validate_mcp_manifest
+from cli.utils.shared import ScaffoldTracker, Tracker, setup_logging
 
 try:
     import asyncpg  # type: ignore[import-untyped]
@@ -59,52 +61,71 @@ class ClaudeAppBuilder:
         app_name: str,
         wipe_db: bool = True,
         suppress_logs: bool = False,
-        mcp_binary: str | None = None,
-        mcp_json_path: str | None = None,
-        mcp_args: list[str] | None = None,
         output_dir: str | None = None,
+        skill_path: str | None = None,
     ):
         load_dotenv()
-        self.project_root = Path(__file__).parent.parent.parent.parent
-        self.mcp_manifest = validate_mcp_manifest(mcp_binary, self.project_root)
-
         self.wipe_db = wipe_db
         self.run_id: UUID = uuid4()
         self.app_name = app_name
         self.suppress_logs = suppress_logs
-        self.mcp_binary = mcp_binary
-        self.mcp_json_path = mcp_json_path
-        self.mcp_args = mcp_args
         self.output_dir = Path(output_dir) if output_dir else Path.cwd() / "app"
+        self.skill_path = Path(skill_path) if skill_path else Path.home() / "dev/cli/experimental/apps-mcp/lib/skill/databricks-apps"
+        self.databricks_binary = Path.home() / "dev/cli/cli_linux"
         self.tracker = Tracker(self.run_id, app_name, suppress_logs)
         self.scaffold_tracker = ScaffoldTracker()
 
     async def run_async(self, prompt: str) -> GenerationMetrics:
         start_time = time.time()
 
-        setup_logging(self.suppress_logs, self.mcp_binary)
+        setup_logging(self.suppress_logs)
         await self.tracker.init(wipe_db=self.wipe_db)
+
+        # check if running in container (skill already mounted by dagger)
+        container_skill_path = self.output_dir / ".claude/skills/databricks-apps"
+        in_container = container_skill_path.exists()
+
+        if not in_container:
+            # copy skill to project directory (local run)
+            skill_dest = container_skill_path
+            if skill_dest.exists():
+                shutil.rmtree(skill_dest)
+            skill_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(self.skill_path, skill_dest)
+
+            # copy databricks binary to bin/ directory
+            bin_dir = self.output_dir / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            databricks_dest = bin_dir / "databricks"
+            shutil.copy2(self.databricks_binary, databricks_dest)
+            databricks_dest.chmod(0o755)
+
+        # patch scripts/db to use databricks binary path
+        scripts_db = container_skill_path / "scripts/db"
+        db_content = scripts_db.read_text()
+        # in container: databricks is at /usr/local/bin/databricks
+        # locally: databricks is in bin/ directory (relative to output_dir)
+        cli_path = "/usr/local/bin/databricks" if in_container else str(self.output_dir / "bin/databricks")
+        db_content = db_content.replace("__DATABRICKS_CLI_PATH__", cli_path)
+        scripts_db.write_text(db_content)
+        scripts_db.chmod(0o755)
 
         agents = {}
 
-        # workflow and template best practices are now in the MCP tool description
-        base_instructions = """Use MCP tools to scaffold, build, and test the app as needed.
-Use data from Databricks when relevant.
+        base_instructions = """Invoke the databricks-apps skill to build and validate the app.
 Be concise and to the point in your responses.
 Use up to 10 tools per call to speed up the process.
 Never deploy the app, just scaffold and build it.
 """
 
-        disallowed_tools = ["NotebookEdit", "WebSearch", "WebFetch", "Bash"]
+        disallowed_tools = ["NotebookEdit", "WebSearch", "WebFetch"]
 
-        command, args = build_mcp_command(self.mcp_binary, self.mcp_manifest, self.mcp_json_path, self.mcp_args)
-
-        mcp_config = {
-            "type": "stdio",
-            "command": command,
-            "args": args,
-            "env": {},
-        }
+        # prepend bin/ to PATH so databricks binary is found (local run only)
+        env: dict[str, str] = {}
+        if not in_container:
+            bin_dir = self.output_dir / "bin"
+            current_path = os.environ.get("PATH", "")
+            env = {"PATH": f"{bin_dir}:{current_path}"}
 
         options = ClaudeAgentOptions(
             system_prompt={
@@ -116,7 +137,9 @@ Never deploy the app, just scaffold and build it.
             disallowed_tools=disallowed_tools,
             agents=agents,
             max_turns=75,
-            mcp_servers={"edda": mcp_config},  # type: ignore[arg-type]
+            cwd=str(self.output_dir),
+            setting_sources=["project"],
+            env=env,
             max_buffer_size=3 * 1024 * 1024,
         )
 
