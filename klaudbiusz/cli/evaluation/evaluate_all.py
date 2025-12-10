@@ -590,7 +590,13 @@ Examples:
     parser.add_argument(
         '--staging',
         action='store_true',
-        help='Report results to staging MLflow experiment (/Shared/edda-staging-evaluations)'
+        help='Report results to staging MLflow experiment (adds -staging suffix to experiment name)'
+    )
+
+    parser.add_argument(
+        '--experiment-name',
+        metavar='NAME',
+        help='MLflow experiment name (default: /Shared/klaudbiusz-evaluations, or with --staging: /Shared/klaudbiusz-staging-evaluations)'
     )
 
     parser.add_argument(
@@ -957,8 +963,15 @@ async def main_async():
     try:
         from cli.utils.mlflow_tracker import EvaluationTracker
 
-        # Determine experiment name based on --staging flag
-        experiment_name = "/Shared/edda-staging-evaluations" if args.staging else None
+        # Determine experiment name: explicit > staging suffix > default
+        if args.experiment_name:
+            experiment_name = args.experiment_name
+            if args.staging and not experiment_name.endswith("-staging-evaluations"):
+                experiment_name = experiment_name.rstrip("/") + "-staging"
+        elif args.staging:
+            experiment_name = "/Shared/klaudbiusz-staging-evaluations"
+        else:
+            experiment_name = None  # Use default from mlflow_tracker
 
         tracker = EvaluationTracker(experiment_name=experiment_name)
         if tracker.enabled:
