@@ -632,7 +632,7 @@ Examples:
         '--no-dagger',
         action='store_true',
         dest='no_dagger',
-        help='Use Docker CLI instead of Dagger for container orchestration (for environments without Dagger)'
+        help='Run evaluation locally without containers (no Dagger, no Docker)'
     )
 
     parser.add_argument(
@@ -822,23 +822,35 @@ async def main_async():
     results = []
 
     if args.no_dagger:
-        # Docker CLI-based evaluation (no Dagger)
-        from cli.evaluation.evaluate_app_docker import evaluate_app_docker_with_metadata
+        # Local evaluation (no Docker, no Dagger)
+        from dataclasses import asdict
+        from cli.evaluation.evaluate_app import evaluate_app
 
-        print("🔄 Running evaluations with Docker CLI (no Dagger)...")
+        print("🔄 Running local evaluations (no containers)...")
         for i, app_dir in enumerate(app_dirs, 1):
+            print(f"\n[{i}/{len(app_dirs)}] {app_dir.name}")
             port = 8000 + i
-            result_dict = evaluate_app_docker_with_metadata(
-                app_dir,
-                prompts.get(app_dir.name),
-                gen_metrics,
-                i,
-                len(app_dirs),
-                port=port,
-                fast_mode=args.fast,
-            )
-            if result_dict is not None:
+            try:
+                result = evaluate_app(app_dir, prompts.get(app_dir.name), port)
+                result_dict = asdict(result)
+
+                # Add generation metrics from bulk_run results or generation_metrics.json
+                gm = gen_metrics.get(app_dir.name)
+                if not gm:
+                    metrics_file = app_dir / "generation_metrics.json"
+                    if metrics_file.exists():
+                        try:
+                            gm = json.loads(metrics_file.read_text())
+                        except Exception:
+                            pass
+                if gm:
+                    result_dict["generation_metrics"] = gm
+
                 results.append(result_dict)
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                print(f"❌ Error evaluating {app_dir.name}: {e}")
     else:
         # Dagger-based evaluation (import here to make dagger optional)
         import dagger

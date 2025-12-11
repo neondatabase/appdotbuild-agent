@@ -34,22 +34,12 @@ if [ -f ".env" ]; then
     # Create temp file with container env vars taking precedence
     cp .env .env.bak
     
-    # Update DATABRICKS_APP_PORT if set in container env
-    if [ -n "$DATABRICKS_APP_PORT" ]; then
-        if grep -q "^DATABRICKS_APP_PORT=" .env; then
-            sed -i "s/^DATABRICKS_APP_PORT=.*/DATABRICKS_APP_PORT=$DATABRICKS_APP_PORT/" .env
-        else
-            echo "DATABRICKS_APP_PORT=$DATABRICKS_APP_PORT" >> .env
-        fi
-    fi
-    
-    # Update other critical vars similarly
-    # Note: Using @ as sed delimiter to handle URLs with // properly
-    for var in DATABRICKS_HOST DATABRICKS_TOKEN DATABRICKS_WAREHOUSE_ID DATABRICKS_APP_NAME; do
+    # Update env vars in .env file (remove and re-add for safety with special chars)
+    for var in DATABRICKS_APP_PORT DATABRICKS_HOST DATABRICKS_TOKEN DATABRICKS_WAREHOUSE_ID DATABRICKS_APP_NAME; do
         val="${!var}"
         if [ -n "$val" ]; then
             if grep -q "^${var}=" .env; then
-                # Remove the line and append new value (safer than sed substitution with special chars)
+                # Remove the line (portable method without sed -i)
                 grep -v "^${var}=" .env > .env.tmp && mv .env.tmp .env
             fi
             echo "${var}=$val" >> .env

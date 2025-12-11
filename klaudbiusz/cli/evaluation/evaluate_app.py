@@ -283,7 +283,7 @@ def check_runtime_success(app_dir: Path, container_name: str, template: str = "u
             return False, {}
 
         # Get template-specific start script
-        start_script = Path(__file__).parent / "eval" / script_dir / "start.sh"
+        start_script = Path(__file__).parent.parent / "eval" / script_dir / "start.sh"
         if not start_script.exists():
             print(f"  ⚠️  Start script not found: {start_script}")
             return False, {}
@@ -341,7 +341,7 @@ def _stop_app(app_dir: Path, template: str = "unknown", port: int = 8000) -> boo
 
         # Use template-specific stop script
         if script_dir:
-            stop_script = Path(__file__).parent / "eval" / script_dir / "stop.sh"
+            stop_script = Path(__file__).parent.parent / "eval" / script_dir / "stop.sh"
             if stop_script.exists():
                 success, _, _ = run_command(
                     ["bash", str(stop_script)],
@@ -442,7 +442,7 @@ def check_type_safety(app_dir: Path, template: str = "unknown") -> bool:
         return False
 
     # Get template-specific typecheck script
-    typecheck_script = Path(__file__).parent / "eval" / script_dir / "typecheck.sh"
+    typecheck_script = Path(__file__).parent.parent / "eval" / script_dir / "typecheck.sh"
     if not typecheck_script.exists():
         print(f"  ⚠️  Typecheck script not found: {typecheck_script}")
         return False
@@ -476,7 +476,7 @@ def check_tests_pass(app_dir: Path, template: str = "unknown") -> tuple[bool, fl
         return False, 0.0, False
 
     # Get template-specific test script
-    test_script = Path(__file__).parent / "eval" / script_dir / "test.sh"
+    test_script = Path(__file__).parent.parent / "eval" / script_dir / "test.sh"
     if not test_script.exists():
         print(f"  ⚠️  Test script not found: {test_script}")
         return False, 0.0, False
