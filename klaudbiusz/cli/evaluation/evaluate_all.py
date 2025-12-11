@@ -853,6 +853,7 @@ async def main_async():
                 print(f"❌ Error evaluating {app_dir.name}: {e}")
     else:
         # Dagger-based evaluation (import here to make dagger optional)
+        from dataclasses import asdict
         import dagger
         from cli.evaluation.evaluate_app_dagger import evaluate_app_async
 
