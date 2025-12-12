@@ -101,7 +101,7 @@ def _format_tool(block: ToolUseBlock) -> str:
             return name
 
 
-SKILL_SOURCE = Path.home() / ".claude" / "skills" / "databricks-apps"
+SKILL_SOURCE = Path.home() / ".claude" / "skills" / "databricks-toolset"
 
 
 def _setup_skill_env(base_dir: Path) -> Path:
@@ -243,6 +243,7 @@ async def run_trial_mcp(
         max_turns=MAX_TURNS,
         mcp_servers={"databricks": _build_mcp_config(mcp_binary, mcp_args)},  # type: ignore[arg-type]
         cwd=str(work_dir),
+        sandbox={"enabled": True},
     )
     return await _run_trial(options, prompt, app_name, "mcp", verbose, log_prefix)
 
@@ -264,6 +265,7 @@ async def run_trial_skill(
         max_turns=MAX_TURNS,
         cwd=str(workspace),
         setting_sources=["user"],
+        sandbox={"enabled": True},
     )
     return await _run_trial(options, prompt, app_name, "Skill", verbose, log_prefix)
 
@@ -283,6 +285,10 @@ async def run_single_prompt(
         mcp_result = await run_trial_mcp(
             prompt, app_name, mcp_work_dir, mcp_binary, mcp_args, verbose, f"  {app_name[:15]:<15} MCP   "
         )
+        # clean up MCP dir before Skill trial to prevent data leakage via find commands
+        shutil.rmtree(mcp_work_dir, ignore_errors=True)
+        mcp_work_dir.mkdir()  # recreate for consistent finally cleanup
+
         skill_result = await run_trial_skill(
             prompt, app_name, skill_work_dir, verbose, f"  {app_name[:15]:<15} Skill "
         )
