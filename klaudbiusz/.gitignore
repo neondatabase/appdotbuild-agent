@@ -22,3 +22,6 @@ __pycache__/
 # Build artifacts
 .DS_Store
 .ruff_cache/
+
+# Hackathon evolution runs
+hackathon/runs/
