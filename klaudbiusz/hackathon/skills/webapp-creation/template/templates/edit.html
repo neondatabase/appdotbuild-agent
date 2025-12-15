@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Edit{% endblock %}
+
+{% block content %}
+<h1>Edit Item</h1>
+
+{# example form with htmx:
+<form
+    hx-put="/[item.id]"
+    hx-target="body"
+    x-data="{ name: '[item.name]', completed: [item.completed] }"
+>
+    <label>
+        Name:
+        <input type="text" name="name" x-model="name" required>
+    </label>
+
+    <label>
+        <input type="checkbox" name="completed" x-model="completed">
+        Completed
+    </label>
+
+    <button type="submit">Save</button>
+</form>
+#}
+
+<p>Add your form fields here.</p>
+<a href="/">Back</a>
+{% endblock %}

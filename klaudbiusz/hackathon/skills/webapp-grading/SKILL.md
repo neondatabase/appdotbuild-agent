@@ -1,22 +1,22 @@
 ---
 name: webapp-grading
-description: Grade web applications by analyzing code, trajectory, and screenshots. Provides structured feedback for skill improvement.
+description: Grade full-stack web applications by analyzing code, trajectory, and screenshots. Provides structured feedback for skill improvement.
 ---
 
-You grade web apps and provide structured feedback for skill improvement.
+You grade full-stack web apps (React Admin + FastAPI) and provide structured feedback.
 
 ## Input
 
 You will receive:
-- App directory path with source files (index.html, styles.css, app.ts, Dockerfile)
+- App directory path with source files (backend/, frontend/, Dockerfile)
 - Trajectory file path (trajectory.jsonl) showing how the app was built
 
 ## Workflow
 
-1. **Read source files** - Examine index.html, styles.css, app.ts
+1. **Read source files** - Examine backend/ (models.py, schemas.py, main.py) and frontend/src/ (App.tsx, resources/)
 2. **Read trajectory** - Understand builder's process, struggles, decisions
 3. **Take screenshot** - Run the screenshot command, then read the image
-4. **Analyze quality** - Code structure, type safety, functionality, UI
+4. **Analyze quality** - Backend types, frontend components, API design, UI
 5. **Output JSON feedback** - Structured report for skill improvement
 
 ## Screenshot
@@ -46,14 +46,14 @@ Score 0-10 for each dimension:
 
 ### 1. Code Quality (0-10)
 - Clean structure, proper patterns
-- Type safety: interfaces, typed functions, no `any`
+- Backend: SQLAlchemy models, Pydantic schemas, typed endpoints
+- Frontend: React Admin resources, TypeScript types
 - Error handling, edge cases
-- Readability and maintainability
 
 ### 2. UI/UX (0-10)
 - Visual appearance and layout
+- React Admin components used correctly
 - Usability and interaction design
-- Responsive behavior
 - Consistency and polish
 
 ### 3. Prompt Relevancy (0-10)
@@ -75,7 +75,7 @@ Output ONLY valid JSON (no markdown, no explanation):
 
 ```json
 {
-  "app_name": "todo-app",
+  "app_name": "task-manager",
   "scores": {
     "code_quality": 7,
     "ui_ux": 8,
@@ -89,38 +89,38 @@ Output ONLY valid JSON (no markdown, no explanation):
     {
       "severity": "high",
       "category": "types",
-      "description": "Missing interface for todo items"
+      "description": "Missing Pydantic schema for Task update"
     },
     {
       "severity": "medium",
       "category": "skill",
-      "description": "SKILL.md unclear about localStorage typing"
+      "description": "SKILL.md unclear about relationship typing"
     }
   ],
   "successes": [
-    "Clean DOM helper usage",
-    "Proper event handler typing"
+    "Clean SQLAlchemy model structure",
+    "Proper React Admin resource setup"
   ],
   "skill_suggestions": [
     {
       "file": "reference/patterns.md",
-      "suggestion": "Add localStorage typing example"
+      "suggestion": "Add example for nullable foreign keys"
     },
     {
-      "file": "template/app.ts",
-      "suggestion": "Include localStorage helper functions"
+      "file": "template/backend/schemas.py",
+      "suggestion": "Include UpdateSchema example with Optional fields"
     }
   ],
   "trajectory_insights": [
-    "Builder struggled with localStorage types - needed 3 attempts",
-    "DOM queries were done correctly on first try"
+    "Builder struggled with foreign key types - needed 3 attempts",
+    "React Admin resources were done correctly on first try"
   ]
 }
 ```
 
 ## Categories
 
-- `types` - TypeScript type errors or missing types
+- `types` - Python/TypeScript type errors or missing types
 - `logic` - Broken functionality, bugs
 - `ui` - Visual issues, bad UX
 - `skill` - Issues caused by unclear skill instructions
@@ -131,3 +131,15 @@ Output ONLY valid JSON (no markdown, no explanation):
 - `high` - Blocks functionality or causes errors
 - `medium` - Quality issue but app works
 - `low` - Minor improvement suggestion
+
+## Files to Check
+
+Backend:
+- `backend/models.py` - SQLAlchemy models
+- `backend/schemas.py` - Pydantic schemas
+- `backend/main.py` - FastAPI endpoints
+
+Frontend:
+- `frontend/src/App.tsx` - Resource registration
+- `frontend/src/resources/*.tsx` - CRUD components
+- `frontend/src/dataProvider.ts` - API integration

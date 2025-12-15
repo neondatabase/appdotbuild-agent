@@ -155,7 +155,8 @@ Use the webapp-creation skill to build this app.
             f.write(json.dumps(entry) + "\n")
 
     # check if app was created
-    if (app_dir / "index.html").exists():
+    # rust template: templates/index.html, python template: frontend/index.html
+    if (app_dir / "templates" / "index.html").exists() or (app_dir / "frontend" / "index.html").exists():
         result.app_dir = app_dir
         result.success = True
 

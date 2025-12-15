@@ -1,0 +1,113 @@
+#!/bin/bash
+# Manages Neon database branches for development
+# Usage:
+#   ./scripts/neon-setup <app-name>          # Create app branch, show connection strings
+#   ./scripts/neon-setup <app-name> cleanup  # Delete app branch
+#
+# Requires: NEON_API_KEY, NEON_PROJECT_ID env vars
+# Optional:
+#   NEON_ROLE_NAME     - database role (defaults to neondb_owner)
+#   NEON_PROD_BRANCH   - production branch name (auto-detected)
+#
+# Dependencies: neonctl (npm i -g neonctl), jq
+
+set -e
+
+if [ -z "${1:-}" ]; then
+    echo "Usage: $0 <app-name> [cleanup]" >&2
+    echo "Example: $0 my-todo-app" >&2
+    exit 1
+fi
+
+APP_NAME="$1"
+COMMAND="${2:-setup}"
+
+: "${NEON_API_KEY:?NEON_API_KEY required}"
+: "${NEON_PROJECT_ID:?NEON_PROJECT_ID required}"
+NEON_ROLE_NAME="${NEON_ROLE_NAME:-neondb_owner}"
+DEV_BRANCH="${APP_NAME}-dev"
+
+get_prod_branch() {
+    if [ -n "${NEON_PROD_BRANCH:-}" ]; then
+        echo "$NEON_PROD_BRANCH"
+        return
+    fi
+
+    local branches
+    branches=$(neonctl branches list --project-id "$NEON_PROJECT_ID" --output json 2>/dev/null)
+
+    # try common names first
+    for name in main master production prod; do
+        if echo "$branches" | jq -e ".[] | select(.name == \"$name\")" > /dev/null 2>&1; then
+            echo "$name"
+            return
+        fi
+    done
+
+    # fallback to primary/default branch
+    local primary
+    primary=$(echo "$branches" | jq -r '.[] | select(.primary == true) | .name' 2>/dev/null)
+    if [ -n "$primary" ]; then
+        echo "$primary"
+        return
+    fi
+
+    # last resort: first branch
+    echo "$branches" | jq -r '.[0].name'
+}
+
+branch_exists() {
+    neonctl branches list --project-id "$NEON_PROJECT_ID" --output json 2>/dev/null \
+        | jq -e ".[] | select(.name == \"$1\")" > /dev/null 2>&1
+}
+
+cleanup() {
+    echo "Deleting branch: $DEV_BRANCH"
+    if branch_exists "$DEV_BRANCH"; then
+        neonctl branches delete "$DEV_BRANCH" --project-id "$NEON_PROJECT_ID"
+        echo "Branch deleted: $DEV_BRANCH"
+    else
+        echo "Branch does not exist: $DEV_BRANCH"
+    fi
+}
+
+setup() {
+    local prod_branch
+    prod_branch=$(get_prod_branch)
+    echo "App: $APP_NAME"
+    echo "Production branch: $prod_branch"
+    echo "Dev branch: $DEV_BRANCH"
+    echo ""
+
+    if branch_exists "$DEV_BRANCH"; then
+        echo "Branch already exists: $DEV_BRANCH"
+    else
+        echo "Creating branch: $DEV_BRANCH (from $prod_branch)"
+        neonctl branches create --project-id "$NEON_PROJECT_ID" --name "$DEV_BRANCH" --parent "$prod_branch"
+    fi
+
+    echo ""
+    echo "=== Connection Strings ==="
+    echo ""
+    echo "Dev ($DEV_BRANCH):"
+    DEV_URI=$(neonctl connection-string --project-id "$NEON_PROJECT_ID" --branch "$DEV_BRANCH" --role-name "$NEON_ROLE_NAME")
+    echo "  $DEV_URI"
+
+    echo ""
+    echo "Prod ($prod_branch):"
+    PROD_URI=$(neonctl connection-string --project-id "$NEON_PROJECT_ID" --branch "$prod_branch" --role-name "$NEON_ROLE_NAME")
+    echo "  $PROD_URI"
+
+    echo ""
+    echo "Export for development:"
+    echo "  export DATABASE_URL='$DEV_URI'"
+}
+
+case "$COMMAND" in
+    cleanup)
+        cleanup
+        ;;
+    setup|*)
+        setup
+        ;;
+esac

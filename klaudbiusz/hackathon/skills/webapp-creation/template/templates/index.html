@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<h1>Items</h1>
+
+<a href="/new">+ New Item</a>
+
+<div id="items-list">
+    {# example list with htmx delete:
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            for item in items
+            <tr id="item-[item.id]">
+                <td>[item.id]</td>
+                <td>[item.name]</td>
+                <td>
+                    <a href="/[item.id]/edit">Edit</a>
+                    <button
+                        hx-delete="/[item.id]"
+                        hx-target="#item-[item.id]"
+                        hx-swap="outerHTML"
+                        hx-confirm="Delete this item?"
+                    >Delete</button>
+                </td>
+            </tr>
+            endfor
+        </tbody>
+    </table>
+    #}
+    <p>No items yet. Add your models and update this template.</p>
+</div>
+{% endblock %}

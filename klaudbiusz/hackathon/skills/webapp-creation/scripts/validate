@@ -1,10 +1,10 @@
 #!/bin/bash
-# validate and build TypeScript app
+set -euo pipefail
 
 APP_DIR="$1"
 
 if [ -z "$APP_DIR" ]; then
-    echo "Usage: validate <app_directory>"
+    echo "Usage: validate-rust <app_directory>"
     exit 1
 fi
 
@@ -13,23 +13,25 @@ if [ ! -d "$APP_DIR" ]; then
     exit 1
 fi
 
-cd "$APP_DIR" || exit 1
+cd "$APP_DIR"
 
-echo "Installing dependencies..."
-npm install --silent
+# share cargo build cache across all apps
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/webapp-cargo-cache}"
 
-echo "Type checking..."
-npx tsc --noEmit
-if [ $? -ne 0 ]; then
-    echo "Type check failed - fix TypeScript errors above"
-    exit 1
-fi
+echo "=== cargo check ==="
+cargo check
+echo "PASS"
 
-echo "Building..."
-npm run build
-if [ $? -ne 0 ]; then
-    echo "Build failed"
-    exit 1
-fi
+echo "=== cargo clippy (warnings = errors) ==="
+cargo clippy -- -D warnings
+echo "PASS"
 
-echo "Validation passed!"
+echo "=== cargo test ==="
+cargo test
+echo "PASS"
+
+echo "=== cargo build --release ==="
+cargo build --release
+echo "PASS"
+
+echo "=== All validations passed ==="

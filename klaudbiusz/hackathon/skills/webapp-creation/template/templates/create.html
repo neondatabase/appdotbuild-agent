@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}Create{% endblock %}
+
+{% block content %}
+<h1>Create Item</h1>
+
+{# example form with htmx:
+<form
+    hx-post="/"
+    hx-target="body"
+    x-data="{ name: '' }"
+>
+    <label>
+        Name:
+        <input type="text" name="name" x-model="name" required>
+    </label>
+
+    <button type="submit" :disabled="!name.trim()">Create</button>
+</form>
+#}
+
+<p>Add your form fields here.</p>
+<a href="/">Back</a>
+{% endblock %}

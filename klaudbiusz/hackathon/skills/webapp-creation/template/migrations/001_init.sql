@@ -1,0 +1,7 @@
+-- add your tables here
+-- example:
+-- CREATE TABLE IF NOT EXISTS items (
+--     id SERIAL PRIMARY KEY,
+--     name TEXT NOT NULL,
+--     completed BOOLEAN NOT NULL DEFAULT false
+-- );

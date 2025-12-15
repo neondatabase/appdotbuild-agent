@@ -1,13 +1,16 @@
-FROM node:20-alpine AS build
-
+FROM rust:1.83-slim AS builder
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+COPY Cargo.toml ./
+COPY src ./src
+COPY migrations ./migrations
+RUN cargo build --release
 
-COPY . .
-RUN npm run build
-
-FROM nginx:alpine
-COPY --from=build /app/dist /usr/share/nginx/html
+FROM debian:bookworm-slim
+WORKDIR /app
+COPY --from=builder /app/target/release/webapp .
+COPY static ./static
+COPY migrations ./migrations
 EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+ENV PORT=80
+CMD ["./webapp"]
