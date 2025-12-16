@@ -3,46 +3,47 @@ name: webapp-creation
 description: Build full-stack web applications using Axum (Rust) with HTMX + Alpine.js frontend and Neon (PostgreSQL).
 ---
 
-You build full-stack web apps from prompts using Axum + HTMX + Alpine.js.
+You build full-stack stateful web apps from prompts using Axum + HTMX + Alpine.js.
 
 ## Architecture
 
 - **Backend**: Axum with SQLx (Rust)
 - **Frontend**: Askama templates + HTMX + Alpine.js + PicoCSS
 - **Database**: Neon (PostgreSQL)
-- **Deployment**: Single Docker container
+- **Auth**: Neon Auth (via `neon_auth` schema)
+- **Deployment**: Single Docker container 
 
 ## Neon Setup
 
 Prerequisites:
 - Neon CLI: `npm i -g neonctl`
 - jq: `brew install jq`
+- sqlx-cli: `cargo install sqlx-cli --features postgres,native-tls`
 
-Required environment variables:
-- `NEON_API_KEY` - Neon API key (for branch management)
+Required environment variables (in shell, not app):
+- `NEON_API_KEY` - Neon API key
 - `NEON_PROJECT_ID` - Neon project ID
 
-Optional environment variables:
-- `NEON_ROLE_NAME` - database role (defaults to `neondb_owner`)
-- `NEON_PROD_BRANCH` - production branch name (auto-detected)
-- `NEON_DEV_BRANCH` - development branch name (defaults to `dev`)
-
 Setup workflow:
-1. Create a Neon project at https://neon.tech
-2. Run `./scripts/neon-setup <app-name>` to create app branch (e.g., `myapp-dev`)
-3. Set `DATABASE_URL` to the dev branch connection string
-4. Run `./scripts/neon-setup <app-name> cleanup` to delete branch when done
+1. Run `./scripts/neon-setup` - creates `{app}-dev` branch, writes `.env`
+2. Validate and run migrations: `.claude/skills/webapp-creation/scripts/validate .`
+3. Run `./scripts/neon-setup cleanup` to delete branch when done
 
 ## Workflow
 
-1. Read template files from this skill's `template/` directory
-2. Copy ALL template files to the output directory
-3. Define data models in `src/models.rs`
-4. Add migration SQL in `migrations/001_init.sql`
-5. Add route handlers in `src/main.rs`
-6. Update Askama templates in `templates/`
-7. Run validation: execute `scripts/validate` with the app path
-8. Fix any errors before completing
+1. Scaffold: `.claude/skills/webapp-creation/scripts/scaffold <app-name> .`
+   - Copies template files to current directory
+   - Creates Neon branch (`{app}-dev`)
+   - Writes `.env` with DATABASE_URL
+2. Define data models in `src/models.rs`
+3. Add migration SQL in `migrations/001_init.sql` (use SERIAL for i32, BIGSERIAL for i64)
+4. Add route handlers in `src/main.rs` (use Result<T, AppError>, never .expect())
+5. Update Askama templates in `templates/` (delete create.html/edit.html if unused)
+6. Validate: `.claude/skills/webapp-creation/scripts/validate .`
+   - Runs cargo check, clippy, tests, release build
+   - Tests Docker build (deployment readiness)
+7. Fix any errors before completing
+8. Cleanup: `./scripts/neon-setup cleanup` (deletes branch)
 
 ## Template Structure
 
@@ -68,6 +69,32 @@ template/
 ```
 
 ## Backend Development
+
+### CRITICAL: Error Handling Rules
+
+**NEVER use `.expect()` or `.unwrap()` in handler functions** - these cause server crashes. Use proper error handling:
+
+1. **All handlers return `Result<T, AppError>`** - errors are logged and return 500 status
+2. **Use `?` operator** for all database and template operations
+3. **Check `rows_affected()`** for DELETE/UPDATE to return 404 when appropriate
+
+The template includes `AppError` type for proper error handling.
+
+### CRITICAL: Route Path Parameters
+
+**Axum 0.7+ uses `{param}` syntax, NOT `:param`**. Using `:id` causes runtime panic:
+
+```rust
+// WRONG - causes panic at startup
+.route("/:id/edit", get(edit_form))
+.route("/:id", post(update).delete(delete))
+
+// CORRECT - Axum 0.7+ syntax
+.route("/{id}/edit", get(edit_form))
+.route("/{id}", post(update).delete(delete))
+```
+
+This is a runtime error that passes `cargo check` but crashes the app immediately.
 
 ### Adding a New Model
 
@@ -103,25 +130,23 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 3. Add route handlers in `src/main.rs`:
 ```rust
-async fn list_tasks(State(state): State<AppState>) -> Html<String> {
+async fn list_tasks(State(state): State<AppState>) -> Result<Html<String>, AppError> {
     let tasks = sqlx::query_as::<_, Task>("SELECT * FROM tasks")
         .fetch_all(&state.pool)
-        .await
-        .expect("query failed");
+        .await?;  // use ? operator, never .expect()
     let template = IndexTemplate { tasks };
-    Html(template.render().expect("render failed"))
+    Ok(Html(template.render()?))
 }
 
 async fn create_task(
     State(state): State<AppState>,
     Form(input): Form<CreateTask>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, AppError> {
     sqlx::query("INSERT INTO tasks (title) VALUES ($1)")
         .bind(&input.title)
         .execute(&state.pool)
-        .await
-        .expect("insert failed");
-    Redirect::to("/")
+        .await?;  // use ? operator, never .expect()
+    Ok(Redirect::to("/"))
 }
 ```
 
@@ -174,18 +199,61 @@ PicoCSS provides classless styling. Semantic HTML elements are styled automatica
 - `<table>`, `<form>`, `<input>`, `<button>`
 - Use `class="container"` for centered content with max-width
 
+## Authentication (Neon Auth)
+
+Auth middleware is enabled by default. It extracts `Option<User>` from session cookies by querying the `neon_auth` schema.
+
+### Setup Requirement
+
+Enable Neon Auth in your Neon project console before running the app. The `neon_auth` schema is created automatically.
+
+### Accessing User in Handlers
+
+```rust
+use axum::Extension;
+use crate::auth::User;
+
+async fn my_handler(Extension(user): Extension<Option<User>>) -> impl IntoResponse {
+    match user {
+        Some(u) => format!("Hello, {}", u.email),
+        None => "Not authenticated".to_string(),
+    }
+}
+```
+
+### User Struct
+
+```rust
+pub struct User {
+    pub id: String,
+    pub email: String,
+    pub name: Option<String>,
+    pub image: Option<String>,
+}
+```
+
+### Protected Routes
+
+For routes that require authentication, check the user in the handler:
+
+```rust
+async fn protected_route(Extension(user): Extension<Option<User>>) -> impl IntoResponse {
+    let user = match user {
+        Some(u) => u,
+        None => return (StatusCode::UNAUTHORIZED, "Login required").into_response(),
+    };
+    // ... rest of handler
+}
+```
+
 ## Validation
 
-After writing code, run the validate script:
+After writing code, run the validate script (DO NOT run cargo commands directly):
 ```bash
 .claude/skills/webapp-creation/scripts/validate /path/to/app
 ```
 
-This runs:
-- `cargo check` - compilation check
-- `cargo clippy -- -D warnings` - lints (warnings are errors)
-- `cargo test` - unit tests
-- `cargo build --release` - release build
+The script runs cargo check, clippy, test, and release build with a shared build cache.
 
 ## Constraints
 

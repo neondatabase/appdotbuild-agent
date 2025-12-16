@@ -4,7 +4,7 @@ set -euo pipefail
 APP_DIR="$1"
 
 if [ -z "$APP_DIR" ]; then
-    echo "Usage: validate-rust <app_directory>"
+    echo "Usage: validate <app_directory>"
     exit 1
 fi
 
@@ -14,6 +14,13 @@ if [ ! -d "$APP_DIR" ]; then
 fi
 
 cd "$APP_DIR"
+
+# load .env if present
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+fi
 
 # share cargo build cache across all apps
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/webapp-cargo-cache}"
@@ -33,5 +40,55 @@ echo "PASS"
 echo "=== cargo build --release ==="
 cargo build --release
 echo "PASS"
+
+echo "=== database migration ==="
+if [ -z "${DATABASE_URL:-}" ]; then
+    echo "SKIP (DATABASE_URL not set - run ./scripts/neon-setup)"
+else
+    if command -v sqlx &> /dev/null; then
+        sqlx migrate run --source ./migrations
+        echo "PASS"
+
+        echo "=== sqlx prepare (offline mode) ==="
+        cargo sqlx prepare
+        echo "PASS"
+    else
+        echo "SKIP (sqlx-cli not installed: cargo install sqlx-cli --features postgres,native-tls)"
+    fi
+fi
+
+echo "=== sqlx offline mode check ==="
+# check if Dockerfile uses SQLX_OFFLINE=true
+if [ -f Dockerfile ] && grep -q "SQLX_OFFLINE=true" Dockerfile; then
+    # SQLX_OFFLINE is used - require .sqlx directory with content
+    if [ ! -d .sqlx ]; then
+        echo "ERROR: Dockerfile uses SQLX_OFFLINE=true but .sqlx directory doesn't exist"
+        echo "Run 'cargo sqlx prepare' with DATABASE_URL set to generate offline query data"
+        exit 1
+    fi
+    if [ -z "$(ls -A .sqlx 2>/dev/null)" ]; then
+        echo "ERROR: Dockerfile uses SQLX_OFFLINE=true but .sqlx directory is empty"
+        echo "Run 'cargo sqlx prepare' with DATABASE_URL set to generate offline query data"
+        exit 1
+    fi
+    echo "PASS (SQLX_OFFLINE enabled with prepared queries)"
+else
+    # SQLX_OFFLINE not used - runtime queries are fine
+    echo "PASS (runtime queries - SQLX_OFFLINE not used)"
+fi
+
+echo "=== Dockerfile runtime dependencies ==="
+if [ ! -d templates ]; then
+    echo "ERROR: templates/ directory not found - Askama needs templates at runtime"
+    echo "Create templates/ directory with .html files"
+    exit 1
+fi
+if grep -q "COPY templates" Dockerfile 2>/dev/null; then
+    echo "PASS (templates/ copied in Dockerfile)"
+else
+    echo "ERROR: Dockerfile missing 'COPY templates ./templates' - app will fail at runtime"
+    echo "Add 'COPY templates ./templates' to Dockerfile before CMD"
+    exit 1
+fi
 
 echo "=== All validations passed ==="

@@ -1,18 +1,20 @@
 [package]
 name = "webapp"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 axum = "0.8"
+axum-extra = { version = "0.10", features = ["cookie"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "tls-native-tls"] }
 askama = "0.12"
 askama_axum = "0.4"
 serde = { version = "1", features = ["derive"] }
-tower-http = { version = "0.6", features = ["fs", "cors"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
 
 [profile.release]
 lto = true

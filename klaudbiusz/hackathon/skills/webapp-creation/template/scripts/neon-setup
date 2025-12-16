@@ -1,30 +1,26 @@
 #!/bin/bash
-# Manages Neon database branches for development
+# Manages Neon database branches for this app
 # Usage:
-#   ./scripts/neon-setup <app-name>          # Create app branch, show connection strings
-#   ./scripts/neon-setup <app-name> cleanup  # Delete app branch
+#   ./scripts/neon-setup          # Create branch, write .env
+#   ./scripts/neon-setup cleanup  # Delete branch, remove .env
 #
 # Requires: NEON_API_KEY, NEON_PROJECT_ID env vars
-# Optional:
-#   NEON_ROLE_NAME     - database role (defaults to neondb_owner)
-#   NEON_PROD_BRANCH   - production branch name (auto-detected)
+# Optional: NEON_ROLE_NAME (defaults to neondb_owner)
+#           NEON_COMPUTE_SIZE (defaults to 0.25-1 CU)
 #
 # Dependencies: neonctl (npm i -g neonctl), jq
 
 set -e
 
-if [ -z "${1:-}" ]; then
-    echo "Usage: $0 <app-name> [cleanup]" >&2
-    echo "Example: $0 my-todo-app" >&2
-    exit 1
-fi
-
-APP_NAME="$1"
-COMMAND="${2:-setup}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+APP_NAME="$(basename "$APP_DIR")"
+COMMAND="${1:-setup}"
 
 : "${NEON_API_KEY:?NEON_API_KEY required}"
 : "${NEON_PROJECT_ID:?NEON_PROJECT_ID required}"
 NEON_ROLE_NAME="${NEON_ROLE_NAME:-neondb_owner}"
+NEON_COMPUTE_SIZE="${NEON_COMPUTE_SIZE:-0.25-1}"
 DEV_BRANCH="${APP_NAME}-dev"
 
 get_prod_branch() {
@@ -36,7 +32,6 @@ get_prod_branch() {
     local branches
     branches=$(neonctl branches list --project-id "$NEON_PROJECT_ID" --output json 2>/dev/null)
 
-    # try common names first
     for name in main master production prod; do
         if echo "$branches" | jq -e ".[] | select(.name == \"$name\")" > /dev/null 2>&1; then
             echo "$name"
@@ -44,7 +39,6 @@ get_prod_branch() {
         fi
     done
 
-    # fallback to primary/default branch
     local primary
     primary=$(echo "$branches" | jq -r '.[] | select(.primary == true) | .name' 2>/dev/null)
     if [ -n "$primary" ]; then
@@ -52,7 +46,6 @@ get_prod_branch() {
         return
     fi
 
-    # last resort: first branch
     echo "$branches" | jq -r '.[0].name'
 }
 
@@ -69,45 +62,40 @@ cleanup() {
     else
         echo "Branch does not exist: $DEV_BRANCH"
     fi
+
+    if [ -f "$APP_DIR/.env" ]; then
+        rm "$APP_DIR/.env"
+        echo "Removed: .env"
+    fi
 }
 
 setup() {
     local prod_branch
     prod_branch=$(get_prod_branch)
     echo "App: $APP_NAME"
-    echo "Production branch: $prod_branch"
-    echo "Dev branch: $DEV_BRANCH"
+    echo "Branch: $DEV_BRANCH"
     echo ""
 
     if branch_exists "$DEV_BRANCH"; then
-        echo "Branch already exists: $DEV_BRANCH"
+        echo "Branch already exists"
     else
-        echo "Creating branch: $DEV_BRANCH (from $prod_branch)"
-        neonctl branches create --project-id "$NEON_PROJECT_ID" --name "$DEV_BRANCH" --parent "$prod_branch"
+        echo "Creating branch from $prod_branch..."
+        neonctl branches create --project-id "$NEON_PROJECT_ID" --name "$DEV_BRANCH" --parent "$prod_branch" --cu "$NEON_COMPUTE_SIZE"
     fi
 
-    echo ""
-    echo "=== Connection Strings ==="
-    echo ""
-    echo "Dev ($DEV_BRANCH):"
     DEV_URI=$(neonctl connection-string --project-id "$NEON_PROJECT_ID" --branch "$DEV_BRANCH" --role-name "$NEON_ROLE_NAME")
-    echo "  $DEV_URI"
 
+    echo "export DATABASE_URL='$DEV_URI'" > "$APP_DIR/.env"
     echo ""
-    echo "Prod ($prod_branch):"
-    PROD_URI=$(neonctl connection-string --project-id "$NEON_PROJECT_ID" --branch "$prod_branch" --role-name "$NEON_ROLE_NAME")
-    echo "  $PROD_URI"
-
-    echo ""
-    echo "Export for development:"
-    echo "  export DATABASE_URL='$DEV_URI'"
+    echo "Written to .env:"
+    cat "$APP_DIR/.env"
 }
 
 case "$COMMAND" in
     cleanup)
         cleanup
         ;;
-    setup|*)
+    *)
         setup
         ;;
 esac

@@ -1,0 +1,60 @@
+#!/bin/bash
+# Scaffolds a new webapp from template
+# Usage: ./scripts/scaffold <app-name> [output-dir]
+#
+# Creates app directory, copies template, sets up Neon branch
+# Requires: NEON_API_KEY, NEON_PROJECT_ID env vars
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEMPLATE_DIR="$SKILL_DIR/template"
+
+APP_NAME="${1:-}"
+OUTPUT_DIR="${2:-$(pwd)/$APP_NAME}"
+
+if [ -z "$APP_NAME" ]; then
+    echo "Usage: $0 <app-name> [output-dir]"
+    echo "Example: $0 my-todo-app ."
+    exit 1
+fi
+
+# resolve "." to absolute path
+if [ "$OUTPUT_DIR" = "." ]; then
+    OUTPUT_DIR="$(pwd)"
+fi
+
+# only fail on existing dir if it contains app files (Cargo.toml)
+if [ -f "$OUTPUT_DIR/Cargo.toml" ]; then
+    echo "Error: Directory already contains an app: $OUTPUT_DIR"
+    exit 1
+fi
+
+echo "=== Scaffolding: $APP_NAME ==="
+echo "Template: $TEMPLATE_DIR"
+echo "Output: $OUTPUT_DIR"
+echo ""
+
+# copy template (exclude build artifacts)
+mkdir -p "$OUTPUT_DIR"
+cp -r "$TEMPLATE_DIR"/* "$OUTPUT_DIR/"
+rm -rf "$OUTPUT_DIR/target" "$OUTPUT_DIR/Cargo.lock" "$OUTPUT_DIR/.env"
+
+echo "Template copied"
+echo ""
+
+# setup neon branch
+echo "=== Setting up Neon database ==="
+cd "$OUTPUT_DIR"
+./scripts/neon-setup
+
+echo ""
+echo "=== Done ==="
+echo "cd $OUTPUT_DIR"
+echo ""
+echo "Next steps:"
+echo "  1. Edit src/models.rs - define your data models"
+echo "  2. Edit migrations/001_init.sql - add your schema"
+echo "  3. Edit src/main.rs - add route handlers"
+echo "  4. Run: $SKILL_DIR/scripts/validate ."
