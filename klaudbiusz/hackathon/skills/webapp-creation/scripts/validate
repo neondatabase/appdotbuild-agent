@@ -25,6 +25,25 @@ fi
 # share cargo build cache across all apps
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/webapp-cargo-cache}"
 
+# run migrations FIRST - compile-time sqlx macros need schema to exist
+echo "=== database migration ==="
+if [ -z "${DATABASE_URL:-}" ]; then
+    echo "SKIP (DATABASE_URL not set - run ./scripts/neon-setup)"
+elif [ ! -d migrations ] || [ -z "$(ls -A migrations 2>/dev/null)" ]; then
+    echo "SKIP (no migrations found)"
+elif ! command -v sqlx &> /dev/null; then
+    echo "ERROR: sqlx-cli required for migrations"
+    echo "Install: cargo install sqlx-cli --features postgres,native-tls"
+    exit 1
+else
+    # try normal migrate, fall back to reset if migration was modified
+    if ! sqlx migrate run --source ./migrations 2>&1; then
+        echo "Migration failed, resetting database..."
+        sqlx database reset -y --source ./migrations
+    fi
+    echo "PASS"
+fi
+
 echo "=== cargo check ==="
 cargo check
 echo "PASS"
@@ -41,20 +60,14 @@ echo "=== cargo build --release ==="
 cargo build --release
 echo "PASS"
 
-echo "=== database migration ==="
+echo "=== sqlx prepare (offline mode) ==="
 if [ -z "${DATABASE_URL:-}" ]; then
-    echo "SKIP (DATABASE_URL not set - run ./scripts/neon-setup)"
+    echo "SKIP (DATABASE_URL not set)"
+elif command -v sqlx &> /dev/null; then
+    cargo sqlx prepare
+    echo "PASS"
 else
-    if command -v sqlx &> /dev/null; then
-        sqlx migrate run --source ./migrations
-        echo "PASS"
-
-        echo "=== sqlx prepare (offline mode) ==="
-        cargo sqlx prepare
-        echo "PASS"
-    else
-        echo "SKIP (sqlx-cli not installed: cargo install sqlx-cli --features postgres,native-tls)"
-    fi
+    echo "SKIP (sqlx-cli not installed)"
 fi
 
 echo "=== sqlx offline mode check ==="

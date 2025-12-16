@@ -1,10 +1,8 @@
-mod auth;
 mod db;
 mod models;
 
 use axum::{
     Router,
-    middleware,
     routing::get,
     response::{Html, IntoResponse, Response},
     extract::State,
@@ -57,9 +55,10 @@ struct AppState {
     pool: DbPool,
 }
 
+#[tracing::instrument(skip(_state))]
 async fn index(State(_state): State<AppState>) -> Result<Html<String>, AppError> {
-    // example: fetch items from db
-    // let items = sqlx::query_as::<_, models::Item>("SELECT * FROM items")
+    // example: fetch items from db (use compile-time checked macros)
+    // let items = sqlx::query_as!(models::Item, "SELECT id, name FROM items")
     //     .fetch_all(&state.pool)
     //     .await?;
 
@@ -69,19 +68,21 @@ async fn index(State(_state): State<AppState>) -> Result<Html<String>, AppError>
     Ok(Html(template.render()?))
 }
 
+#[tracing::instrument]
 async fn new_form() -> Result<Html<String>, AppError> {
     let template = CreateTemplate;
     Ok(Html(template.render()?))
 }
 
 // example route handlers - uncomment and modify as needed
+// use compile-time checked macros (query!, query_as!) for SQL validation
+// add #[tracing::instrument(skip(state))] to handlers for structured logging
 //
 // async fn create(
 //     State(state): State<AppState>,
 //     Form(input): Form<models::CreateItem>,
 // ) -> Result<impl IntoResponse, AppError> {
-//     sqlx::query("INSERT INTO items (name) VALUES ($1)")
-//         .bind(&input.name)
+//     sqlx::query!("INSERT INTO items (name) VALUES ($1)", input.name)
 //         .execute(&state.pool)
 //         .await?;
 //     Ok(Redirect::to("/"))
@@ -89,10 +90,9 @@ async fn new_form() -> Result<Html<String>, AppError> {
 //
 // async fn edit_form(
 //     State(state): State<AppState>,
-//     Path(id): Path<i64>,
+//     Path(id): Path<i32>,
 // ) -> Result<Html<String>, AppError> {
-//     let item = sqlx::query_as::<_, models::Item>("SELECT * FROM items WHERE id = $1")
-//         .bind(id)
+//     let item = sqlx::query_as!(models::Item, "SELECT id, name FROM items WHERE id = $1", id)
 //         .fetch_one(&state.pool)
 //         .await?;
 //     let template = EditTemplate { item };
@@ -101,14 +101,12 @@ async fn new_form() -> Result<Html<String>, AppError> {
 //
 // async fn update(
 //     State(state): State<AppState>,
-//     Path(id): Path<i64>,
+//     Path(id): Path<i32>,
 //     Form(input): Form<models::UpdateItem>,
 // ) -> Result<impl IntoResponse, AppError> {
 //     // build dynamic update query based on provided fields
 //     if let Some(name) = input.name {
-//         sqlx::query("UPDATE items SET name = $1 WHERE id = $2")
-//             .bind(&name)
-//             .bind(id)
+//         sqlx::query!("UPDATE items SET name = $1 WHERE id = $2", name, id)
 //             .execute(&state.pool)
 //             .await?;
 //     }
@@ -117,10 +115,9 @@ async fn new_form() -> Result<Html<String>, AppError> {
 //
 // async fn delete(
 //     State(state): State<AppState>,
-//     Path(id): Path<i64>,
+//     Path(id): Path<i32>,
 // ) -> Result<Html<&'static str>, AppError> {
-//     sqlx::query("DELETE FROM items WHERE id = $1")
-//         .bind(id)
+//     sqlx::query!("DELETE FROM items WHERE id = $1", id)
 //         .execute(&state.pool)
 //         .await?;
 //     Ok(Html("")) // htmx will remove the row
@@ -152,10 +149,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // .route("/{id}", put(update).delete(delete))
         .nest_service("/static", ServeDir::new("static"))
         .layer(TraceLayer::new_for_http())
-        .layer(middleware::from_fn_with_state(
-            state.pool.clone(),
-            auth::auth_middleware,
-        ))
         .with_state(state);
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "8000".to_string());

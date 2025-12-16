@@ -1,1 +1,68 @@
 /* custom overrides - PicoCSS handles base styling */
+
+:root {
+    --primary-color: #3b82f6;
+    --primary-hover: #2563eb;
+    --secondary-color: #6b7280;
+    --success-color: #10b981;
+    --danger-color: #ef4444;
+    --warning-color: #f59e0b;
+}
+
+/* card component */
+.card {
+    max-width: 500px;
+    margin: 2rem auto;
+    padding: 2rem;
+    border-radius: 1rem;
+    background: var(--pico-card-background-color);
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+}
+
+/* centered content section */
+.centered {
+    text-align: center;
+}
+
+/* large display text (for numbers, stats) */
+.display-value {
+    font-size: 3rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+/* muted label */
+.label {
+    color: var(--pico-muted-color);
+    font-size: 0.9rem;
+}
+
+/* button variants using PicoCSS custom properties */
+.btn-success {
+    --pico-background-color: var(--success-color);
+    --pico-border-color: var(--success-color);
+}
+
+.btn-danger {
+    --pico-background-color: var(--danger-color);
+    --pico-border-color: var(--danger-color);
+}
+
+.btn-warning {
+    --pico-background-color: var(--warning-color);
+    --pico-border-color: var(--warning-color);
+}
+
+/* progress bar */
+.progress-bar {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--pico-muted-border-color);
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: var(--primary-color);
+    transition: width 0.3s ease;
+}

@@ -7,6 +7,7 @@
 # Requires: NEON_API_KEY, NEON_PROJECT_ID env vars
 # Optional: NEON_ROLE_NAME (defaults to neondb_owner)
 #           NEON_COMPUTE_SIZE (defaults to 0.25-1 CU)
+#           NEON_BRANCH_TTL (branch expiration, e.g., "2h", "1d", "7d")
 #
 # Dependencies: neonctl (npm i -g neonctl), jq
 
@@ -21,7 +22,30 @@ COMMAND="${1:-setup}"
 : "${NEON_PROJECT_ID:?NEON_PROJECT_ID required}"
 NEON_ROLE_NAME="${NEON_ROLE_NAME:-neondb_owner}"
 NEON_COMPUTE_SIZE="${NEON_COMPUTE_SIZE:-0.25-1}"
+NEON_BRANCH_TTL="${NEON_BRANCH_TTL:-}"  # e.g., "2h", "1d", "7d" - empty means no expiration
 DEV_BRANCH="${APP_NAME}-dev"
+
+# Convert TTL like "2h", "1d" to ISO date string for --expires-at
+ttl_to_date() {
+    local ttl="$1"
+    local value="${ttl%[hdwm]}"
+    local unit="${ttl: -1}"
+    local seconds=0
+
+    case "$unit" in
+        h) seconds=$((value * 3600)) ;;
+        d) seconds=$((value * 86400)) ;;
+        w) seconds=$((value * 604800)) ;;
+        m) seconds=$((value * 2592000)) ;;
+        *) echo "Invalid TTL unit: $unit (use h/d/w/m)" >&2; return 1 ;;
+    esac
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        date -u -v+${seconds}S '+%Y-%m-%dT%H:%M:%SZ'
+    else
+        date -u -d "+${seconds} seconds" '+%Y-%m-%dT%H:%M:%SZ'
+    fi
+}
 
 get_prod_branch() {
     if [ -n "${NEON_PROD_BRANCH:-}" ]; then
@@ -80,7 +104,14 @@ setup() {
         echo "Branch already exists"
     else
         echo "Creating branch from $prod_branch..."
-        neonctl branches create --project-id "$NEON_PROJECT_ID" --name "$DEV_BRANCH" --parent "$prod_branch" --cu "$NEON_COMPUTE_SIZE"
+        local expires_flag=""
+        if [ -n "$NEON_BRANCH_TTL" ]; then
+            local expires_at
+            expires_at=$(ttl_to_date "$NEON_BRANCH_TTL")
+            expires_flag="--expires-at $expires_at"
+            echo "Branch will expire at: $expires_at ($NEON_BRANCH_TTL from now)"
+        fi
+        neonctl branches create --project-id "$NEON_PROJECT_ID" --name "$DEV_BRANCH" --parent "$prod_branch" --cu "$NEON_COMPUTE_SIZE" $expires_flag
     fi
 
     DEV_URI=$(neonctl connection-string --project-id "$NEON_PROJECT_ID" --branch "$DEV_BRANCH" --role-name "$NEON_ROLE_NAME")
@@ -89,6 +120,20 @@ setup() {
     echo ""
     echo "Written to .env:"
     cat "$APP_DIR/.env"
+
+    # run migrations if migrations directory exists
+    if [ -d "$APP_DIR/migrations" ] && [ -n "$(ls -A "$APP_DIR/migrations" 2>/dev/null)" ]; then
+        echo ""
+        if command -v sqlx &> /dev/null; then
+            echo "Running migrations..."
+            (cd "$APP_DIR" && source .env && sqlx migrate run)
+            echo "Migrations complete"
+        else
+            echo "WARN: sqlx-cli not installed, skipping migrations"
+            echo "Install: cargo install sqlx-cli --features postgres,native-tls"
+            echo "Then run: source .env && sqlx migrate run"
+        fi
+    fi
 }
 
 case "$COMMAND" in

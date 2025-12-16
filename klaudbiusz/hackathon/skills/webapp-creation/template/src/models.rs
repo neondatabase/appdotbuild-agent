@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 
 // example model - replace with your own
+// note: FromRow derive is NOT needed when using sqlx::query_as! macro
+// the macro generates field mapping at compile time from column names
 //
-// #[derive(Debug, Clone, FromRow, Serialize)]
+// #[derive(Debug, Clone, Serialize)]
 // pub struct Item {
-//     pub id: i64,
+//     pub id: i32,  // SERIAL in PostgreSQL maps to i32 (use BIGSERIAL for i64)
 //     pub name: String,
 //     pub completed: bool,
 // }
@@ -22,7 +23,7 @@ use sqlx::FromRow;
 // }
 
 // placeholder to make the module non-empty
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Placeholder {
-    pub id: i64,
+    pub id: i32,  // SERIAL in PostgreSQL maps to i32
 }
