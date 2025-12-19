@@ -56,11 +56,16 @@ Note: `cargo check` only validates compile-time errors. Runtime panics (wrong co
 
 ## Trajectory Analysis
 
-The trajectory.jsonl contains the builder's conversation. Look for:
-- Where did the builder struggle or retry?
-- What instructions were unclear?
-- What patterns were used incorrectly?
-- How many turns did it take?
+The trajectory.jsonl contains the builder's conversation. **This is critical for improving the skill.**
+
+Look for and document specifically:
+- **Compilation errors**: What error messages appeared? What code caused them?
+- **Retries**: Which file/pattern needed multiple attempts? Quote the error if possible.
+- **Confusion points**: Where did builder hesitate or try wrong approaches first?
+- **Missing guidance**: What did builder have to figure out that should have been in the skill?
+- **Dependency issues**: Did adding a crate cause problems? Which one?
+
+Be specific in trajectory_insights. Bad: "Builder struggled with templates". Good: "Builder got 'expected struct Template, found impl IntoResponse' error 3 times when returning Html from handler - skill template doesn't show this pattern".
 
 ## Grading Criteria
 
@@ -137,7 +142,10 @@ Score 0-10 for each dimension. **Be strict** - see score anchors below.
 
 ## Output Format
 
-Output ONLY valid JSON (no markdown, no explanation):
+Output ONLY valid JSON (no markdown, no explanation).
+
+**Required fields:**
+- `root_cause`: The single most impactful issue that, if fixed in the skill, would improve this app the most. Be specific about what's missing/wrong in the skill, not just the app.
 
 ```json
 {
@@ -189,9 +197,11 @@ Output ONLY valid JSON (no markdown, no explanation):
     }
   ],
   "trajectory_insights": [
-    "Builder struggled with Axum extractors - needed 4 attempts",
-    "HTMX partials were done correctly on first try"
-  ]
+    "Builder got 'the trait Handler is not implemented' error when adding tower-sessions - skill should warn against this crate with Axum 0.8",
+    "Builder tried Query<Option<T>> but got parse error - skill should show Query<T> where T has Option fields instead",
+    "HTMX partial updates worked on first try - hx-swap pattern in skill is clear"
+  ],
+  "root_cause": "Missing error type definition in template - builder had to invent AppError from scratch each time"
 }
 ```
 

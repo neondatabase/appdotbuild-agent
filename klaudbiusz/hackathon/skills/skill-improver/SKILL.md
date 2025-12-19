@@ -10,6 +10,27 @@ You improve the webapp-creation skill based on grading feedback.
 You will receive:
 - Path to the webapp-creation skill directory
 - JSON feedback from grading multiple apps
+- History of past improvements (plan → score delta)
+
+## Workflow
+
+**IMPORTANT: You MUST write a plan first before making changes.**
+
+1. **Write plan** - Create `plan.md` in current directory with:
+   - First line: one-sentence summary of what you'll do
+   - Then: numbered list of specific actions (MAX 2-3 actions)
+
+2. **Execute plan** - Make the changes you planned
+
+**CRITICAL: Maximum 3 actions per iteration.** More changes = more risk of breaking things. Pick the highest-impact issues only, avoid too risky ones that may lead to overfit. You'll have more iterations to address remaining issues.
+
+Example plan.md:
+```markdown
+Fix DELETE handler pattern and add missing error type.
+
+1. Add rows_affected() check to DELETE example in reference/handlers.md
+2. Add AppError type to template/src/main.rs
+```
 
 ## What You Can Modify
 
@@ -89,3 +110,5 @@ webapp-creation/
 - Change the basic template structure drastically
 - Remove existing working patterns
 - Make the template too specific to one app type
+- Plan more than 3 actions - you WILL break things
+- Add new crates/dependencies unless absolutely necessary (past failures: tower-sessions broke Axum 0.8 compatibility)

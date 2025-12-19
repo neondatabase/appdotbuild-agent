@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -12,18 +13,26 @@ from claude_agent_sdk import (
 )
 
 
+@dataclass
+class EngineerResult:
+    success: bool
+    plan: str  # free form plan text
+
+
 async def run_engineer(
     feedback_reports: list[dict],
+    history: list[dict],
+    iteration: int,
     webapp_creation_skill: Path,
     improver_skill: Path,
     run_dir: Path,
     model: str,
     max_turns: int,
     verbose: bool = False,
-) -> bool:
-    """Improve webapp-creation skill based on grader feedback.
+) -> EngineerResult:
+    """Improve webapp-creation skill based on grader feedback and history.
 
-    Returns True if completed successfully.
+    Returns EngineerResult with plan summary and actions taken.
     """
     # set up .claude/skills with skill-improver for this agent
     claude_skills = run_dir / ".claude" / "skills"
@@ -36,16 +45,34 @@ async def run_engineer(
             print(f"    [target] {webapp_creation_skill}")
 
     feedback_json = json.dumps(feedback_reports, indent=2)
+    history_json = json.dumps(history, indent=2) if history else "[]"
 
     user_prompt = f"""Improve the webapp-creation skill based on grading feedback.
 
+Iteration: {iteration}
 Skill to improve: {webapp_creation_skill}
+
+## History of Past Improvements
+
+Each entry shows what was tried and whether it helped (score delta):
+{history_json}
+
+Use this to avoid repeating ineffective changes and build on what worked.
+
+## Current Iteration Feedback
 
 Feedback from {len(feedback_reports)} app builds:
 {feedback_json}
 
-Use the skill-improver skill to analyze this feedback and make improvements.
-Focus on skill_suggestions from the graders.
+## Instructions
+
+Use the skill-improver skill. You MUST:
+1. First write a plan to `plan.md` in current directory with:
+   - Summary (one line)
+   - Actions you will take (numbered list)
+2. Then execute the plan by modifying the skill files
+
+Focus on patterns appearing in multiple apps. Check history to avoid repeating failed approaches.
 """
 
     options = ClaudeAgentOptions(
@@ -85,9 +112,17 @@ Focus on skill_suggestions from the graders.
                         print(f"      [turn {turn_count}]")
                     case ResultMessage():
                         print(f"      [done] turns={msg.num_turns} cost=${msg.total_cost_usd:.4f}")
-        return True
+
+        # read plan.md if it exists
+        plan_path = run_dir / "plan.md"
+        plan = "No plan written"
+        if plan_path.exists():
+            plan = plan_path.read_text().strip()
+
+        return EngineerResult(success=True, plan=plan)
+
     except Exception as e:
         if verbose:
             print(f"      [error] {e}")
         print(f"Engineer error: {e}")
-        return False
+        return EngineerResult(success=False, plan=f"Error: {e}")

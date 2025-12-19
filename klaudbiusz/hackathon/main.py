@@ -11,8 +11,11 @@ from datetime import datetime
 from pathlib import Path
 
 from config import EvolutionConfig
-from agents import run_builder, run_grader_single, run_engineer, BuildResult, GradeResult
+from agents import run_builder, run_grader_single, run_engineer, BuildResult, GradeResult, EngineerResult
+from models.history import EvolutionHistory, HistoryEntry
+from models.report import EvolutionReport
 from prompts import PROMPTS
+from rewriter import rewrite_prompts
 
 
 async def run_evolution(config: EvolutionConfig) -> Path:
@@ -50,6 +53,12 @@ async def run_evolution(config: EvolutionConfig) -> Path:
 
     prompt_list = list(config.prompts.items())
     metrics: list[dict] = []
+    evolution_history = EvolutionHistory()
+
+    # track best performing skill for rollback
+    best_score: float = 0.0
+    best_version: int = 0
+    rollback_threshold: float = 0.5
 
     for i in range(config.num_iterations):
         print(f"\n{'='*60}")
@@ -63,6 +72,17 @@ async def run_evolution(config: EvolutionConfig) -> Path:
 
         # select prompts for this iteration
         selected = prompt_list[:config.prompts_per_iteration]
+
+        # 0. REWRITE prompts for variation
+        print(f"\n[REWRITE] Generating prompt variations...")
+        selected_dict = dict(selected)
+        rewritten = await rewrite_prompts(selected_dict, model=config.model)
+        selected = list(rewritten.items())
+
+        # save rewritten prompts
+        (iter_dir / "prompts.json").write_text(json.dumps(rewritten, indent=2))
+        for name, prompt in selected:
+            print(f"  [{name}] {prompt[:60]}...")
 
         # 1. BUILD all apps concurrently
         print(f"\n[BUILD] Building {len(selected)} apps concurrently...")
@@ -101,6 +121,7 @@ async def run_evolution(config: EvolutionConfig) -> Path:
 
         # 2. GRADE all successful apps concurrently
         feedback_reports: list[dict] = []
+        avg_score: float = 0.0
 
         if app_dirs:
             print(f"\n[GRADE] Grading {len(app_dirs)} apps concurrently...")
@@ -145,26 +166,59 @@ async def run_evolution(config: EvolutionConfig) -> Path:
         else:
             print("\n[GRADE] No apps to grade")
             metrics.append({"iteration": i, "apps_built": 0, "apps_attempted": len(selected)})
+            continue  # skip engineer if no apps graded
+
+        # check for regression and rollback if needed
+        if i == 0:
+            # first iteration sets baseline
+            best_score = avg_score
+            best_version = 0
+        elif avg_score < best_score - rollback_threshold:
+            # significant regression - rollback to best version
+            print(f"\n[ROLLBACK] Score dropped {best_score:.2f} -> {avg_score:.2f} (>{rollback_threshold})")
+            print(f"  Reverting to v{best_version}")
+            shutil.rmtree(working_skill / "webapp-creation")
+            shutil.copytree(skill_versions / f"v{best_version}", working_skill / "webapp-creation")
+            # skip engineer this iteration - let next iteration try again with restored skill
+            continue
+        elif avg_score > best_score:
+            # new best - update tracking
+            best_score = avg_score
+            best_version = i
+            print(f"  New best score: {best_score:.2f} (v{best_version})")
 
         # 3. ENGINEER (except last iteration)
         if i < config.num_iterations - 1 and feedback_reports:
             print(f"\n[ENGINEER] Improving skill...")
-            success = await run_engineer(
+            engineer_result = await run_engineer(
                 feedback_reports=feedback_reports,
+                history=evolution_history.to_context(),
+                iteration=i,
                 webapp_creation_skill=working_skill / "webapp-creation",
                 improver_skill=config.skills_dir / "skill-improver",
-                run_dir=run_dir,
+                run_dir=iter_dir,
                 model=config.model,
                 max_turns=config.max_turns,
                 verbose=config.verbose,
             )
-            if success:
-                print("  Skill updated")
+            if engineer_result.success:
+                # show first line of plan
+                first_line = engineer_result.plan.split("\n")[0][:80]
+                print(f"  Plan: {first_line}")
+
                 # snapshot new version
                 next_skill = skill_versions / f"v{i+1}"
                 shutil.copytree(working_skill / "webapp-creation", next_skill)
+
+                # update history
+                entry = HistoryEntry(
+                    iteration=i,
+                    plan=engineer_result.plan,
+                    before_avg_score=avg_score,
+                )
+                evolution_history.add(entry)
             else:
-                print("  Engineer failed to update skill")
+                print(f"  Engineer failed: {engineer_result.plan}")
 
     # save summary
     summary = {
@@ -174,10 +228,23 @@ async def run_evolution(config: EvolutionConfig) -> Path:
     }
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
+    # save history
+    (run_dir / "history.json").write_text(json.dumps(evolution_history.to_dict_list(), indent=2))
+
+    # generate evolution report
+    final_avg_score = metrics[-1].get("avg_score") if metrics else None
+    report = EvolutionReport(
+        config=config_data,
+        history=evolution_history.entries,
+        final_avg_score=final_avg_score,
+    )
+    report.save(run_dir / "EVOLUTION_REPORT.md")
+
     print(f"\n{'='*60}")
     print("EVOLUTION COMPLETE")
     print(f"{'='*60}")
     print(f"Results: {run_dir}")
+    print(f"Report: {run_dir / 'EVOLUTION_REPORT.md'}")
 
     return run_dir
 
