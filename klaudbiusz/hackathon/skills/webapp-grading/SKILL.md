@@ -47,10 +47,11 @@ After the screenshot command, check:
 1. Does `screenshot.png` exist? If not, app failed to start
 2. Does `error.txt` exist? If so, read it for the crash reason
 
-If the app crashed:
+**If screenshot fails or app crashed, you MUST:**
 - Set `works: false` in output
+- Set `ui_ux: 0` (cannot evaluate what doesn't render)
 - Add high-severity issue describing the failure
-- UI/UX score = 0 (can't evaluate what doesn't run)
+- Do NOT give partial UI/UX scores for broken apps
 
 Note: `cargo check` only validates compile-time errors. Runtime panics (wrong config, bad route syntax, missing env vars) pass the build but crash on startup.
 
@@ -58,12 +59,15 @@ Note: `cargo check` only validates compile-time errors. Runtime panics (wrong co
 
 The trajectory.jsonl contains the builder's conversation. **This is critical for improving the skill.**
 
+**Read the FULL trajectory file.** Each grader run has dedicated context - don't worry about token limits. The full builder history is essential for understanding what went wrong.
+
 Look for and document specifically:
 - **Compilation errors**: What error messages appeared? What code caused them?
 - **Retries**: Which file/pattern needed multiple attempts? Quote the error if possible.
 - **Confusion points**: Where did builder hesitate or try wrong approaches first?
 - **Missing guidance**: What did builder have to figure out that should have been in the skill?
 - **Dependency issues**: Did adding a crate cause problems? Which one?
+- **Turn count**: How many turns total? Was it efficient (<20) or struggling (>40)?
 
 Be specific in trajectory_insights. Bad: "Builder struggled with templates". Good: "Builder got 'expected struct Template, found impl IntoResponse' error 3 times when returning Html from handler - skill template doesn't show this pattern".
 

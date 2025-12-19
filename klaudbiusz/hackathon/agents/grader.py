@@ -7,10 +7,44 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ResultMessage,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
     UserMessage,
     query,
 )
+
+
+def _serialize_message(msg) -> dict:
+    """Serialize a message to a dict for trajectory storage."""
+    match msg:
+        case AssistantMessage():
+            blocks = []
+            for block in msg.content:
+                match block:
+                    case TextBlock():
+                        blocks.append({"type": "text", "text": block.text})
+                    case ToolUseBlock():
+                        blocks.append({"type": "tool_use", "name": block.name, "id": block.id, "input": block.input})
+            return {"role": "assistant", "content": blocks}
+        case UserMessage():
+            blocks = []
+            for block in msg.content:
+                match block:
+                    case ToolResultBlock():
+                        content = str(block.content)[:500] if block.content else ""
+                        blocks.append({"type": "tool_result", "tool_use_id": block.tool_use_id, "content": content, "is_error": block.is_error})
+                    case _:
+                        blocks.append({"type": "unknown"})
+            return {"role": "user", "content": blocks}
+        case ResultMessage():
+            return {
+                "role": "result",
+                "num_turns": msg.num_turns,
+                "total_cost_usd": msg.total_cost_usd,
+                "is_error": msg.is_error,
+            }
+        case _:
+            return {"role": "unknown", "type": str(type(msg))}
 
 
 def _extract_json(text: str) -> dict | None:
@@ -41,6 +75,7 @@ class GradeResult:
         self.app_name = app_name
         self.feedback: dict = {}
         self.logs: list[str] = []
+        self.trajectory_path: Path | None = None
 
     def log(self, msg: str) -> None:
         self.logs.append(msg)
@@ -99,9 +134,16 @@ Output your feedback as JSON.
     feedback: dict | None = None
     last_text = ""
     turn_count = 0
+    trajectory: list[dict] = []
+
+    # trajectory file path
+    grader_traj_path = app_dir / "grader_trajectory.jsonl"
 
     try:
         async for msg in query(prompt=user_prompt, options=options):
+            # save to trajectory
+            trajectory.append(_serialize_message(msg))
+
             if isinstance(msg, AssistantMessage):
                 for block in msg.content:
                     if isinstance(block, TextBlock):
@@ -122,8 +164,16 @@ Output your feedback as JSON.
                 turn_count += 1
                 if verbose:
                     result.log(f"      [turn {turn_count}]")
-            elif verbose and isinstance(msg, ResultMessage):
-                result.log(f"      [done] turns={msg.num_turns} cost=${msg.total_cost_usd:.4f}")
+            elif isinstance(msg, ResultMessage):
+                if verbose:
+                    result.log(f"      [done] turns={msg.num_turns} cost=${msg.total_cost_usd:.4f}")
+
+        # save trajectory
+        with grader_traj_path.open("w") as f:
+            for entry in trajectory:
+                f.write(json.dumps(entry) + "\n")
+        result.trajectory_path = grader_traj_path
+
     except Exception as e:
         feedback = {"error": str(e), "app": str(app_dir)}
         if verbose:
