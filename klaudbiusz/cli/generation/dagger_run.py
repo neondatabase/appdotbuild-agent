@@ -267,6 +267,19 @@ class DaggerAppGenerator:
             if val := os.environ.get(var):
                 container = container.with_env_variable(var, val)
 
+        # mount appkit template for init-template app command
+        # the template is not on GitHub main yet, so we mount from CLI repo
+        mcp_binary_dir = self.mcp_binary.parent
+        appkit_template = mcp_binary_dir / "experimental" / "apps-mcp" / "templates" / "appkit"
+        if appkit_template.exists():
+            container = container.with_directory(
+                "/opt/appkit-template",
+                client.host().directory(str(appkit_template)),
+            )
+            container = container.with_env_variable(
+                "DATABRICKS_APPKIT_TEMPLATE_PATH", "/opt/appkit-template"
+            )
+
         # mount databricks config for CLI authentication (OAuth profile)
         # container runs as 'klaudbiusz' user (see Dockerfile)
         databrickscfg = Path.home() / ".databrickscfg"
