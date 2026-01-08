@@ -12,7 +12,7 @@ dependencies = [
 fullstack-agent = { workspace = true }
 
 [tool.uv.workspace]
-members = ["agent/", "klaudbiusz/"]
+members = ["agent/", "claudeoptim/", "klaudbiusz/"]
 
 [tool.ruff]
 exclude = [
