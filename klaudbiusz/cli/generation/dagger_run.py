@@ -267,10 +267,10 @@ class DaggerAppGenerator:
             if val := os.environ.get(var):
                 container = container.with_env_variable(var, val)
 
-        # mount appkit template for init-template app command
-        # the template is not on GitHub main yet, so we mount from CLI repo
+        # mount appkit template if available locally (for testing local template changes)
+        # CLI uses DATABRICKS_APPKIT_TEMPLATE_PATH env var to override default GitHub download
         mcp_binary_dir = self.mcp_binary.parent
-        appkit_template = mcp_binary_dir / "experimental" / "apps-mcp" / "templates" / "appkit"
+        appkit_template = mcp_binary_dir / "experimental" / "aitools" / "templates" / "appkit"
         if appkit_template.exists():
             container = container.with_directory(
                 "/opt/appkit-template",
