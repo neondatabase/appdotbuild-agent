@@ -52,44 +52,18 @@ except ImportError:
 
 def get_backend_dir(app_dir: Path, template: str) -> Path:
     """Get backend directory based on template type."""
-    if template == "dbx-sdk":
-        # DBX SDK uses backend/
-        if (app_dir / "backend").exists():
-            return app_dir / "backend"
-    elif template == "trpc":
-        # tRPC uses server/
-        if (app_dir / "server").exists():
-            return app_dir / "server"
-
-    # Fallback: try both
-    if (app_dir / "backend").exists():
-        return app_dir / "backend"
+    # All templates use server/
     if (app_dir / "server").exists():
         return app_dir / "server"
-
-    # Default to backend if neither exists
-    return app_dir / "backend"
+    return app_dir / "server"
 
 
 def get_frontend_dir(app_dir: Path, template: str) -> Path:
     """Get frontend directory based on template type."""
-    if template == "dbx-sdk":
-        # DBX SDK uses frontend/
-        if (app_dir / "frontend").exists():
-            return app_dir / "frontend"
-    elif template == "trpc":
-        # tRPC uses client/
-        if (app_dir / "client").exists():
-            return app_dir / "client"
-
-    # Fallback: try both
-    if (app_dir / "frontend").exists():
-        return app_dir / "frontend"
+    # All templates use client/
     if (app_dir / "client").exists():
         return app_dir / "client"
-
-    # Default to frontend if neither exists
-    return app_dir / "frontend"
+    return app_dir / "client"
 
 
 @dataclass
@@ -724,9 +698,12 @@ def check_local_runability(app_dir: Path, template: str = "unknown") -> tuple[in
     # Instead, check if entry point exists
     entry_point = None
     if server_dir.exists():
-        entry_point = server_dir / "src" / "index.ts"
-        if not entry_point.exists():
-            entry_point = server_dir / "index.ts"
+        # Check various entry point patterns
+        for candidate in ["server.ts", "src/index.ts", "index.ts"]:
+            candidate_path = server_dir / candidate
+            if candidate_path.exists():
+                entry_point = candidate_path
+                break
 
     if entry_point and entry_point.exists():
         score += 1

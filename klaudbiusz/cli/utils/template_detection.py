@@ -16,9 +16,16 @@ def get_actual_app_dir(app_dir: Path) -> Path:
 
     This function returns the actual directory containing the app files.
     """
+    # Check exact name match first
     nested = app_dir / app_dir.name
     if nested.exists() and (nested / "package.json").exists():
         return nested
+
+    # Check for any single subdirectory with package.json (common pattern)
+    subdirs = [d for d in app_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
+    if len(subdirs) == 1 and (subdirs[0] / "package.json").exists():
+        return subdirs[0]
+
     return app_dir
 
 
@@ -63,15 +70,15 @@ def _is_python_app(app_dir: Path) -> bool:
 
 
 def _is_dbx_sdk_app(app_dir: Path) -> bool:
-    """Check if app uses DBX SDK template."""
+    """Check if app uses AppKit template."""
     score = 0
 
-    # Check backend/index.ts for @dbx/sdk
-    backend_index = app_dir / "backend" / "index.ts"
-    if backend_index.exists():
-        content = backend_index.read_text()
-        if "@dbx/sdk" in content or "DBX.init" in content:
-            score += 2
+    # Check server/server.ts for @databricks/appkit
+    server_file = app_dir / "server" / "server.ts"
+    if server_file.exists():
+        content = server_file.read_text()
+        if "@databricks/appkit" in content:
+            score += 3
 
     # Check for SQL queries directory
     queries_dir = app_dir / "config" / "queries"
@@ -84,8 +91,8 @@ def _is_dbx_sdk_app(app_dir: Path) -> bool:
     if (app_dir / "app.yaml").exists():
         score += 1
 
-    # Check for DBX SDK tarball
-    if list(app_dir.glob("dbx-sdk-*.tgz")):
+    # Check for databricks.yml (bundle config)
+    if (app_dir / "databricks.yml").exists():
         score += 1
 
     # Need at least 2 indicators for confident detection
@@ -165,9 +172,9 @@ def get_template_info(template: str) -> dict:
     """
     if template == "dbx-sdk":
         return {
-            "backend_dirs": ["backend"],
-            "frontend_dirs": ["frontend"],
-            "entry_points": ["backend/index.ts"],
+            "backend_dirs": ["server"],
+            "frontend_dirs": ["client"],
+            "entry_points": ["server/server.ts"],
             "package_json_location": "root",
             "api_pattern": "/api/analytics/{query_key}",
             "sql_location": "config/queries/*.sql",
