@@ -279,6 +279,11 @@ class DaggerAppGenerator:
             container = container.with_env_variable(
                 "DATABRICKS_APPKIT_TEMPLATE_PATH", "/opt/appkit-template"
             )
+        else:
+            logger.warning(
+                f"Local appkit template not found at {appkit_template}. "
+                "Scaffolding will use GitHub download (may fail if template not published yet)."
+            )
 
         # mount databricks config for CLI authentication (OAuth profile)
         # container runs as 'klaudbiusz' user (see Dockerfile)
