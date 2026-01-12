@@ -32,8 +32,8 @@ def run(
     Args:
         prompt: The prompt describing what to build
         app_name: Optional app name (default: timestamp-based)
-        backend: Backend to use ("claude" or "litellm", default: "claude")
-        model: LLM model (required if backend=litellm)
+        backend: Backend to use ("claude", "litellm", or "opencode", default: "claude")
+        model: LLM model (required if backend=litellm, optional for opencode)
         mcp_binary: Path to edda_mcp binary (required)
         mcp_args: Optional list of args passed to the MCP server
 
@@ -43,6 +43,9 @@ def run(
 
         # LiteLLM backend
         python single_run.py "build dashboard" --backend=litellm --model=gemini/gemini-2.5-pro --mcp_binary=/path/to/edda_mcp
+
+        # OpenCode backend
+        python single_run.py "build dashboard" --backend=opencode --mcp_binary=/path/to/edda_mcp
 
         # Custom MCP args
         python single_run.py "build dashboard" --mcp_binary=/path/to/edda_mcp --mcp_args='["experimental", "apps-mcp"]'

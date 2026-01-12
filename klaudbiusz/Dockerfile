@@ -13,6 +13,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
         libxrandr2 libgbm1 libasound2 libatspi2.0-0 libcairo2 libpango-1.0-0
 
+# install bun for opencode backend (copy binary to system path)
+RUN curl -fsSL https://bun.sh/install | bash && \
+    cp /root/.bun/bin/bun /usr/local/bin/bun && \
+    rm -rf /root/.bun
+
+# install opencode CLI (copy binary to system path)
+RUN curl -fsSL https://opencode.ai/install | bash && \
+    cp /root/.opencode/bin/opencode /usr/local/bin/opencode && \
+    rm -rf /root/.opencode
+
 # install npm packages with cache mount
 RUN --mount=type=cache,target=/root/.npm \
     npm install -g @anthropic-ai/claude-code
@@ -49,6 +59,11 @@ COPY cli/__init__.py ./cli/
 COPY cli/trajectory.py ./cli/
 COPY cli/generation/ ./cli/generation/
 COPY cli/utils/ ./cli/utils/
+COPY cli/generation_opencode/ ./cli/generation_opencode/
+
+# install opencode generation dependencies (bun install)
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    cd cli/generation_opencode && bun install
 
 # create non-root user (claude agent sdk requires non-root for security)
 RUN useradd -m -s /bin/bash klaudbiusz && \

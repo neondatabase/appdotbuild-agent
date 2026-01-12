@@ -1,6 +1,7 @@
 """Runner script executed inside Dagger container."""
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,8 +22,8 @@ def run(
     Args:
         prompt: The prompt describing what to build
         app_name: App name for output directory
-        backend: "claude" or "litellm"
-        model: Model name (required for litellm)
+        backend: "claude", "litellm", or "opencode"
+        model: Model name (required for litellm, optional for opencode)
         mcp_args: JSON-encoded list or already-parsed list of MCP server args
         mcp_binary: Path to edda_mcp binary (default: /usr/local/bin/edda_mcp for container)
         output_dir: Output directory for generated app (default: /workspace for container)
@@ -75,6 +76,15 @@ def run(
                 metrics = builder.run(prompt)
             except Exception as e:
                 error = e
+        case "opencode":
+            metrics = _run_opencode(
+                prompt=prompt,
+                app_name=app_name,
+                model=model,
+                mcp_binary=mcp_binary,
+                mcp_args=parsed_mcp_args,
+                output_dir=output_dir,
+            )
         case _:
             print(f"Error: Unknown backend: {backend}", file=sys.stderr)
             sys.exit(1)
@@ -93,6 +103,51 @@ def run(
             sys.exit(1)
 
     print(f"Metrics: {metrics}")
+
+
+def _run_opencode(
+    prompt: str,
+    app_name: str,
+    model: str | None,
+    mcp_binary: str,
+    mcp_args: list[str] | None,
+    output_dir: str,
+) -> dict:
+    """Run opencode generation via bun subprocess."""
+    # build command
+    cmd = [
+        "bun",
+        "run",
+        "cli/generation_opencode/src/index.ts",
+        "--app-name",
+        app_name,
+        "--prompt",
+        prompt,
+        "--mcp-binary",
+        mcp_binary,
+        "--output-dir",
+        output_dir,
+    ]
+
+    if model:
+        cmd.extend(["--model", model])
+
+    if mcp_args:
+        cmd.extend(["--mcp-args", json.dumps(mcp_args)])
+
+    # run opencode generation
+    result = subprocess.run(cmd, cwd="/workspace", capture_output=False)
+
+    if result.returncode != 0:
+        print(f"Error: opencode generation failed with code {result.returncode}", file=sys.stderr)
+        sys.exit(result.returncode)
+
+    # read metrics from generated file
+    metrics_file = Path(output_dir) / app_name / "generation_metrics.json"
+    if metrics_file.exists():
+        return json.loads(metrics_file.read_text())
+
+    return {"cost_usd": 0, "input_tokens": 0, "output_tokens": 0, "turns": 0}
 
 
 if __name__ == "__main__":

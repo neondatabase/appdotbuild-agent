@@ -33,8 +33,8 @@ def main(
 
     Args:
         prompts: Prompt set to use ("databricks", "databricks_v2", or "test")
-        backend: Backend to use ("claude" or "litellm")
-        model: LLM model (required if backend=litellm)
+        backend: Backend to use ("claude", "litellm", or "opencode")
+        model: LLM model (required if backend=litellm, optional for opencode)
         mcp_binary: Path to edda_mcp binary (required)
         mcp_args: Optional list of args passed to the MCP server
         output_dir: Custom output directory for generated apps
@@ -49,6 +49,9 @@ def main(
 
         # LiteLLM backend
         python bulk_run.py --backend=litellm --model=gemini/gemini-2.5-pro --mcp_binary=/path/to/edda_mcp
+
+        # OpenCode backend
+        python bulk_run.py --backend=opencode --mcp_binary=/path/to/edda_mcp
     """
     if not mcp_binary:
         raise ValueError("--mcp_binary is required")

@@ -104,7 +104,7 @@ Use up to 10 tools per call to speed up the process.
 Never deploy the app, just scaffold and build it.
 """
 
-        disallowed_tools = ["NotebookEdit", "WebSearch", "WebFetch", "Bash"]
+        disallowed_tools = ["NotebookEdit", "WebSearch", "WebFetch"]
 
         command, args = build_mcp_command(self.mcp_binary, self.mcp_manifest, self.mcp_json_path, self.mcp_args)
 
