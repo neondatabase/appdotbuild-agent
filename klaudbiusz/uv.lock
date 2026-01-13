@@ -376,15 +376,18 @@ wheels = [
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.1.6"
+version = "0.1.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "mcp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/b6/b73279eb875333fcc3e14c28fc080f815abaf35d2a65b132be0c8b05851c/claude_agent_sdk-0.1.6.tar.gz", hash = "sha256:3090a595896d65a5d951e158e191b462759aafc97399e700e4f857d5265a8f23", size = 49328, upload-time = "2025-10-31T05:15:55.803Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/80/b284e2fbbf27e2b6d17c918bb95f336cd10d739e1551c2079dba87f0c593/claude_agent_sdk-0.1.11.tar.gz", hash = "sha256:21fc8cbd3f001dd9cea80bdc2b0eaece666d5c43889d0ff226e432952ad849f1", size = 53803, upload-time = "2025-12-03T19:23:23.173Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cc/12/38e4e9f7f79f2c04c7be34cd995ef4a56681f8266e382a5288ce815ede71/claude_agent_sdk-0.1.6-py3-none-any.whl", hash = "sha256:54227b096e8c7cfb60fc8b570082fce1f91ea060413092f65a08a2824cb9cb4b", size = 36369, upload-time = "2025-10-31T05:15:54.767Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/34/d0833f6a198da2a500c39ae58a0cbe0d0afd46ba848fe41d22a9c44ccfdd/claude_agent_sdk-0.1.11-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ca54ee62be42419c67d214e328e462a37977e4c000b751f88000f4c2503e7137", size = 49920758, upload-time = "2025-12-03T19:23:08.759Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/6d/ae791b53f59f72adb6e6223e6bb275fd159560d17f751da7f7dfa6e349b3/claude_agent_sdk-0.1.11-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:8c170369f62f4d9f592ad8da8671f701bdc1a2cb9a0a559755294a6c198057fe", size = 64169715, upload-time = "2025-12-03T19:23:12.148Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/62/bc66d63e6be93af6fc4a4eda7f39035df36a1e11f5d5a8cdeef9e8a9ce5d/claude_agent_sdk-0.1.11-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:b06f51490496f8338cdb78036981bc6e86e9ec65b3c2a472d6d321c2b5d01b59", size = 65779724, upload-time = "2025-12-03T19:23:17.211Z" },
+    { url = "https://files.pythonhosted.org/packages/83/70/48d69d59059cfd852d229a26642f1baf28934457c393f226c34cf343dcaf/claude_agent_sdk-0.1.11-py3-none-win_amd64.whl", hash = "sha256:9837fbe9a4dd8b46ed61b1b0f0dd55c946a0693ac15da4992fae3dd69124d6b3", size = 68706397, upload-time = "2025-12-03T19:23:20.416Z" },
 ]
 
 [[package]]
@@ -562,7 +565,7 @@ wheels = [
 
 [[package]]
 name = "dagger-io"
-version = "0.19.6"
+version = "0.19.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -577,9 +580,9 @@ dependencies = [
     { name = "rich" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bf/06/0bc509bcff842530047fad5a8cc675585d04bd6c2fe2607d9cc3cfa94535/dagger_io-0.19.6.tar.gz", hash = "sha256:367981537b277bc7b9ae2ab55c34a667dfbeab56942e76ae2551ad1ec066668e", size = 107817, upload-time = "2025-11-07T18:12:16.617Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a4/61/de83a28854c46be59e41af0c8fad2dad6b356b128eba7597a5d47ae6665c/dagger_io-0.19.8.tar.gz", hash = "sha256:35f5ae5d68e42b62dc4509df350753fbd782f445deae75c2861c0307e385578f", size = 109881, upload-time = "2025-12-05T19:47:22.826Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d8/d2/5ebf6cfde86f95bf06036a1f48c9511e25c35927bb539e39c467e3bf6b9b/dagger_io-0.19.6-py3-none-any.whl", hash = "sha256:004ec26f01b58005a51ec9149816e8f393124b7b2ad72a617349ebd2cacec0db", size = 97774, upload-time = "2025-11-07T18:12:15.644Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/e3/0133d48ee30c5e3ab328cb492cc16faf40d64281c9f2b101107fafc55a2c/dagger_io-0.19.8-py3-none-any.whl", hash = "sha256:764e6a29a5b4ddd6ac9787438eb1622137bee37b9be21916949d4302de0d1a3d", size = 99531, upload-time = "2025-12-05T19:47:23.764Z" },
 ]
 
 [[package]]
@@ -1439,6 +1442,7 @@ dependencies = [
     { name = "mcp" },
     { name = "mlflow" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "playwright" },
     { name = "python-dotenv" },
     { name = "tenacity" },
     { name = "tqdm" },
@@ -1455,9 +1459,9 @@ dev = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.40.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
-    { name = "claude-agent-sdk", specifier = ">=0.1.6" },
+    { name = "claude-agent-sdk", specifier = "==0.1.11" },
     { name = "coloredlogs", specifier = ">=15.0.1" },
-    { name = "dagger-io", specifier = ">=0.18.16" },
+    { name = "dagger-io", specifier = ">=0.19.8" },
     { name = "databricks-sdk", specifier = ">=0.70.0" },
     { name = "fire", specifier = ">=0.7.1" },
     { name = "joblib", specifier = ">=1.4.0" },
@@ -1465,6 +1469,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.17.0" },
     { name = "mlflow", specifier = ">=2.15.0" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.38.0" },
+    { name = "playwright", specifier = ">=1.57.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "tenacity", specifier = ">=9.1.2" },
     { name = "tqdm", specifier = ">=4.66.0" },
@@ -2215,6 +2220,25 @@ wheels = [
 ]
 
 [[package]]
+name = "playwright"
+version = "1.57.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "greenlet" },
+    { name = "pyee" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/b6/e17543cea8290ae4dced10be21d5a43c360096aa2cce0aa7039e60c50df3/playwright-1.57.0-py3-none-macosx_10_13_x86_64.whl", hash = "sha256:9351c1ac3dfd9b3820fe7fc4340d96c0d3736bb68097b9b7a69bd45d25e9370c", size = 41985039, upload-time = "2025-12-09T08:06:18.408Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/04/ef95b67e1ff59c080b2effd1a9a96984d6953f667c91dfe9d77c838fc956/playwright-1.57.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:a4a9d65027bce48eeba842408bcc1421502dfd7e41e28d207e94260fa93ca67e", size = 40775575, upload-time = "2025-12-09T08:06:22.105Z" },
+    { url = "https://files.pythonhosted.org/packages/60/bd/5563850322a663956c927eefcf1457d12917e8f118c214410e815f2147d1/playwright-1.57.0-py3-none-macosx_11_0_universal2.whl", hash = "sha256:99104771abc4eafee48f47dac2369e0015516dc1ce8c409807d2dd440828b9a4", size = 41985042, upload-time = "2025-12-09T08:06:25.357Z" },
+    { url = "https://files.pythonhosted.org/packages/56/61/3a803cb5ae0321715bfd5247ea871d25b32c8f372aeb70550a90c5f586df/playwright-1.57.0-py3-none-manylinux1_x86_64.whl", hash = "sha256:284ed5a706b7c389a06caa431b2f0ba9ac4130113c3a779767dda758c2497bb1", size = 45975252, upload-time = "2025-12-09T08:06:29.186Z" },
+    { url = "https://files.pythonhosted.org/packages/83/d7/b72eb59dfbea0013a7f9731878df8c670f5f35318cedb010c8a30292c118/playwright-1.57.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:38a1bae6c0a07839cdeaddbc0756b3b2b85e476c07945f64ece08f1f956a86f1", size = 45706917, upload-time = "2025-12-09T08:06:32.549Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/09/3fc9ebd7c95ee54ba6a68d5c0bc23e449f7235f4603fc60534a364934c16/playwright-1.57.0-py3-none-win32.whl", hash = "sha256:1dd93b265688da46e91ecb0606d36f777f8eadcf7fbef12f6426b20bf0c9137c", size = 36553860, upload-time = "2025-12-09T08:06:35.864Z" },
+    { url = "https://files.pythonhosted.org/packages/58/d4/dcdfd2a33096aeda6ca0d15584800443dd2be64becca8f315634044b135b/playwright-1.57.0-py3-none-win_amd64.whl", hash = "sha256:6caefb08ed2c6f29d33b8088d05d09376946e49a73be19271c8cd5384b82b14c", size = 36553864, upload-time = "2025-12-09T08:06:38.915Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/60/fe31d7e6b8907789dcb0584f88be741ba388413e4fbce35f1eba4e3073de/playwright-1.57.0-py3-none-win_arm64.whl", hash = "sha256:5f065f5a133dbc15e6e7c71e7bc04f258195755b1c32a432b792e28338c8335e", size = 32837940, upload-time = "2025-12-09T08:06:42.268Z" },
+]
+
+[[package]]
 name = "propcache"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2466,6 +2490,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/20/c5/dbbc27b814c71676593d1c3f718e6cd7d4f00652cefa24b75f7aa3efb25e/pydantic_settings-2.11.0.tar.gz", hash = "sha256:d0e87a1c7d33593beb7194adb8470fc426e95ba02af83a0f23474a04c9a08180", size = 188394, upload-time = "2025-09-24T14:19:11.764Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/83/d6/887a1ff844e64aa823fb4905978d882a633cfe295c32eacad582b78a7d8b/pydantic_settings-2.11.0-py3-none-any.whl", hash = "sha256:fe2cea3413b9530d10f3a5875adffb17ada5c1e1bab0b2885546d7310415207c", size = 48608, upload-time = "2025-09-24T14:19:10.015Z" },
+]
+
+[[package]]
+name = "pyee"
+version = "13.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/95/03/1fd98d5841cd7964a27d729ccf2199602fe05eb7a405c1462eb7277945ed/pyee-13.0.0.tar.gz", hash = "sha256:b391e3c5a434d1f5118a25615001dbc8f669cf410ab67d04c4d4e07c55481c37", size = 31250, upload-time = "2025-03-17T18:53:15.955Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/4d/b9add7c84060d4c1906abe9a7e5359f2a60f7a9a4f67268b2766673427d8/pyee-13.0.0-py3-none-any.whl", hash = "sha256:48195a3cddb3b1515ce0695ed76036b5ccc2ef3a9f963ff9f77aec0139845498", size = 15730, upload-time = "2025-03-17T18:53:14.532Z" },
 ]
 
 [[package]]
