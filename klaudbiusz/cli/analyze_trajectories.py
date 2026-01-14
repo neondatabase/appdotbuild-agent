@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +26,9 @@ from dotenv import load_dotenv
 from cli.utils.shared import build_mcp_command, validate_mcp_manifest
 
 logger = logging.getLogger(__name__)
+
+# path to the MCP server script
+TRAJECTORY_MCP_SERVER = Path(__file__).parent / "trajectory_mcp_server.py"
 
 
 @dataclass
@@ -247,7 +252,10 @@ async def analyze_with_agent(
     mcp_tools_doc: str,
     template_path: Path | None,
     mcp_source_path: Path | None,
+    trajectory_data: list[tuple[str, str]],
+    map_model: str,
     eval_report: str = "",
+    analysis_focus: str = "",
 ) -> str:
     """Use Claude Agent to analyze trajectories and provide recommendations."""
     logger.info("🤖 Spawning analysis agent to explore template and provide recommendations")
@@ -313,6 +321,13 @@ Note: The MCP is designed with a single tool providing CLI-like interface. We ca
 {eval_report}
 """
 
+    focus_section = ""
+    if analysis_focus:
+        focus_section = f"""
+
+**Analysis Focus**: {analysis_focus}
+"""
+
     # build task categories based on available context
     categories = []
     if template_path:
@@ -339,6 +354,12 @@ Note: The MCP is designed with a single tool providing CLI-like interface. We ca
 - Be specific: reference file paths, tool names, trajectory patterns
 - Format recommendations as markdown with clear sections
 - Only analyze context that has been explicitly provided below
+{focus_section}
+**Custom Analysis Tool**:
+You have access to `mcp__trajectory-analyzer__analyze_trajectories` tool that lets you run additional analysis passes over all trajectories with a custom prompt. Use this when:
+- You need to extract specific patterns not covered in the initial analysis
+- You want to investigate a hypothesis across all trajectories
+- You need more detail on a specific aspect (e.g., "count all validation failures", "list all SQL queries executed")
 
 ---
 
@@ -350,6 +371,22 @@ Note: The MCP is designed with a single tool providing CLI-like interface. We ca
 
 Analyze the data and provide your recommendations."""
 
+    # write trajectory data to temp file for MCP server
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        config = {
+            "trajectory_data": trajectory_data,
+            "map_model": map_model,
+        }
+        json.dump(config, f)
+        config_path = f.name
+
+    mcp_config = {
+        "type": "stdio",
+        "command": sys.executable,
+        "args": [str(TRAJECTORY_MCP_SERVER), config_path],
+        "env": {},
+    }
+
     options = ClaudeAgentOptions(
         system_prompt=base_instructions,
         permission_mode="bypassPermissions",
@@ -359,7 +396,9 @@ Analyze the data and provide your recommendations."""
             "Read",
             "Glob",
             "Grep",
+            "mcp__trajectory-analyzer__analyze_trajectories",
         ],
+        mcp_servers={"trajectory-analyzer": mcp_config},  # type: ignore[arg-type]
         max_turns=50,
     )
 
@@ -409,6 +448,7 @@ async def analyze_trajectories_async(
     eval_report_path: str | None = None,
     mcp_json_path: str | None = None,
     mcp_args: list[str] | None = None,
+    analysis_focus: str = "",
 ):
     """Analyze trajectories using map-reduce approach with LLM, then agent-based analysis."""
     litellm.drop_params = True
@@ -447,7 +487,14 @@ async def analyze_trajectories_async(
     concatenated = "\n\n".join([f"## Analysis of {app_name}\n\n{analysis}" for app_name, analysis in analyses])
 
     final_report = await analyze_with_agent(
-        concatenated, mcp_tools_doc, template_path_resolved, mcp_source_path_resolved, eval_report
+        concatenated,
+        mcp_tools_doc,
+        template_path_resolved,
+        mcp_source_path_resolved,
+        trajectory_data,
+        map_model,
+        eval_report,
+        analysis_focus,
     )
 
     output_file = output_file or f"/tmp/trajectory_analysis_{datetime.now().strftime('%d%m%y-%H%M%S')}.md"
@@ -467,6 +514,7 @@ def cli(
     eval_report: str | None = None,
     mcp_json: str | None = None,
     mcp_args: list[str] | None = None,
+    focus: str = "",
 ):
     """Analyze agent trajectories to find friction points and patterns.
 
@@ -480,6 +528,7 @@ def cli(
         eval_report: Path to evaluation report JSON (optional)
         mcp_json: Optional path to JSON config file for edda_mcp
         mcp_args: Optional list of args passed to the MCP server (overrides defaults)
+        focus: Analysis focus area (e.g., "template errors", "SQL query issues")
     """
     coloredlogs.install(
         level=logging.INFO,
@@ -499,6 +548,7 @@ def cli(
             eval_report,
             mcp_json,
             mcp_args,
+            focus,
         )
     )
 
