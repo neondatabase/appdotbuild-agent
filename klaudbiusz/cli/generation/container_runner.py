@@ -23,8 +23,8 @@ def run(
         app_name: App name for output directory
         backend: "claude" or "litellm"
         model: Model name (required for litellm)
-        mcp_args: JSON-encoded list or already-parsed list of MCP server args
-        mcp_binary: Path to edda_mcp binary (default: /usr/local/bin/edda_mcp for container)
+        mcp_args: JSON-encoded list or already-parsed list of MCP server args (litellm only)
+        mcp_binary: Path to edda_mcp binary (litellm only)
         output_dir: Output directory for generated app (default: /workspace for container)
     """
     # handle both JSON string and already-parsed list (fire may parse it)
@@ -48,8 +48,6 @@ def run(
                 app_name=app_name,
                 wipe_db=False,
                 suppress_logs=False,
-                mcp_binary=mcp_binary,
-                mcp_args=parsed_mcp_args,
                 output_dir=output_dir,
             )
             try:

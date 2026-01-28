@@ -8,7 +8,6 @@ from typing import NotRequired, TypedDict
 from uuid import UUID, uuid4
 
 from claude_agent_sdk import (
-    AgentDefinition,
     AssistantMessage,
     ClaudeAgentOptions,
     ResultMessage,
@@ -20,7 +19,7 @@ from claude_agent_sdk import (
 )
 from dotenv import load_dotenv
 
-from cli.utils.shared import ScaffoldTracker, Tracker, build_mcp_command, setup_logging, validate_mcp_manifest
+from cli.utils.shared import ScaffoldTracker, Tracker, setup_logging
 
 try:
     import asyncpg  # type: ignore[import-untyped]
@@ -60,22 +59,13 @@ class ClaudeAppBuilder:
         app_name: str,
         wipe_db: bool = True,
         suppress_logs: bool = False,
-        mcp_binary: str | None = None,
-        mcp_json_path: str | None = None,
-        mcp_args: list[str] | None = None,
         output_dir: str | None = None,
     ):
         load_dotenv()
-        self.project_root = Path(__file__).parent.parent.parent.parent
-        self.mcp_manifest = validate_mcp_manifest(mcp_binary, self.project_root)
-
         self.wipe_db = wipe_db
         self.run_id: UUID = uuid4()
         self.app_name = app_name
         self.suppress_logs = suppress_logs
-        self.mcp_binary = mcp_binary
-        self.mcp_json_path = mcp_json_path
-        self.mcp_args = mcp_args
         self.output_dir = Path(output_dir) if output_dir else Path.cwd() / "app"
         self.tracker = Tracker(self.run_id, app_name, suppress_logs)
         self.scaffold_tracker = ScaffoldTracker()
@@ -83,37 +73,17 @@ class ClaudeAppBuilder:
     async def run_async(self, prompt: str) -> GenerationMetrics:
         start_time = time.time()
 
-        setup_logging(self.suppress_logs, self.mcp_binary)
+        setup_logging(self.suppress_logs)
         await self.tracker.init(wipe_db=self.wipe_db)
 
-        # Configure Bash subagent to NOT have Bash access - prevents circumventing disallowed_tools
-        # by spawning a Bash subagent via Task tool
-        agents = {
-            "Bash": AgentDefinition(
-                description="File operations agent without shell access",
-                prompt="You cannot execute shell commands. Use file tools instead.",
-                tools=["Read", "Write", "Edit", "Glob", "Grep"],
-            ),
-        }
-
-        # workflow and template best practices are now in the MCP tool description
-        base_instructions = """Use MCP tools to scaffold, build, and test the app as needed.
-Use data from Databricks when relevant.
+        base_instructions = """Use /databricks-apps skill to scaffold, build, and test the app.
+Use /databricks skill to explore data in Databricks when relevant.
 Be concise and to the point in your responses.
 Use up to 10 tools per call to speed up the process.
 Never deploy the app, just scaffold and build it.
 """
 
-        disallowed_tools = ["NotebookEdit", "WebSearch", "WebFetch", "Bash"]
-
-        command, args = build_mcp_command(self.mcp_binary, self.mcp_manifest, self.mcp_json_path, self.mcp_args)
-
-        mcp_config = {
-            "type": "stdio",
-            "command": command,
-            "args": args,
-            "env": {},
-        }
+        disallowed_tools = ["NotebookEdit", "WebSearch", "WebFetch"]
 
         options = ClaudeAgentOptions(
             system_prompt={
@@ -123,9 +93,8 @@ Never deploy the app, just scaffold and build it.
             },
             permission_mode="bypassPermissions",
             disallowed_tools=disallowed_tools,
-            agents=agents,
+            setting_sources=["user", "project"],
             max_turns=75,
-            mcp_servers={"edda": mcp_config},  # type: ignore[arg-type]
             max_buffer_size=3 * 1024 * 1024,
         )
 
@@ -241,9 +210,7 @@ Never deploy the app, just scaffold and build it.
                     await self._log_todo_update(block, truncate)
                 case ToolUseBlock(name="Task"):
                     await self._log_tool_use(block, truncate)
-                case ToolUseBlock(name="mcp__edda__scaffold_data_app"):
-                    if block.input is not None and "work_dir" in block.input:
-                        self.scaffold_tracker.track(block.id, block.input["work_dir"])
+                case ToolUseBlock(name="Skill"):
                     await self._log_generic_tool(block, truncate)
                 case ToolUseBlock():
                     await self._log_generic_tool(block, truncate)

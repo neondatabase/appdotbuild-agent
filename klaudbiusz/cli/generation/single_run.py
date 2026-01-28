@@ -34,31 +34,29 @@ def run(
         app_name: Optional app name (default: timestamp-based)
         backend: Backend to use ("claude" or "litellm", default: "claude")
         model: LLM model (required if backend=litellm)
-        mcp_binary: Path to edda_mcp binary (required)
-        mcp_args: Optional list of args passed to the MCP server
+        mcp_binary: Path to edda_mcp binary (required for litellm backend)
+        mcp_args: Optional list of args passed to the MCP server (litellm only)
+        output_dir: Directory to store generated apps (default: ./app)
 
     Usage:
-        # Claude backend (default)
-        python single_run.py "build dashboard" --mcp_binary=/path/to/edda_mcp
+        # Claude backend (default) - uses skills, no MCP needed
+        python single_run.py "build dashboard"
 
-        # LiteLLM backend
+        # LiteLLM backend (requires MCP)
         python single_run.py "build dashboard" --backend=litellm --model=gemini/gemini-2.5-pro --mcp_binary=/path/to/edda_mcp
-
-        # Custom MCP args
-        python single_run.py "build dashboard" --mcp_binary=/path/to/edda_mcp --mcp_args='["experimental", "apps-mcp"]'
     """
-    if not mcp_binary:
-        raise ValueError("--mcp_binary is required")
-
-    if backend == "litellm" and not model:
-        raise ValueError("--model is required when using --backend=litellm")
+    if backend == "litellm":
+        if not model:
+            raise ValueError("--model is required when using --backend=litellm")
+        if not mcp_binary:
+            raise ValueError("--mcp_binary is required for litellm backend")
 
     if app_name is None:
         app_name = f"app-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     generator = DaggerAppGenerator(
-        mcp_binary=Path(mcp_binary),
         output_dir=Path(output_dir) if output_dir else Path("./app"),
+        mcp_binary=Path(mcp_binary) if mcp_binary else None,
     )
 
     try:

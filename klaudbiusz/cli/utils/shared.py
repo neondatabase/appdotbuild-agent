@@ -9,11 +9,6 @@ Contains:
 import json
 import logging
 import os
-
-
-def is_databricks_environment() -> bool:
-    """Detect if running in a Databricks environment."""
-    return os.path.exists("/databricks") or "DATABRICKS_RUNTIME_VERSION" in os.environ
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -25,6 +20,11 @@ if TYPE_CHECKING:
     from asyncpg import Pool
 
 logger = logging.getLogger(__name__)
+
+
+def is_databricks_environment() -> bool:
+    """Detect if running in a Databricks environment."""
+    return os.path.exists("/databricks") or "DATABRICKS_RUNTIME_VERSION" in os.environ
 
 
 class Tracker:
@@ -345,7 +345,7 @@ def setup_logging(suppress_logs: bool, mcp_binary: str | None = None) -> None:
 
     Args:
         suppress_logs: If True, only show errors
-        mcp_binary: Optional MCP binary path for logging
+        mcp_binary: Optional MCP binary path for logging (deprecated, only used by litellm)
     """
     if suppress_logs:
         logging.getLogger().setLevel(logging.ERROR)
@@ -359,8 +359,6 @@ def setup_logging(suppress_logs: bool, mcp_binary: str | None = None) -> None:
 
         if mcp_binary:
             logger.info(f"Using MCP binary: {mcp_binary}")
-        else:
-            logger.info("Using cargo run for MCP server")
 
 
 def build_mcp_command(

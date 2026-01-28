@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -20,8 +19,6 @@ from claude_agent_sdk import (
     query,
 )
 from dotenv import load_dotenv
-
-from cli.utils.shared import build_mcp_command, validate_mcp_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -136,89 +133,15 @@ Provide a concise analysis focusing on actionable insights."""
     return response.choices[0].message.content  # type: ignore[attr-defined]
 
 
-def get_mcp_tools_description(
-    mcp_binary: str | None,
-    project_root: Path,
-    mcp_json_path: str | None = None,
-    mcp_args: list[str] | None = None,
-) -> str:
-    """Extract MCP tool definitions by querying the MCP server.
+def get_default_skills_path() -> Path | None:
+    """Get default skills path, resolving databricks-apps symlink if it exists."""
+    skills_dir = Path.home() / ".claude" / "skills"
+    databricks_apps = skills_dir / "databricks-apps"
 
-    Returns empty string if mcp_binary is not provided.
-    """
-    if mcp_binary is None:
-        return ""
-
-    mcp_manifest = validate_mcp_manifest(mcp_binary, project_root)
-    command, args = build_mcp_command(mcp_binary, mcp_manifest, mcp_json_path, mcp_args)
-
-    proc = subprocess.Popen(
-        [command, *args],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-    if proc.stdin is None or proc.stdout is None:
-        raise RuntimeError("Failed to create subprocess pipes")
-
-    init_request = (
-        json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "trajectory-analyzer", "version": "1.0.0"},
-                },
-            }
-        )
-        + "\n"
-    )
-    proc.stdin.write(init_request.encode())
-    proc.stdin.flush()
-
-    init_response_line = proc.stdout.readline().decode().strip()
-    init_response = json.loads(init_response_line)
-    if "result" not in init_response:
-        raise RuntimeError(f"Initialize failed: {init_response}")
-
-    notification = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
-    proc.stdin.write(notification.encode())
-    proc.stdin.flush()
-
-    tools_request = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n"
-    proc.stdin.write(tools_request.encode())
-    proc.stdin.flush()
-
-    tools_response_line = proc.stdout.readline().decode().strip()
-    tools_response = json.loads(tools_response_line)
-
-    proc.terminate()
-    proc.wait(timeout=5)
-
-    if "result" not in tools_response:
-        raise RuntimeError(f"tools/list failed: {tools_response}")
-
-    tools = tools_response["result"].get("tools", [])
-    lines = ["# MCP Tools\n"]
-    for tool in tools:
-        name = tool.get("name", "unknown")
-        description = tool.get("description", "")
-        lines.append(f"## {name}\n")
-        lines.append(f"{description}\n")
-        if "inputSchema" in tool:
-            schema = tool["inputSchema"]
-            props = schema.get("properties", {})
-            if props:
-                lines.append("\n**Parameters:**\n")
-                for prop_name, prop_info in props.items():
-                    prop_desc = prop_info.get("description", "")
-                    lines.append(f"- `{prop_name}`: {prop_desc}\n")
-        lines.append("\n")
-    return "".join(lines)
+    if databricks_apps.exists():
+        # resolve symlink to get actual path
+        return databricks_apps.resolve().parent
+    return None
 
 
 def load_evaluation_report(eval_report_path: str | None) -> str:
@@ -244,13 +167,12 @@ def load_evaluation_report(eval_report_path: str | None) -> str:
 
 async def analyze_with_agent(
     concatenated_analyses: str,
-    mcp_tools_doc: str,
-    template_path: Path | None,
-    mcp_source_path: Path | None,
+    skills_path: Path | None,
+    appkit_path: Path | None,
     eval_report: str = "",
 ) -> str:
     """Use Claude Agent to analyze trajectories and provide recommendations."""
-    logger.info("🤖 Spawning analysis agent to explore template and provide recommendations")
+    logger.info("🤖 Spawning analysis agent to explore sources and provide recommendations")
 
     disallowed_tools = [
         "Write",
@@ -271,37 +193,28 @@ async def analyze_with_agent(
     ]
 
     # build optional context sections
-    template_section = ""
-    if template_path:
-        template_section = f"""
+    skills_section = ""
+    if skills_path:
+        skills_section = f"""
 
-## Template Source Code
+## Skills Source
 
-Location: {template_path}
+Location: {skills_path}
 
-Explore the template structure to identify issues with scaffolding, CLAUDE.md guidance, or template organization.
+Explore the skill definitions (SKILL.md files and references/) to identify issues with instructions or guidance.
+Skills used: databricks, databricks-apps
 """
 
-    mcp_tools_section = ""
-    if mcp_tools_doc:
-        mcp_tools_section = f"""
+    appkit_section = ""
+    if appkit_path:
+        appkit_section = f"""
 
-## MCP Tools
+## AppKit Source Code
 
-{mcp_tools_doc}
-"""
+Location: {appkit_path}
 
-    mcp_source_section = ""
-    if mcp_source_path:
-        mcp_source_section = f"""
-
-## MCP Source Code
-
-Location: {mcp_source_path}
-
-Explore the implementation to identify issues with tool definitions, descriptions, or implementations.
-
-Note: The MCP is designed with a single tool providing CLI-like interface. We can't add more tools, but can add more commands/subcommands to the existing tool.
+Explore the AppKit SDK source to understand available components, hooks, and patterns.
+Key areas: packages/appkit-ui (React components), packages/appkit (server SDK), templates/ (app template)
 """
 
     eval_section = ""
@@ -315,13 +228,13 @@ Note: The MCP is designed with a single tool providing CLI-like interface. We ca
 
     # build task categories based on available context
     categories = []
-    if template_path:
+    if skills_path:
         categories.append(
-            "1. **Template improvements**: Changes to template structure, CLAUDE.md guidance, or scaffolding"
+            f"{len(categories) + 1}. **Skill improvements**: Missing guidance, unclear instructions, or skill definition issues"
         )
-    if mcp_tools_doc or mcp_source_path:
+    if appkit_path:
         categories.append(
-            f"{len(categories) + 1}. **Tool improvements**: Missing tools, unclear descriptions, or tool definition issues"
+            f"{len(categories) + 1}. **AppKit/Template improvements**: SDK issues, template structure, missing components, or documentation gaps"
         )
     categories.append(
         f"{len(categories) + 1}. **Root cause analysis**: Why agents failed or struggled in specific trajectories"
@@ -336,7 +249,7 @@ Note: The MCP is designed with a single tool providing CLI-like interface. We ca
 
 **Instructions**:
 - Focus on systemic issues, not one-off failures
-- Be specific: reference file paths, tool names, trajectory patterns
+- Be specific: reference file paths, skill names, trajectory patterns
 - Format recommendations as markdown with clear sections
 - Only analyze context that has been explicitly provided below
 
@@ -344,7 +257,7 @@ Note: The MCP is designed with a single tool providing CLI-like interface. We ca
 
 ## Trajectory Analyses
 
-{concatenated_analyses}{template_section}{mcp_tools_section}{mcp_source_section}{eval_section}
+{concatenated_analyses}{skills_section}{appkit_section}{eval_section}
 
 ---
 
@@ -400,27 +313,34 @@ Analyze the data and provide your recommendations."""
 
 
 async def analyze_trajectories_async(
-    mcp_binary: str | None,
-    template_path: str | None,
-    mcp_source_path: str | None,
+    skills_path: str | None,
+    appkit_path: str | None,
     map_model: str = "anthropic/claude-haiku-4-5",
     output_file: str = "",
     trajectories_pattern: str = "./app/**/trajectory.jsonl",
     eval_report_path: str | None = None,
-    mcp_json_path: str | None = None,
-    mcp_args: list[str] | None = None,
 ):
     """Analyze trajectories using map-reduce approach with LLM, then agent-based analysis."""
     litellm.drop_params = True
 
-    template_path_resolved = Path(template_path) if template_path else None
-    mcp_source_path_resolved = Path(mcp_source_path) if mcp_source_path else None
-    project_root = Path(__file__).parent.parent.parent
+    # resolve skills path - use provided or detect default
+    skills_path_resolved: Path | None = None
+    if skills_path:
+        skills_path_resolved = Path(skills_path)
+    else:
+        skills_path_resolved = get_default_skills_path()
+        if skills_path_resolved:
+            logger.info(f"📚 Using default skills path: {skills_path_resolved}")
 
-    mcp_tools_doc = ""
-    if mcp_binary:
-        logger.info("📋 Extracting MCP tool definitions")
-        mcp_tools_doc = get_mcp_tools_description(mcp_binary, project_root, mcp_json_path, mcp_args)
+    # resolve appkit path - use provided or default
+    appkit_path_resolved: Path | None = None
+    if appkit_path:
+        appkit_path_resolved = Path(appkit_path)
+    else:
+        default_appkit = Path.home() / "dev" / "appkit"
+        if default_appkit.exists():
+            appkit_path_resolved = default_appkit
+            logger.info(f"📦 Using default AppKit path: {appkit_path_resolved}")
 
     eval_report = ""
     if eval_report_path:
@@ -447,7 +367,7 @@ async def analyze_trajectories_async(
     concatenated = "\n\n".join([f"## Analysis of {app_name}\n\n{analysis}" for app_name, analysis in analyses])
 
     final_report = await analyze_with_agent(
-        concatenated, mcp_tools_doc, template_path_resolved, mcp_source_path_resolved, eval_report
+        concatenated, skills_path_resolved, appkit_path_resolved, eval_report
     )
 
     output_file = output_file or f"/tmp/trajectory_analysis_{datetime.now().strftime('%d%m%y-%H%M%S')}.md"
@@ -458,28 +378,22 @@ async def analyze_trajectories_async(
 
 
 def cli(
-    mcp_binary: str | None = None,
-    template_path: str | None = None,
-    mcp_source_path: str | None = None,
+    skills_path: str | None = None,
+    appkit_path: str | None = None,
     trajectories_pattern: str = "./app/**/trajectory.jsonl",
     output_file: str = "",
     map_model: str = "anthropic/claude-haiku-4-5",
     eval_report: str | None = None,
-    mcp_json: str | None = None,
-    mcp_args: list[str] | None = None,
 ):
     """Analyze agent trajectories to find friction points and patterns.
 
     Args:
-        mcp_binary: Path to MCP binary (optional)
-        template_path: Path to template directory (optional)
-        mcp_source_path: Path to MCP source code directory (optional)
+        skills_path: Path to skills directory (optional, auto-detected from ~/.claude/skills/)
+        appkit_path: Path to AppKit source (optional, defaults to ~/dev/appkit)
         trajectories_pattern: Glob pattern to find trajectory files
         output_file: Path to save analysis report
         map_model: LiteLLM model identifier for individual trajectory analysis
         eval_report: Path to evaluation report JSON (optional)
-        mcp_json: Optional path to JSON config file for edda_mcp
-        mcp_args: Optional list of args passed to the MCP server (overrides defaults)
     """
     coloredlogs.install(
         level=logging.INFO,
@@ -490,15 +404,12 @@ def cli(
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
     asyncio.run(
         analyze_trajectories_async(
-            mcp_binary,
-            template_path,
-            mcp_source_path,
+            skills_path,
+            appkit_path,
             map_model,
             output_file,
             trajectories_pattern,
             eval_report,
-            mcp_json,
-            mcp_args,
         )
     )
 
