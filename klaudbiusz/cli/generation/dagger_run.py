@@ -71,11 +71,19 @@ class DaggerAppGenerator:
 
     def __init__(
         self,
-        mcp_binary: Path,
         output_dir: Path,
+        mcp_binary: Path | None = None,
         stream_logs: bool = True,
     ):
-        _check_binary_format(mcp_binary)
+        """Initialize Dagger app generator.
+
+        Args:
+            output_dir: Directory to export generated apps to
+            mcp_binary: Path to MCP binary (only needed for litellm backend)
+            stream_logs: Whether to stream Dagger logs to stderr
+        """
+        if mcp_binary is not None:
+            _check_binary_format(mcp_binary)
         self.mcp_binary = mcp_binary
         self.output_dir = output_dir
         self.stream_logs = stream_logs
@@ -94,12 +102,15 @@ class DaggerAppGenerator:
             tuple of (app_dir or None, log_file, metrics or None) paths on host.
             app_dir is None if agent didn't create an app.
         """
+        if backend == "litellm" and self.mcp_binary is None:
+            raise ValueError("mcp_binary is required for litellm backend")
+
         if self.stream_logs:
             cfg = dagger.Config(log_output=sys.stderr)
         else:
             cfg = dagger.Config(log_output=open(os.devnull, "w"))
         async with dagger.Connection(cfg) as client:
-            container = await self._build_container(client)
+            container = await self._build_container(client, backend)
             return await self._run_generation(
                 client, container, prompt, app_name, backend, model, mcp_args
             )
@@ -198,19 +209,22 @@ class DaggerAppGenerator:
             prompts: dict mapping app_name to prompt
             backend: "claude" or "litellm"
             model: model name (required for litellm)
-            mcp_args: optional MCP server args
+            mcp_args: optional MCP server args (litellm only)
             max_concurrency: max parallel generations
             on_complete: callback(app_name, success) called when each app finishes
 
         Returns:
             list of (app_name, app_dir, log_file, metrics, error) tuples
         """
+        if backend == "litellm" and self.mcp_binary is None:
+            raise ValueError("mcp_binary is required for litellm backend")
+
         # suppress dagger output for bulk runs
         cfg = dagger.Config(log_output=open(os.devnull, "w"))
 
         async with dagger.Connection(cfg) as client:
             # build container once, reuse for all generations
-            base_container = await self._build_container(client)
+            base_container = await self._build_container(client, backend)
             sem = asyncio.Semaphore(max_concurrency)
 
             async def run_with_sem(
@@ -233,7 +247,7 @@ class DaggerAppGenerator:
             tasks = [run_with_sem(name, prompt) for name, prompt in prompts.items()]
             return await asyncio.gather(*tasks)
 
-    async def _build_container(self, client: dagger.Client) -> dagger.Container:
+    async def _build_container(self, client: dagger.Client, backend: str = "claude") -> dagger.Container:
         """Build container from Dockerfile with layer caching."""
         # build context excluding generated files
         context = client.host().directory(
@@ -251,13 +265,6 @@ class DaggerAppGenerator:
         # build from Dockerfile (leverages BuildKit cache)
         container = context.docker_build()
 
-        # mount mcp binary from host (not baked into image)
-        container = container.with_file(
-            "/usr/local/bin/edda_mcp",
-            client.host().file(str(self.mcp_binary)),
-            permissions=0o755,  # make executable
-        )
-
         # pass through env vars from host
         env_vars = [
             "ANTHROPIC_API_KEY",
@@ -266,24 +273,6 @@ class DaggerAppGenerator:
         for var in env_vars:
             if val := os.environ.get(var):
                 container = container.with_env_variable(var, val)
-
-        # mount appkit template if available locally (for testing local template changes)
-        # CLI uses DATABRICKS_APPKIT_TEMPLATE_PATH env var to override default GitHub download
-        mcp_binary_dir = self.mcp_binary.parent
-        appkit_template = mcp_binary_dir / "experimental" / "aitools" / "templates" / "appkit"
-        if appkit_template.exists():
-            container = container.with_directory(
-                "/opt/appkit-template",
-                client.host().directory(str(appkit_template)),
-            )
-            container = container.with_env_variable(
-                "DATABRICKS_APPKIT_TEMPLATE_PATH", "/opt/appkit-template"
-            )
-        else:
-            logger.warning(
-                f"Local appkit template not found at {appkit_template}. "
-                "Scaffolding will use GitHub download (may fail if template not published yet)."
-            )
 
         # mount databricks config for CLI authentication (OAuth profile)
         # container runs as 'klaudbiusz' user (see Dockerfile)
@@ -295,8 +284,9 @@ class DaggerAppGenerator:
                 owner="klaudbiusz:klaudbiusz",
             )
 
-        # mount databricks directory for OAuth token cache and other CLI state
+        # mount databricks directory for OAuth token cache, CLI state, and skills
         # required when using auth_type = databricks-cli
+        # skills are symlinked from ~/.databricks/agent-skills/ to ~/.claude/skills/
         databricks_dir = Path.home() / ".databricks"
         if databricks_dir.exists():
             container = container.with_directory(
@@ -304,5 +294,40 @@ class DaggerAppGenerator:
                 client.host().directory(str(databricks_dir)),
                 owner="klaudbiusz:klaudbiusz",
             )
+
+        # mount claude skills directory for SDK skill support
+        # resolve symlinks since dagger doesn't follow them across mount boundaries
+        claude_skills_dir = Path.home() / ".claude" / "skills"
+        if claude_skills_dir.exists():
+            for skill_path in claude_skills_dir.iterdir():
+                # resolve symlinks to get actual directory
+                resolved_path = skill_path.resolve()
+                if resolved_path.is_dir():
+                    container_path = f"/home/klaudbiusz/.claude/skills/{skill_path.name}"
+                    container = container.with_directory(
+                        container_path,
+                        client.host().directory(str(resolved_path)),
+                        owner="klaudbiusz:klaudbiusz",
+                    )
+
+        # litellm backend still needs MCP binary
+        if backend == "litellm" and self.mcp_binary is not None:
+            container = container.with_file(
+                "/usr/local/bin/edda_mcp",
+                client.host().file(str(self.mcp_binary)),
+                permissions=0o755,
+            )
+
+            # mount appkit template if available locally (for testing local template changes)
+            mcp_binary_dir = self.mcp_binary.parent
+            appkit_template = mcp_binary_dir / "experimental" / "aitools" / "templates" / "appkit"
+            if appkit_template.exists():
+                container = container.with_directory(
+                    "/opt/appkit-template",
+                    client.host().directory(str(appkit_template)),
+                )
+                container = container.with_env_variable(
+                    "DATABRICKS_APPKIT_TEMPLATE_PATH", "/opt/appkit-template"
+                )
 
         return container
