@@ -41,13 +41,41 @@ class EvaluationTracker:
         self.enabled = False
         self._setup_mlflow()
 
+    def _is_on_databricks_cluster(self) -> bool:
+        """Check if running on a Databricks cluster."""
+        return os.environ.get("SPARK_HOME") is not None or os.path.exists("/databricks")
+
     def _setup_mlflow(self):
         """Configure MLflow connection to Databricks."""
         host = os.environ.get('DATABRICKS_HOST')
         token = os.environ.get('DATABRICKS_TOKEN')
 
+        # On Databricks clusters, use automatic authentication
+        if self._is_on_databricks_cluster():
+            try:
+                mlflow.set_tracking_uri("databricks")
+                self.client = MlflowClient()
+
+                # Get or create experiment
+                try:
+                    experiment = self.client.get_experiment_by_name(self.experiment_name)
+                    if not experiment:
+                        self.client.create_experiment(self.experiment_name)
+                except Exception:
+                    self.client.create_experiment(self.experiment_name)
+
+                mlflow.set_experiment(experiment_name=self.experiment_name)
+
+                self.enabled = True
+                print(f"✓ MLflow tracking enabled (cluster auto-auth): {self.experiment_name}")
+                return
+            except Exception as e:
+                print(f"⚠️  MLflow cluster auto-auth failed: {e}")
+                # Fall through to try env var auth
+
+        # Fall back to env var authentication
         if not host or not token:
-            print("⚠️  MLflow tracking disabled: DATABRICKS_HOST or DATABRICKS_TOKEN not set")
+            print("⚠️  MLflow tracking disabled: DATABRICKS_HOST or DATABRICKS_TOKEN not set (and not on Databricks cluster)")
             return
 
         try:
