@@ -35,6 +35,7 @@ from cli.utils.template_detection import detect_template
 # Add the cli directory to Python path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+
 # Load environment variables from .env file - try multiple locations
 env_paths = [
     Path(__file__).parent.parent.parent.parent / "edda" / ".env",
@@ -50,6 +51,40 @@ try:
     import anthropic
 except ImportError:
     anthropic = None
+
+
+def _is_databricks_auth_available() -> bool:
+    """Check if Databricks authentication is available (either env vars or SDK auto-auth).
+
+    On Databricks clusters with SINGLE_USER data security mode and run_as configured,
+    the SDK automatically handles authentication via the cluster's identity.
+    """
+    # Check env vars first (explicit credentials)
+    if os.environ.get("DATABRICKS_HOST") and os.environ.get("DATABRICKS_TOKEN"):
+        return True
+
+    # Check if running on Databricks cluster (SDK auto-auth available)
+    if os.environ.get("SPARK_HOME") or os.path.exists("/databricks"):
+        return True
+
+    # Check if SDK can authenticate automatically
+    try:
+        from databricks.sdk import WorkspaceClient
+        client = WorkspaceClient()
+        client.current_user.me()  # Quick auth check
+        return True
+    except Exception:
+        return False
+
+
+def _get_databricks_host_from_sdk() -> str:
+    """Get Databricks host from SDK config when using auto-auth."""
+    try:
+        from databricks.sdk import WorkspaceClient
+        client = WorkspaceClient()
+        return client.config.host or ""
+    except Exception:
+        return ""
 
 
 def get_backend_dir(app_dir: Path, template: str) -> Path:
@@ -170,9 +205,15 @@ def _prepare_runtime_env(app_dir: Path, container_name: str = "", port: int = 80
     """Prepare environment variables for runtime check."""
     env = os.environ.copy()
 
-    # Databricks credentials - required
-    if not env.get("DATABRICKS_HOST") or not env.get("DATABRICKS_TOKEN"):
-        print("  ⚠️  Warning: Missing DATABRICKS_HOST or DATABRICKS_TOKEN")
+    # Databricks credentials - check for SDK auto-auth or env vars
+    if not _is_databricks_auth_available():
+        print("  ⚠️  Warning: Databricks auth not available (no env vars and not on Databricks cluster)")
+    elif not env.get("DATABRICKS_HOST"):
+        # On Databricks cluster, SDK handles auth but we may need to set DATABRICKS_HOST for apps
+        host = _get_databricks_host_from_sdk()
+        if host:
+            env["DATABRICKS_HOST"] = host
+            print(f"  ℹ️  Using Databricks SDK auto-auth (host: {host})")
 
     # OAuth credentials with mock fallback for eval
     env.setdefault("DATABRICKS_CLIENT_ID", "eval-mock-client-id")
@@ -240,8 +281,8 @@ async def check_runtime_success(agent: EvalAgent, app_dir: Path, container_name:
 
         # Non-Docker: use agent to start and health check
         env = _prepare_runtime_env(app_dir, container_name, port)
-        if not env.get("DATABRICKS_HOST") or not env.get("DATABRICKS_TOKEN"):
-            print("  ⚠️  Missing DATABRICKS_HOST or DATABRICKS_TOKEN")
+        if not _is_databricks_auth_available():
+            print("  ⚠️  Databricks auth not available")
             return False, {}
 
         start_time = time.time()

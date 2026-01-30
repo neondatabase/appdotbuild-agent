@@ -28,6 +28,11 @@ _mlflow_configured = False
 _experiment_name: str | None = None
 
 
+def _is_on_databricks_cluster() -> bool:
+    """Check if running on a Databricks cluster."""
+    return os.environ.get("SPARK_HOME") is not None or os.path.exists("/databricks")
+
+
 def setup_mlflow(
     experiment_name: str,
     tracking_uri: str = "databricks",
@@ -50,8 +55,23 @@ def setup_mlflow(
     host = os.environ.get("DATABRICKS_HOST")
     token = os.environ.get("DATABRICKS_TOKEN")
 
+    # On Databricks clusters, use automatic authentication
+    if _is_on_databricks_cluster():
+        try:
+            mlflow.set_tracking_uri(tracking_uri)
+            mlflow.set_experiment(experiment_name)
+            _experiment_name = experiment_name
+            _mlflow_configured = True
+            print(f"MLflow tracking enabled (Databricks cluster auto-auth): {experiment_name}")
+            return True
+        except Exception as e:
+            print(f"MLflow setup failed on Databricks cluster: {e}")
+            _mlflow_configured = False
+            return False
+
+    # Fall back to env var authentication
     if not host or not token:
-        print("MLflow tracking disabled: DATABRICKS_HOST or DATABRICKS_TOKEN not set")
+        print("MLflow tracking disabled: DATABRICKS_HOST or DATABRICKS_TOKEN not set (and not on Databricks cluster)")
         _mlflow_configured = False
         return False
 

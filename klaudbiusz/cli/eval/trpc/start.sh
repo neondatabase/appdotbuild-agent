@@ -28,9 +28,11 @@ if [ -f ".env" ]; then
     export $(cat .env | grep -v '^#' | grep -v '^$' | xargs)
 fi
 
-# Check required env vars
-if [ -z "$DATABRICKS_HOST" ] || [ -z "$DATABRICKS_TOKEN" ]; then
-    echo "❌ Error: DATABRICKS_HOST and DATABRICKS_TOKEN must be set" >&2
+# Check required env vars - allow SDK auto-auth on Databricks clusters
+if [ -f "/databricks/spark/python/lib/py4j-"*".zip" ] || [ -n "$SPARK_HOME" ] || [ -d "/databricks" ]; then
+    echo "  Running on Databricks cluster - using automatic authentication" >&2
+elif [ -z "$DATABRICKS_HOST" ] || [ -z "$DATABRICKS_TOKEN" ]; then
+    echo "❌ Error: DATABRICKS_HOST and DATABRICKS_TOKEN must be set (or run on Databricks cluster)" >&2
     exit 1
 fi
 

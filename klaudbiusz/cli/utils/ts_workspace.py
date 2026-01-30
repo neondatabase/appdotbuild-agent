@@ -65,10 +65,24 @@ async def create_ts_workspace(
     # Set environment variables for evaluation
     import os
 
-    # Pass Databricks credentials from host environment
+    # Pass Databricks credentials from host environment or SDK auto-auth
     databricks_host = os.getenv("DATABRICKS_HOST", "")
     databricks_token = os.getenv("DATABRICKS_TOKEN", "")
     databricks_warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID", "")
+
+    # On Databricks clusters, try to get credentials from SDK if not set
+    if not databricks_host or not databricks_token:
+        if os.environ.get("SPARK_HOME") or os.path.exists("/databricks"):
+            try:
+                from databricks.sdk import WorkspaceClient
+                ws_client = WorkspaceClient()
+                ws_config = ws_client.config
+                if not databricks_host and ws_config.host:
+                    databricks_host = ws_config.host
+                if not databricks_token and ws_config.token:
+                    databricks_token = ws_config.token
+            except Exception:
+                pass  # SDK auto-auth not available
 
     if databricks_host:
         workspace.ctr = workspace.ctr.with_env_variable("DATABRICKS_HOST", databricks_host)
