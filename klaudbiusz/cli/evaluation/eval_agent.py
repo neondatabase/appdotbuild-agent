@@ -77,6 +77,11 @@ fi
 """,
     "build": """
 cd {app_dir}
+# Generate TypeScript types from schema before building (AppKit apps)
+if [ -f "scripts/generate-types.ts" ]; then
+    npm run typegen 2>/dev/null || true
+fi
+# Run build
 if [ -f "client/package.json" ]; then
     (cd client && npm run build)
 elif [ -f "package.json" ]; then
@@ -85,6 +90,11 @@ fi
 """,
     "typecheck": """
 cd {app_dir}
+# Generate TypeScript types from schema before checking (AppKit apps)
+if [ -f "scripts/generate-types.ts" ]; then
+    npm run typegen 2>/dev/null || true
+fi
+# Run type checking
 for dir in . server client; do
     if [ -f "$dir/tsconfig.json" ]; then
         (cd "$dir" && npx tsc --noEmit --skipLibCheck)
