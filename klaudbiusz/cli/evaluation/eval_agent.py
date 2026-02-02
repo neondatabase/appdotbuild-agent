@@ -3,23 +3,25 @@
 Replaces template-specific shell scripts with direct Claude SDK agent calls.
 Instead of `bash install.sh`, ask the agent "install dependencies for this app"
 and let it figure out the commands.
+
+When running as root (e.g., on Databricks clusters), falls back to direct
+shell script execution since Claude SDK doesn't allow --dangerously-skip-permissions
+when running as root for security reasons.
 """
 
 import logging
+import os
+import subprocess
 from pathlib import Path
 from typing import Literal
 
-from claude_agent_sdk import (
-    AssistantMessage,
-    ClaudeAgentOptions,
-    ResultMessage,
-    TextBlock,
-    ToolResultBlock,
-    UserMessage,
-    query,
-)
-
 logger = logging.getLogger(__name__)
+
+
+def _is_running_as_root() -> bool:
+    """Check if running as root user."""
+    return os.geteuid() == 0 if hasattr(os, 'geteuid') else False
+
 
 # Evaluation step prompts - agent figures out specific commands
 EVAL_PROMPTS: dict[str, str] = {
@@ -58,11 +60,77 @@ The test succeeds if the health check passes.""",
 - Ensure the port is free for the next test""",
 }
 
+# Direct shell commands for fallback when running as root
+# These are simplified versions that work without the agent
+SHELL_COMMANDS: dict[str, str] = {
+    "install": """
+cd {app_dir}
+if grep -q '"install:all"' package.json 2>/dev/null; then
+    npm run install:all
+else
+    for dir in . server client; do
+        if [ -f "$dir/package.json" ]; then
+            (cd "$dir" && npm install)
+        fi
+    done
+fi
+""",
+    "build": """
+cd {app_dir}
+if [ -f "client/package.json" ]; then
+    (cd client && npm run build)
+elif [ -f "package.json" ]; then
+    npm run build
+fi
+""",
+    "typecheck": """
+cd {app_dir}
+for dir in . server client; do
+    if [ -f "$dir/tsconfig.json" ]; then
+        (cd "$dir" && npx tsc --noEmit --skipLibCheck)
+    fi
+done
+""",
+    "test": """
+cd {app_dir}
+if [ -f "server/package.json" ]; then
+    cd server
+fi
+npm test 2>&1 || true
+""",
+    "start": """
+cd {app_dir}
+lsof -ti:{port} | xargs kill -9 2>/dev/null || true
+npm start > /tmp/app.log 2>&1 &
+sleep 5
+for i in 1 2 3 4 5; do
+    if curl -sf --max-time 2 http://localhost:{port}/healthcheck 2>/dev/null; then
+        echo "Health check passed"
+        exit 0
+    fi
+    if curl -sf --max-time 2 http://localhost:{port}/ 2>/dev/null; then
+        echo "Root endpoint check passed"
+        exit 0
+    fi
+    sleep 1
+done
+echo "Health check failed"
+lsof -ti:{port} | xargs kill -9 2>/dev/null || true
+exit 1
+""",
+    "stop": """
+lsof -ti:{port} | xargs kill -9 2>/dev/null || true
+""",
+}
+
 EvalStep = Literal["install", "build", "typecheck", "test", "start", "stop"]
 
 
 class EvalAgent:
-    """Agent-based evaluation runner using Claude SDK."""
+    """Agent-based evaluation runner using Claude SDK.
+
+    Falls back to direct shell execution when running as root.
+    """
 
     def __init__(
         self,
@@ -83,23 +151,64 @@ class EvalAgent:
         self.model = model
         self.suppress_logs = suppress_logs
         self.env = env or {}
+        self._use_shell_fallback = _is_running_as_root()
 
-    async def run_step(
+        if self._use_shell_fallback and not suppress_logs:
+            logger.info("Running as root - using shell script fallback instead of Claude SDK")
+
+    async def _run_shell_command(
         self,
         step: EvalStep,
         timeout_sec: int = 120,
         **kwargs,
     ) -> tuple[bool, str]:
-        """Run an evaluation step using the agent.
+        """Run evaluation step using direct shell command (fallback for root)."""
+        if step not in SHELL_COMMANDS:
+            return False, f"Unknown evaluation step: {step}"
 
-        Args:
-            step: Evaluation step to run (install, build, typecheck, test, start, stop)
-            timeout_sec: Maximum time for the step (not currently enforced)
-            **kwargs: Format arguments for the prompt (e.g., port=8000)
+        # Format the command with app_dir and any kwargs
+        abs_app_dir = str(self.app_dir.resolve())
+        cmd = SHELL_COMMANDS[step].format(app_dir=abs_app_dir, **kwargs)
 
-        Returns:
-            Tuple of (success: bool, output: str)
-        """
+        # Prepare environment
+        run_env = os.environ.copy()
+        run_env.update(self.env)
+
+        try:
+            result = subprocess.run(
+                ["bash", "-c", cmd],
+                cwd=abs_app_dir,
+                env=run_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+            )
+            output = result.stdout + result.stderr
+            success = result.returncode == 0
+            return success, output
+        except subprocess.TimeoutExpired:
+            return False, f"Command timed out after {timeout_sec}s"
+        except Exception as e:
+            return False, f"Exception: {str(e)}"
+
+    async def _run_agent_step(
+        self,
+        step: EvalStep,
+        timeout_sec: int = 120,
+        **kwargs,
+    ) -> tuple[bool, str]:
+        """Run evaluation step using Claude SDK agent."""
+        # Import here to avoid issues when Claude SDK isn't available
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeAgentOptions,
+            ResultMessage,
+            TextBlock,
+            ToolResultBlock,
+            UserMessage,
+            query,
+        )
+
         if step not in EVAL_PROMPTS:
             return False, f"Unknown evaluation step: {step}"
 
@@ -107,7 +216,6 @@ class EvalAgent:
         prompt = prompt_template.format(**kwargs)
 
         # Build the full prompt with app context
-        # Use absolute path for the working directory
         abs_app_dir = self.app_dir.resolve()
         full_prompt = f"""Task: {prompt}
 
@@ -118,7 +226,6 @@ Important:
 - Be concise - this is an automated evaluation step"""
 
         # Configure agent options
-        # Use more turns for start/stop which are more complex
         max_turns = 15 if step in ("start", "stop") else 10
         options = ClaudeAgentOptions(
             system_prompt={
@@ -129,8 +236,8 @@ Important:
             allowed_tools=["Bash", "Read", "Glob", "Grep"],
             max_turns=max_turns,
             model=self.model,
-            cwd=abs_app_dir,  # Set working directory to app directory
-            env=self.env,  # Pass environment variables
+            cwd=abs_app_dir,
+            env=self.env,
         )
 
         output_lines: list[str] = []
@@ -139,24 +246,19 @@ Important:
         try:
             async for message in query(prompt=full_prompt, options=options):
                 if isinstance(message, AssistantMessage):
-                    # Capture assistant text output
                     for block in message.content:
                         if isinstance(block, TextBlock) and block.text:
                             output_lines.append(block.text)
                 elif isinstance(message, UserMessage):
-                    # Capture tool results (which come in UserMessage)
                     for block in message.content:
                         if isinstance(block, ToolResultBlock):
                             content = str(block.content) if block.content else ""
                             if content:
-                                # Truncate long output
                                 if len(content) > 1000:
                                     content = content[:1000] + "..."
                                 output_lines.append(content)
                 elif isinstance(message, ResultMessage):
-                    # subtype indicates success/failure, result is the text response
                     success = message.subtype == "success" and not message.is_error
-                    # Capture the final result text
                     if message.result:
                         output_lines.append(message.result)
                     if not self.suppress_logs:
@@ -167,6 +269,30 @@ Important:
             return False, f"Exception: {str(e)}"
 
         return success, "\n".join(output_lines)
+
+    async def run_step(
+        self,
+        step: EvalStep,
+        timeout_sec: int = 120,
+        **kwargs,
+    ) -> tuple[bool, str]:
+        """Run an evaluation step.
+
+        Uses Claude SDK agent when possible, falls back to shell scripts when
+        running as root (e.g., on Databricks clusters).
+
+        Args:
+            step: Evaluation step to run (install, build, typecheck, test, start, stop)
+            timeout_sec: Maximum time for the step
+            **kwargs: Format arguments for the prompt (e.g., port=8000)
+
+        Returns:
+            Tuple of (success: bool, output: str)
+        """
+        if self._use_shell_fallback:
+            return await self._run_shell_command(step, timeout_sec, **kwargs)
+        else:
+            return await self._run_agent_step(step, timeout_sec, **kwargs)
 
     async def install_dependencies(self) -> tuple[bool, str]:
         """Install npm dependencies."""

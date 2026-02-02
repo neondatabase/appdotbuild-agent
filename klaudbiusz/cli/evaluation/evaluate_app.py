@@ -53,6 +53,15 @@ except ImportError:
     anthropic = None
 
 
+def _is_running_as_root() -> bool:
+    """Check if running as root user.
+
+    Claude SDK's --dangerously-skip-permissions flag doesn't work as root,
+    so we need to fall back to shell scripts when running as root (e.g., on Databricks).
+    """
+    return os.geteuid() == 0 if hasattr(os, 'geteuid') else False
+
+
 def _is_databricks_auth_available() -> bool:
     """Check if Databricks authentication is available (either env vars or SDK auto-auth).
 
