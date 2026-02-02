@@ -420,9 +420,24 @@ async def main_async():
 
 
 def main():
-    """Sync wrapper for async main."""
+    """Sync wrapper for async main.
+
+    Handles both standalone execution (asyncio.run) and Databricks notebooks
+    where an event loop is already running.
+    """
     try:
-        asyncio.run(main_async())
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    try:
+        if loop and loop.is_running():
+            # Already in an async context (e.g., Databricks notebook)
+            import nest_asyncio
+            nest_asyncio.apply()
+            asyncio.run(main_async())
+        else:
+            asyncio.run(main_async())
     finally:
         _restore_terminal_cursor()
 

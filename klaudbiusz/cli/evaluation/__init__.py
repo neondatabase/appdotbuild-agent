@@ -169,6 +169,16 @@ def run_evaluation_simple(
                         dagger_results.append(result)
                 return dagger_results
 
+        # Handle Databricks notebooks where event loop is already running
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import nest_asyncio
+            nest_asyncio.apply()
+
         results = asyncio.run(run_dagger_evaluations())
 
     eval_duration = time.time() - eval_start
