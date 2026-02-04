@@ -332,10 +332,8 @@ Task: ${prompt}`;
         break;
       }
       default: {
-        // log unknown events in verbose mode for debugging
-        if (this.options.verbose) {
-          console.log(`📨 Event: ${event.type}`);
-        }
+        // log all events for debugging auth issues
+        console.log(`📨 Event: ${event.type} ${JSON.stringify(event.properties).slice(0, 200)}`);
       }
     }
   }
