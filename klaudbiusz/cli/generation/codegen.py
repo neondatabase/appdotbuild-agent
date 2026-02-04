@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    McpServerConfig,
     ResultMessage,
     TextBlock,
     ToolResultBlock,
@@ -115,7 +116,7 @@ Never deploy the app, just scaffold and build it.
             env_vars["IS_SANDBOX"] = "1"
 
         # Configure MCP server if binary is provided
-        mcp_servers: dict[str, dict[str, object]] = {}
+        mcp_servers: dict[str, McpServerConfig] = {}
         if self.mcp_binary:
             logger.info(f"Configuring MCP server: {self.mcp_binary} {self.mcp_args}")
             mcp_servers["edda"] = {
