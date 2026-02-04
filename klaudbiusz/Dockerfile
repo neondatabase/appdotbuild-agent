@@ -19,7 +19,8 @@ RUN curl -fsSL https://bun.sh/install | bash && \
     rm -rf /root/.bun
 
 # install opencode CLI (copy binary to system path)
-RUN curl -fsSL https://opencode.ai/install | bash && \
+# pin version to avoid flaky version API
+RUN curl -fsSL https://opencode.ai/install | bash -s -- --version 1.0.180 && \
     cp /root/.opencode/bin/opencode /usr/local/bin/opencode && \
     rm -rf /root/.opencode
 

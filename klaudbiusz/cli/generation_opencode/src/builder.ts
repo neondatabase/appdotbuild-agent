@@ -3,6 +3,12 @@ import * as path from "path";
 import { createOpencode, type OpencodeClient, type Event } from "@opencode-ai/sdk";
 import type { BuilderOptions, GenerationMetrics, OpencodeConfig } from "./types.js";
 
+// timing helper for diagnostics
+function logTiming(label: string, startMs: number): void {
+  const elapsed = Date.now() - startMs;
+  console.log(`⏱️  [${label}] ${elapsed}ms`);
+}
+
 const BASE_INSTRUCTIONS = `Scaffold, build, and test the app.
 Use data from Databricks when relevant.
 Be concise and to the point in your responses.
@@ -59,12 +65,14 @@ export class OpencodeAppBuilder {
       process.chdir(appDir);
 
       // start opencode server + client
+      let phaseStart = Date.now();
       const { client, server } = await createOpencode({
         port: this.options.port ?? 0, // 0 = auto-assign
         config: {
           model: this.options.model ?? "anthropic/claude-sonnet-4-5-20250929",
         },
       });
+      logTiming("createOpencode", phaseStart);
 
       this.client = client;
       this.closeServer = () => server.close();
@@ -74,9 +82,11 @@ export class OpencodeAppBuilder {
       }
 
       // create session
+      phaseStart = Date.now();
       const sessionResult = await client.session.create({
         body: { title: this.options.appName },
       });
+      logTiming("session.create", phaseStart);
 
       if (sessionResult.error) {
         throw new Error(`Failed to create session: ${JSON.stringify(sessionResult.error)}`);
@@ -133,18 +143,24 @@ ${BASE_INSTRUCTIONS}
 Task: ${prompt}`;
 
       // subscribe to events for progress tracking
+      phaseStart = Date.now();
       const { stream: eventStream } = await client.event.subscribe();
+      logTiming("event.subscribe", phaseStart);
 
       // send prompt (non-blocking, we'll watch events)
+      phaseStart = Date.now();
       const promptPromise = client.session.prompt({
         path: { id: sessionId },
         body: {
           parts: [{ type: "text", text: userPrompt }],
         },
       });
+      logTiming("session.prompt (send)", phaseStart);
 
       // process events with timeout protection
+      const eventLoopStart = Date.now();
       this.lastEventTime = Date.now();
+      let eventCount = 0;
       const timeoutChecker = setInterval(() => {
         const elapsed = Date.now() - this.lastEventTime;
         if (elapsed > EVENT_STREAM_TIMEOUT_MS) {
@@ -158,6 +174,7 @@ Task: ${prompt}`;
       try {
         for await (const event of eventStream) {
           this.lastEventTime = Date.now();
+          eventCount++;
           this.handleEvent(event as Event);
 
           // check if prompt completed - we rely on session.idle
@@ -167,15 +184,20 @@ Task: ${prompt}`;
         }
       } finally {
         clearInterval(timeoutChecker);
+        logTiming(`event loop (${eventCount} events)`, eventLoopStart);
       }
 
       // wait for prompt to finish
+      phaseStart = Date.now();
       await promptPromise;
+      logTiming("promptPromise await", phaseStart);
 
       // get final messages to count turns and save trajectory
+      phaseStart = Date.now();
       const messagesResult = await client.session.messages({
         path: { id: sessionId },
       });
+      logTiming("session.messages", phaseStart);
 
       if (messagesResult.error) {
         console.warn(`Failed to get messages: ${JSON.stringify(messagesResult.error)}`);
@@ -272,6 +294,7 @@ Task: ${prompt}`;
   }
 
   close(): void {
+    const closeStart = Date.now();
     if (this.closeServer) {
       try {
         this.closeServer();
@@ -281,6 +304,7 @@ Task: ${prompt}`;
       this.closeServer = null;
     }
     this.client = null;
+    logTiming("server.close", closeStart);
 
     // force exit after brief delay if process hangs
     setTimeout(() => {

@@ -150,8 +150,8 @@ class DaggerAppGenerator:
             "/home/klaudbiusz/.cache", python_cache, owner="klaudbiusz:klaudbiusz"
         )
 
-        # run generation
-        result = container.with_exec(cmd)
+        # run generation and sync to force evaluation
+        result = await container.with_exec(cmd).sync()
 
         # prepare log file path
         log_file_local = self.output_dir / "logs" / f"{app_name}.log"
