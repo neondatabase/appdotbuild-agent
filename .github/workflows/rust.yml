@@ -43,8 +43,10 @@ jobs:
     name: Rust Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Temporarily disabled - tests require expensive API calls
+    if: false
     # Only run when API keys are available (skipped for forks/external PRs)
-    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    # if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -77,8 +79,10 @@ jobs:
     name: Rust Tests (Dagger)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Temporarily disabled - tests require expensive API calls
+    if: false
     # Only run when API keys are available (skipped for forks/external PRs)
-    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    # if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
