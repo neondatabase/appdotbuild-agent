@@ -5,7 +5,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 from uuid import UUID, uuid4
 
 from claude_agent_sdk import (
@@ -18,6 +18,7 @@ from claude_agent_sdk import (
     UserMessage,
     query,
 )
+from claude_agent_sdk.types import PermissionResultAllow, ToolPermissionContext
 from dotenv import load_dotenv
 
 from cli.utils.shared import ScaffoldTracker, Tracker, setup_logging
@@ -132,8 +133,15 @@ Never deploy the app, just scaffold and build it.
         app_dir = self.output_dir / self.app_name
         user_prompt = f"App name: {self.app_name}\nApp directory: {app_dir}\n\nTask: {prompt}"
 
+        # Create streaming prompt generator for streaming mode (required for can_use_tool)
+        async def streaming_prompt():
+            yield {"type": "user", "message": {"role": "user", "content": user_prompt}}
+
+        # Use streaming mode when running as root (for can_use_tool callback)
+        prompt_input = streaming_prompt() if use_streaming_mode else user_prompt
+
         try:
-            async for message in query(prompt=user_prompt, options=options):
+            async for message in query(prompt=prompt_input, options=options):
                 await self._log_message(message)
                 match message:
                     case ResultMessage(total_cost_usd=None):
