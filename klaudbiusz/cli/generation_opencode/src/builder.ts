@@ -262,6 +262,14 @@ Task: ${prompt}`;
         console.log(`❌ Session error: ${JSON.stringify(err)}`);
         break;
       }
+      case "session.status": {
+        // log session status changes to debug auth issues
+        const status = event.properties;
+        if (this.options.verbose || "error" in status) {
+          console.log(`📊 Session status: ${JSON.stringify(status)}`);
+        }
+        break;
+      }
       case "message.updated": {
         // track cost and tokens from assistant messages
         // note: message.updated fires multiple times per message with cumulative values,
@@ -322,6 +330,12 @@ Task: ${prompt}`;
       case "session.idle": {
         console.log("\n✅ Session complete");
         break;
+      }
+      default: {
+        // log unknown events in verbose mode for debugging
+        if (this.options.verbose) {
+          console.log(`📨 Event: ${event.type}`);
+        }
       }
     }
   }
