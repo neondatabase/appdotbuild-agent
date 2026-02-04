@@ -216,12 +216,13 @@ class DaggerAppGenerator:
         # build from Dockerfile (leverages BuildKit cache)
         container = context.docker_build()
 
-        # pass through env vars from host
+        # pass through env vars from host (LLM providers + internal)
         env_vars = [
             "ANTHROPIC_API_KEY",
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
             "OPENAI_API_KEY",
+            "OPENROUTER_API_KEY",
             "NEON_DATABASE_URL",
         ]
         for var in env_vars:
