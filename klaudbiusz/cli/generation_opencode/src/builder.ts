@@ -109,6 +109,18 @@ export class OpencodeAppBuilder {
         console.log(`Created session: ${sessionId}`);
       }
 
+      // check provider auth status
+      const providerList = await client.provider.list();
+      if (providerList.error) {
+        console.log(`⚠️ Provider list error: ${JSON.stringify(providerList.error)}`);
+      } else {
+        const model = this.options.model ?? "anthropic/claude-sonnet-4-5-20250929";
+        const providerName = model.split("/")[0];
+        const connected = providerList.data?.connected ?? [];
+        const isConnected = connected.includes(providerName);
+        console.log(`🔑 Provider ${providerName} connected: ${isConnected} (all: ${connected.join(", ")})`);
+      }
+
       // debug: check MCP status and available tools
       if (this.options.verbose) {
         const mcpStatus = await client.mcp.status();
@@ -263,11 +275,8 @@ Task: ${prompt}`;
         break;
       }
       case "session.status": {
-        // log session status changes to debug auth issues
-        const status = event.properties;
-        if (this.options.verbose || "error" in status) {
-          console.log(`📊 Session status: ${JSON.stringify(status)}`);
-        }
+        // always log session status to debug auth issues
+        console.log(`📊 Session status: ${JSON.stringify(event.properties)}`);
         break;
       }
       case "message.updated": {
