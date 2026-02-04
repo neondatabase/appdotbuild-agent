@@ -295,7 +295,7 @@ class DaggerAppGenerator:
                 owner="klaudbiusz:klaudbiusz",
             )
 
-        # mount claude skills directory for SDK skill support
+        # mount claude skills directory for SDK skill support (claude and opencode backends)
         # resolve symlinks since dagger doesn't follow them across mount boundaries
         claude_skills_dir = Path.home() / ".claude" / "skills"
         if claude_skills_dir.exists():
@@ -304,6 +304,20 @@ class DaggerAppGenerator:
                 resolved_path = skill_path.resolve()
                 if resolved_path.is_dir():
                     container_path = f"/home/klaudbiusz/.claude/skills/{skill_path.name}"
+                    container = container.with_directory(
+                        container_path,
+                        client.host().directory(str(resolved_path)),
+                        owner="klaudbiusz:klaudbiusz",
+                    )
+
+        # mount opencode skills directory for opencode backend
+        # opencode discovers skills from ~/.config/opencode/skills/
+        opencode_skills_dir = Path.home() / ".config" / "opencode" / "skills"
+        if opencode_skills_dir.exists():
+            for skill_path in opencode_skills_dir.iterdir():
+                resolved_path = skill_path.resolve()
+                if resolved_path.is_dir():
+                    container_path = f"/home/klaudbiusz/.config/opencode/skills/{skill_path.name}"
                     container = container.with_directory(
                         container_path,
                         client.host().directory(str(resolved_path)),

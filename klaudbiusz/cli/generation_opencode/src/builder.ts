@@ -3,7 +3,7 @@ import * as path from "path";
 import { createOpencode, type OpencodeClient, type Event } from "@opencode-ai/sdk";
 import type { BuilderOptions, GenerationMetrics, OpencodeConfig } from "./types.js";
 
-const BASE_INSTRUCTIONS = `Use MCP tools to scaffold, build, and test the app as needed.
+const BASE_INSTRUCTIONS = `Scaffold, build, and test the app.
 Use data from Databricks when relevant.
 Be concise and to the point in your responses.
 Use up to 10 tools per call to speed up the process.
@@ -20,48 +20,15 @@ export class OpencodeAppBuilder {
   }
 
   private writeOpencodeConfig(configDir: string): void {
-    const model = this.options.model ?? "anthropic/claude-sonnet-4-20250514";
-    const providerName = model.split("/")[0]; // e.g., "openai" from "openai/gpt-4o"
+    const model = this.options.model ?? "anthropic/claude-sonnet-4-5-20250929";
 
     const config: OpencodeConfig = {
       $schema: "https://opencode.ai/config.json",
       model,
-      mcp: {
-        edda: {
-          type: "local",
-          command: [this.options.mcpBinary, ...this.options.mcpArgs],
-          enabled: true,
-        },
-      },
     };
-
-    // add provider config with API key reference for non-anthropic providers
-    if (providerName && providerName !== "anthropic") {
-      const envVarName = this.getApiKeyEnvVar(providerName);
-      config.provider = {
-        [providerName]: {
-          options: {
-            apiKey: `{env:${envVarName}}`,
-          },
-        },
-      };
-    }
 
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(path.join(configDir, "opencode.json"), JSON.stringify(config, null, 2));
-  }
-
-  private getApiKeyEnvVar(provider: string): string {
-    const envVarMap: Record<string, string> = {
-      openai: "OPENAI_API_KEY",
-      anthropic: "ANTHROPIC_API_KEY",
-      google: "GOOGLE_API_KEY",
-      gemini: "GEMINI_API_KEY",
-      groq: "GROQ_API_KEY",
-      mistral: "MISTRAL_API_KEY",
-      cohere: "COHERE_API_KEY",
-    };
-    return envVarMap[provider.toLowerCase()] ?? `${provider.toUpperCase()}_API_KEY`;
   }
 
   async run(prompt: string): Promise<GenerationMetrics> {
@@ -91,7 +58,7 @@ export class OpencodeAppBuilder {
       const { client, server } = await createOpencode({
         port: this.options.port ?? 0, // 0 = auto-assign
         config: {
-          model: this.options.model ?? "anthropic/claude-sonnet-4-20250514",
+          model: this.options.model ?? "anthropic/claude-sonnet-4-5-20250929",
         },
       });
 
@@ -136,7 +103,7 @@ export class OpencodeAppBuilder {
         }
 
         // get full tool list with provider to see MCP tools
-        const model = this.options.model ?? "anthropic/claude-sonnet-4-20250514";
+        const model = this.options.model ?? "anthropic/claude-sonnet-4-5-20250929";
         const providerName = model.split("/")[0];
         const modelName = model.split("/").slice(1).join("/");
         const toolList = await client.tool.list({ query: { provider: providerName, model: modelName } });
@@ -185,7 +152,7 @@ Task: ${prompt}`;
       // wait for prompt to finish
       await promptPromise;
 
-      // get final messages to count turns
+      // get final messages to count turns and save trajectory
       const messagesResult = await client.session.messages({
         path: { id: sessionId },
       });
@@ -194,6 +161,11 @@ Task: ${prompt}`;
         console.warn(`Failed to get messages: ${JSON.stringify(messagesResult.error)}`);
       } else {
         metrics.turns = messagesResult.data.length;
+
+        // save trajectory to app directory
+        const trajectoryFile = path.join(this.scaffoldedDir ?? appDir, "trajectory.json");
+        fs.writeFileSync(trajectoryFile, JSON.stringify(messagesResult.data, null, 2));
+        console.log(`Trajectory saved to ${trajectoryFile}`);
       }
 
       metrics.generation_time_sec = (Date.now() - startTime) / 1000;

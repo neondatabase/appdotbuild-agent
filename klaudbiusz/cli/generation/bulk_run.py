@@ -33,7 +33,7 @@ def main(
 
     Args:
         prompts: Prompt set to use ("databricks", "databricks_v2", or "test")
-        backend: Backend to use ("claude" or "litellm")
+        backend: Backend to use ("claude", "opencode", or "litellm")
         model: LLM model (required if backend=litellm)
         mcp_binary: Path to edda_mcp binary (required for litellm backend)
         mcp_args: Optional list of args passed to the MCP server (litellm only)
@@ -43,6 +43,9 @@ def main(
     Usage:
         # Claude backend with databricks prompts (uses skills, no MCP needed)
         python bulk_run.py
+
+        # OpenCode backend (uses skills, no MCP needed)
+        python bulk_run.py --backend=opencode
 
         # With custom concurrency
         python bulk_run.py --max_concurrency=8

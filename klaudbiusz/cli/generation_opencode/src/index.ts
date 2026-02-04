@@ -10,14 +10,11 @@ program
   .description("Generate Databricks apps using OpenCode SDK")
   .requiredOption("--app-name <name>", "Name of the app to generate")
   .requiredOption("--prompt <text>", "Generation prompt")
-  .requiredOption("--mcp-binary <path>", "Path to MCP binary")
-  .option("--mcp-args <json>", "MCP server args as JSON array", "[]")
   .option("--output-dir <path>", "Output directory", "./app")
-  .option("--model <name>", "Model to use", "anthropic/claude-sonnet-4-20250514")
+  .option("--model <name>", "Model to use", "anthropic/claude-sonnet-4-5-20250929")
   .option("--port <number>", "OpenCode server port (0 = auto)")
   .option("--verbose", "Show detailed output", false)
   .action(async (opts) => {
-    const mcpArgs: string[] = JSON.parse(opts.mcpArgs);
     const port = opts.port ? parseInt(opts.port, 10) : undefined;
 
     console.log("\n" + "=".repeat(60));
@@ -26,7 +23,6 @@ program
     console.log(`App: ${opts.appName}`);
     console.log(`Model: ${opts.model}`);
     console.log(`Output: ${path.resolve(opts.outputDir)}`);
-    console.log(`MCP binary: ${opts.mcpBinary}`);
     if (opts.verbose) {
       console.log("Verbose: ON");
     }
@@ -35,8 +31,6 @@ program
     const builder = new OpencodeAppBuilder({
       appName: opts.appName,
       outputDir: path.resolve(opts.outputDir),
-      mcpBinary: opts.mcpBinary,
-      mcpArgs,
       model: opts.model,
       port,
       verbose: opts.verbose,

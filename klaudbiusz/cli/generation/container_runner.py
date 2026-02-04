@@ -79,8 +79,6 @@ def run(
                 prompt=prompt,
                 app_name=app_name,
                 model=model,
-                mcp_binary=mcp_binary,
-                mcp_args=parsed_mcp_args,
                 output_dir=output_dir,
             )
         case _:
@@ -107,8 +105,6 @@ def _run_opencode(
     prompt: str,
     app_name: str,
     model: str | None,
-    mcp_binary: str,
-    mcp_args: list[str] | None,
     output_dir: str,
 ) -> dict:
     """Run opencode generation via bun subprocess."""
@@ -121,17 +117,12 @@ def _run_opencode(
         app_name,
         "--prompt",
         prompt,
-        "--mcp-binary",
-        mcp_binary,
         "--output-dir",
         output_dir,
     ]
 
     if model:
         cmd.extend(["--model", model])
-
-    if mcp_args:
-        cmd.extend(["--mcp-args", json.dumps(mcp_args)])
 
     # run opencode generation
     result = subprocess.run(cmd, cwd="/workspace", capture_output=False)

@@ -7,13 +7,6 @@ export interface GenerationMetrics {
   app_dir?: string | null;
 }
 
-export interface McpServerConfig {
-  type: "local";
-  command: string[];
-  env?: Record<string, string>;
-  enabled: boolean;
-}
-
 export interface ProviderOptions {
   apiKey?: string;
   baseURL?: string;
@@ -24,14 +17,11 @@ export interface OpencodeConfig {
   $schema?: string;
   model?: string;
   provider?: Record<string, { options: ProviderOptions }>;
-  mcp?: Record<string, McpServerConfig>;
 }
 
 export interface BuilderOptions {
   appName: string;
   outputDir: string;
-  mcpBinary: string;
-  mcpArgs: string[];
   model?: string;
   provider?: string;
   port?: number;
