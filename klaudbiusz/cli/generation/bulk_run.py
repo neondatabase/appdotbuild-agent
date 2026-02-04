@@ -24,8 +24,6 @@ def main(
     prompts: str = "databricks",
     backend: str = "claude",
     model: str | None = None,
-    mcp_binary: str | None = None,
-    mcp_args: list[str] | None = None,
     output_dir: str | None = None,
     max_concurrency: int = 6,
 ) -> None:
@@ -33,32 +31,24 @@ def main(
 
     Args:
         prompts: Prompt set to use ("databricks", "databricks_v2", or "test")
-        backend: Backend to use ("claude", "opencode", or "litellm")
-        model: LLM model (required if backend=litellm)
-        mcp_binary: Path to edda_mcp binary (required for litellm backend)
-        mcp_args: Optional list of args passed to the MCP server (litellm only)
+        backend: Backend to use ("claude" or "opencode")
+        model: LLM model (optional, for opencode non-default model)
         output_dir: Custom output directory for generated apps
         max_concurrency: Maximum parallel generations (default: 6)
 
     Usage:
-        # Claude backend with databricks prompts (uses skills, no MCP needed)
+        # Claude backend with databricks prompts
         python bulk_run.py
 
-        # OpenCode backend (uses skills, no MCP needed)
+        # OpenCode backend
         python bulk_run.py --backend=opencode
 
         # With custom concurrency
         python bulk_run.py --max_concurrency=8
 
-        # LiteLLM backend (requires MCP)
-        python bulk_run.py --backend=litellm --model=gemini/gemini-2.5-pro --mcp_binary=/path/to/edda_mcp
+        # OpenCode with custom model
+        python bulk_run.py --backend=opencode --model=anthropic/claude-opus-4-5-20251101
     """
-    if backend == "litellm":
-        if not model:
-            raise ValueError("--model is required when using --backend=litellm")
-        if not mcp_binary:
-            raise ValueError("--mcp_binary is required for litellm backend")
-
     # load prompt set
     match prompts:
         case "databricks":
@@ -72,9 +62,8 @@ def main(
 
     print(f"Starting bulk generation for {len(selected_prompts)} prompts...")
     print(f"Backend: {backend}")
-    if backend == "litellm":
+    if model:
         print(f"Model: {model}")
-        print(f"MCP binary: {mcp_binary}")
     print(f"Prompt set: {prompts}")
     print(f"Max concurrency: {max_concurrency}")
     out_path = Path(output_dir) if output_dir else Path("./app")
@@ -82,7 +71,6 @@ def main(
 
     generator = DaggerAppGenerator(
         output_dir=out_path,
-        mcp_binary=Path(mcp_binary) if mcp_binary else None,
         stream_logs=False,  # disable TUI for bulk runs
     )
 
@@ -109,7 +97,6 @@ def main(
                 selected_prompts,
                 backend,
                 model,
-                mcp_args,
                 max_concurrency,
                 on_complete=on_complete,
             )

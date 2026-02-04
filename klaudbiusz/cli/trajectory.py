@@ -1,7 +1,7 @@
 """Trajectory collection for agent runs.
 
 Captures full conversation history (messages, tool calls, results) for analysis.
-Works with both Claude SDK and LiteLLM backends.
+Works with both Claude SDK and OpenCode backends.
 
 Storage options:
 - JSONL file per app (default): saves to app_dir/trajectory.jsonl
@@ -52,7 +52,7 @@ class Trajectory:
     run_id: str
     app_name: str
     prompt: str
-    backend: str  # "claude" or "litellm"
+    backend: str  # "claude" or "opencode"
     model: str
     messages: list[Message]
     cost_usd: float

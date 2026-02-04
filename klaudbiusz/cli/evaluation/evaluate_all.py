@@ -648,7 +648,7 @@ Examples:
     parser.add_argument(
         '--backend',
         metavar='NAME',
-        help='Backend used (claude/litellm, overrides value from bulk_run results)'
+        help='Backend used (claude/opencode, overrides value from bulk_run results)'
     )
 
     parser.add_argument(

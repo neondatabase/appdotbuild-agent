@@ -1,6 +1,6 @@
 # Klaudbiusz
 
-AI-powered Databricks application generator with objective evaluation framework. A thin wrapper around the Claude Agent SDK leveraging the `edda` MCP.
+AI-powered Databricks application generator with objective evaluation framework. Uses Claude Agent SDK and OpenCode backends with skills-based tool discovery.
 
 ## Overview
 
@@ -26,8 +26,8 @@ Generation runs inside Dagger containers for isolation and reproducibility.
 
 **Prerequisites:**
 - Docker running
-- Linux build of edda_mcp binary (for Dagger containers)
 - Databricks CLI OAuth configured (`~/.databrickscfg` + `~/.databricks/token-cache.json`)
+- Skills installed in `~/.claude/skills/` (for Claude backend) or `~/.config/opencode/skills/` (for OpenCode backend)
 
 ```bash
 cd klaudbiusz
@@ -36,27 +36,20 @@ cd klaudbiusz
 cli/archive_evaluation.sh
 cli/cleanup_evaluation.sh
 
-# Generate a single app via Dagger (requires Linux binary)
-uv run cli/generation/single_run.py "Create a customer churn analysis dashboard" \
-  --mcp_binary=/path/to/linux/edda_mcp \
-  --mcp_args='["experimental", "apps-mcp"]'
+# Generate a single app via Dagger (Claude backend - default)
+uv run cli/generation/single_run.py "Create a customer churn analysis dashboard"
+
+# Generate with OpenCode backend
+uv run cli/generation/single_run.py "Create a customer churn analysis dashboard" --backend=opencode
 
 # Batch generate from prompts
-uv run cli/generation/bulk_run.py \
-  --mcp_binary=/path/to/linux/edda_mcp \
-  --mcp_args='["experimental", "apps-mcp"]'
+uv run cli/generation/bulk_run.py
 
-# Use LiteLLM backend with specific model
-uv run cli/generation/single_run.py "Create a customer churn analysis dashboard" \
-  --backend=litellm --model=gemini/gemini-2.5-pro \
-  --mcp_binary=/path/to/linux/edda_mcp
-```
+# Batch with OpenCode backend
+uv run cli/generation/bulk_run.py --backend=opencode
 
-**Building Linux binary (for macOS users):**
-```bash
-cd /path/to/cli
-GOOS=linux GOARCH=arm64 go build -o cli-linux .
-# Then use --mcp_binary=/path/to/cli-linux
+# OpenCode with custom model
+uv run cli/generation/bulk_run.py --backend=opencode --model=anthropic/claude-opus-4-5-20251101
 ```
 
 ### Local Debugging (without Dagger)
@@ -64,12 +57,8 @@ GOOS=linux GOARCH=arm64 go build -o cli-linux .
 For faster iteration during development, run directly on host:
 
 ```bash
-# Local run with macOS binary
-uv run python cli/generation/container_runner.py "Create a dashboard" \
-  --app_name=debug-test \
-  --mcp_binary=/usr/local/bin/edda_mcp \
-  --mcp_args='["experimental", "apps-mcp"]' \
-  --output_dir=./app
+# Local run (Claude backend only)
+uv run python -m cli.generation.local_run "Create a dashboard"
 ```
 
 ### Evaluate Generated Apps
@@ -167,12 +156,13 @@ klaudbiusz/
 │   ├── generation/                 # App generation
 │   │   ├── prompts/               # Prompt collections
 │   │   ├── codegen.py             # Claude Agent SDK backend
-│   │   ├── codegen_multi.py       # LiteLLM backend
 │   │   ├── dagger_run.py          # Dagger container orchestration
 │   │   ├── container_runner.py    # Runner script (inside container or local)
 │   │   ├── single_run.py          # Single app generation (via Dagger)
 │   │   ├── bulk_run.py            # Batch app generation (via Dagger)
 │   │   └── screenshot.py          # Batch screenshotting
+│   ├── generation_opencode/        # OpenCode backend (TypeScript)
+│   │   └── src/                   # TypeScript source
 │   ├── evaluation/                 # App evaluation
 │   │   ├── evaluate_all.py        # Batch evaluation
 │   │   ├── evaluate_app.py        # Single app evaluation (legacy)

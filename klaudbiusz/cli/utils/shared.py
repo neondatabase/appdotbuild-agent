@@ -6,7 +6,6 @@ Contains:
 - Environment detection utilities
 """
 
-import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -228,7 +227,7 @@ class Tracker:
             cost_usd: Total cost in USD
             total_tokens: Total tokens used
             turns: Number of turns
-            backend: Backend name ("claude" or "litellm")
+            backend: Backend name ("claude" or "opencode")
             model: Model identifier
             app_dir: App directory path (if available)
         """
@@ -321,31 +320,11 @@ class ScaffoldTracker:
         return str(app_dir)
 
 
-def validate_mcp_manifest(mcp_binary: str | None, project_root: Path) -> Path | None:
-    """Validate MCP manifest exists if using cargo run.
-
-    Returns:
-        Path to Cargo.toml if using cargo, None if using binary
-
-    Raises:
-        RuntimeError: If manifest not found when needed
-    """
-    if mcp_binary is not None:
-        return None
-
-    manifest = project_root / "edda" / "edda_mcp" / "Cargo.toml"
-    if not manifest.exists():
-        raise RuntimeError(f"edda-mcp Cargo.toml not found at {manifest}")
-
-    return manifest
-
-
-def setup_logging(suppress_logs: bool, mcp_binary: str | None = None) -> None:
+def setup_logging(suppress_logs: bool) -> None:
     """Setup logging configuration.
 
     Args:
         suppress_logs: If True, only show errors
-        mcp_binary: Optional MCP binary path for logging (deprecated, only used by litellm)
     """
     if suppress_logs:
         logging.getLogger().setLevel(logging.ERROR)
@@ -356,50 +335,6 @@ def setup_logging(suppress_logs: bool, mcp_binary: str | None = None) -> None:
             coloredlogs.install(level="INFO")
         except ImportError:
             logging.basicConfig(level=logging.INFO)
-
-        if mcp_binary:
-            logger.info(f"Using MCP binary: {mcp_binary}")
-
-
-def build_mcp_command(
-    mcp_binary: str | None,
-    mcp_manifest: Path | None,
-    mcp_json_path: str | None = None,
-    mcp_args: list[str] | None = None,
-) -> tuple[str, list[str]]:
-    """Build MCP server command and arguments.
-
-    Args:
-        mcp_binary: Optional path to edda_mcp binary
-        mcp_manifest: Path to Cargo.toml (if using cargo run)
-        mcp_json_path: Optional path to JSON config file
-        mcp_args: Optional list of extra arguments to pass to the MCP server.
-                  When provided, replaces the default args (--with-deployment=false or --json).
-
-    Returns:
-        Tuple of (command, args)
-    """
-    if mcp_binary is not None:
-        base_args: list[str] = []
-        command = mcp_binary
-    else:
-        if mcp_manifest is None:
-            raise ValueError("mcp_manifest required when mcp_binary is None")
-        base_args = ["run", "--manifest-path", str(mcp_manifest), "--"]
-        command = "cargo"
-
-    # custom args override default behavior
-    if mcp_args is not None:
-        args = base_args + mcp_args
-    elif mcp_json_path:
-        # JSON config file provided, read and pass via --json flag
-        with open(mcp_json_path) as f:
-            config_json = json.dumps(json.load(f))
-        args = base_args + ["--json", config_json]
-    else:
-        args = base_args + ["--with-deployment=false"]
-
-    return (command, args)
 
 
 def load_subagent_definitions(project_root: Path) -> dict[str, str]:
