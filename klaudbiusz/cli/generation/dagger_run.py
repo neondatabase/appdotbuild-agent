@@ -229,6 +229,10 @@ class DaggerAppGenerator:
             if val := os.environ.get(var):
                 container = container.with_env_variable(var, val)
 
+        # map GEMINI_API_KEY to GOOGLE_GENERATIVE_AI_API_KEY (AI SDK uses this name)
+        if gemini_key := os.environ.get("GEMINI_API_KEY"):
+            container = container.with_env_variable("GOOGLE_GENERATIVE_AI_API_KEY", gemini_key)
+
         # mount databricks config for CLI authentication (OAuth profile)
         # container runs as 'klaudbiusz' user (see Dockerfile)
         databrickscfg = Path.home() / ".databrickscfg"
