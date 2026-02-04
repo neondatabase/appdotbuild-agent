@@ -67,8 +67,10 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
     cd cli/generation_opencode && bun install
 
 # create non-root user (claude agent sdk requires non-root for security)
+# pre-create .local directories for opencode (share for auth, state for runtime)
 RUN useradd -m -s /bin/bash klaudbiusz && \
-    chown -R klaudbiusz:klaudbiusz /workspace
+    mkdir -p /home/klaudbiusz/.local/share/opencode /home/klaudbiusz/.local/state && \
+    chown -R klaudbiusz:klaudbiusz /workspace /home/klaudbiusz/.local
 
 USER klaudbiusz
 
