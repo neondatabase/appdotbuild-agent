@@ -204,9 +204,10 @@ Task: ${prompt}`;
       } else {
         metrics.turns = messagesResult.data.length;
 
-        // save trajectory to app directory
-        const trajectoryFile = path.join(this.scaffoldedDir ?? appDir, "trajectory.json");
-        fs.writeFileSync(trajectoryFile, JSON.stringify(messagesResult.data, null, 2));
+        // save trajectory to app directory (jsonl format for consistency with Claude SDK)
+        const trajectoryFile = path.join(this.scaffoldedDir ?? appDir, "trajectory.jsonl");
+        const jsonlContent = messagesResult.data.map((msg: unknown) => JSON.stringify(msg)).join("\n");
+        fs.writeFileSync(trajectoryFile, jsonlContent);
         console.log(`Trajectory saved to ${trajectoryFile}`);
       }
 
