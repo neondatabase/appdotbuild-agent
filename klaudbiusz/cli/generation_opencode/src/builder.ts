@@ -9,11 +9,15 @@ Be concise and to the point in your responses.
 Use up to 10 tools per call to speed up the process.
 Never deploy the app, just scaffold and build it.`;
 
+// 15 minutes timeout for event stream (generous for long-running generations)
+const EVENT_STREAM_TIMEOUT_MS = 15 * 60 * 1000;
+
 export class OpencodeAppBuilder {
   private options: BuilderOptions;
   private client: OpencodeClient | null = null;
   private closeServer: (() => void) | null = null;
   private scaffoldedDir: string | null = null;
+  private lastEventTime: number = Date.now();
 
   constructor(options: BuilderOptions) {
     this.options = options;
@@ -139,14 +143,30 @@ Task: ${prompt}`;
         },
       });
 
-      // process events
-      for await (const event of eventStream) {
-        this.handleEvent(event as Event);
-
-        // check if prompt completed - we rely on session.idle
-        if (event.type === "session.idle") {
-          break;
+      // process events with timeout protection
+      this.lastEventTime = Date.now();
+      const timeoutChecker = setInterval(() => {
+        const elapsed = Date.now() - this.lastEventTime;
+        if (elapsed > EVENT_STREAM_TIMEOUT_MS) {
+          console.log(`\n⚠️ Event stream timeout after ${Math.round(elapsed / 1000)}s of inactivity`);
+          clearInterval(timeoutChecker);
+          // force close to break out of event loop
+          this.close();
         }
+      }, 30000); // check every 30s
+
+      try {
+        for await (const event of eventStream) {
+          this.lastEventTime = Date.now();
+          this.handleEvent(event as Event);
+
+          // check if prompt completed - we rely on session.idle
+          if (event.type === "session.idle") {
+            break;
+          }
+        }
+      } finally {
+        clearInterval(timeoutChecker);
       }
 
       // wait for prompt to finish
@@ -253,9 +273,19 @@ Task: ${prompt}`;
 
   close(): void {
     if (this.closeServer) {
-      this.closeServer();
+      try {
+        this.closeServer();
+      } catch (e) {
+        console.warn(`Warning: error closing server: ${e}`);
+      }
       this.closeServer = null;
     }
     this.client = null;
+
+    // force exit after brief delay if process hangs
+    setTimeout(() => {
+      console.log("Forcing process exit after cleanup timeout");
+      process.exit(0);
+    }, 5000).unref(); // unref allows clean exit if everything closes properly
   }
 }
