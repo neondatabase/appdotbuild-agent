@@ -18,12 +18,20 @@ Never deploy the app, just scaffold and build it.`;
 // 15 minutes timeout for event stream (generous for long-running generations)
 const EVENT_STREAM_TIMEOUT_MS = 15 * 60 * 1000;
 
+// per-message usage tracking (to handle multiple updates per message)
+interface MessageUsage {
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export class OpencodeAppBuilder {
   private options: BuilderOptions;
   private client: OpencodeClient | null = null;
   private closeServer: (() => void) | null = null;
   private scaffoldedDir: string | null = null;
   private lastEventTime: number = Date.now();
+  private messageUsage: Map<string, MessageUsage> = new Map();
 
   constructor(options: BuilderOptions) {
     this.options = options;
@@ -57,6 +65,9 @@ export class OpencodeAppBuilder {
       output_tokens: 0,
       turns: 0,
     };
+
+    // reset message usage tracking
+    this.messageUsage.clear();
 
     // save original cwd and change to app directory so opencode picks up config
     const originalCwd = process.cwd();
@@ -175,7 +186,7 @@ Task: ${prompt}`;
         for await (const event of eventStream) {
           this.lastEventTime = Date.now();
           eventCount++;
-          this.handleEvent(event as Event);
+          this.handleEvent(event as Event, metrics);
 
           // check if prompt completed - we rely on session.idle
           if (event.type === "session.idle") {
@@ -185,6 +196,13 @@ Task: ${prompt}`;
       } finally {
         clearInterval(timeoutChecker);
         logTiming(`event loop (${eventCount} events)`, eventLoopStart);
+      }
+
+      // sum up usage from all messages
+      for (const usage of this.messageUsage.values()) {
+        metrics.cost_usd += usage.cost;
+        metrics.input_tokens += usage.inputTokens;
+        metrics.output_tokens += usage.outputTokens;
       }
 
       // wait for prompt to finish
@@ -237,11 +255,25 @@ Task: ${prompt}`;
     }
   }
 
-  private handleEvent(event: Event): void {
+  private handleEvent(event: Event, metrics: GenerationMetrics): void {
     switch (event.type) {
       case "session.error": {
         const err = event.properties;
         console.log(`❌ Session error: ${JSON.stringify(err)}`);
+        break;
+      }
+      case "message.updated": {
+        // track cost and tokens from assistant messages
+        // note: message.updated fires multiple times per message with cumulative values,
+        // so we store latest per message and sum at the end
+        const msg = event.properties.info;
+        if (msg.role === "assistant") {
+          this.messageUsage.set(msg.id, {
+            cost: msg.cost,
+            inputTokens: msg.tokens.input,
+            outputTokens: msg.tokens.output,
+          });
+        }
         break;
       }
       case "message.part.updated": {
