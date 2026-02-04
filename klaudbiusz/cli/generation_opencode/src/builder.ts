@@ -38,11 +38,9 @@ export class OpencodeAppBuilder {
   }
 
   private writeOpencodeConfig(configDir: string): void {
-    const model = this.options.model ?? "anthropic/claude-sonnet-4-5-20250929";
-
+    // minimal config - model is set via config.update() after server starts
     const config: OpencodeConfig = {
       $schema: "https://opencode.ai/config.json",
-      model,
     };
 
     fs.mkdirSync(configDir, { recursive: true });
@@ -75,21 +73,26 @@ export class OpencodeAppBuilder {
     try {
       process.chdir(appDir);
 
-      // start opencode server + client
+      // start opencode server + client (without model config - set via config.update after)
       let phaseStart = Date.now();
       const { client, server } = await createOpencode({
         port: this.options.port ?? 0, // 0 = auto-assign
-        config: {
-          model: this.options.model ?? "anthropic/claude-sonnet-4-5-20250929",
-        },
       });
       logTiming("createOpencode", phaseStart);
 
       this.client = client;
       this.closeServer = () => server.close();
 
+      // set model via config.update (passing in createOpencode config doesn't work for some providers)
+      const model = this.options.model ?? "anthropic/claude-sonnet-4-5-20250929";
+      const configResult = await client.config.update({ body: { model } });
+      if (configResult.error) {
+        console.log(`⚠️ Failed to set model ${model}: ${JSON.stringify(configResult.error)}`);
+      }
+
       if (this.options.verbose) {
         console.log(`OpenCode server running at ${server.url}`);
+        console.log(`Model: ${model}`);
       }
 
       // create session
@@ -109,16 +112,17 @@ export class OpencodeAppBuilder {
         console.log(`Created session: ${sessionId}`);
       }
 
-      // check provider auth status
+      // verify provider is connected
       const providerList = await client.provider.list();
-      if (providerList.error) {
-        console.log(`⚠️ Provider list error: ${JSON.stringify(providerList.error)}`);
-      } else {
-        const model = this.options.model ?? "anthropic/claude-sonnet-4-5-20250929";
+      if (!providerList.error) {
         const providerName = model.split("/")[0];
         const connected = providerList.data?.connected ?? [];
         const isConnected = connected.includes(providerName);
-        console.log(`🔑 Provider ${providerName} connected: ${isConnected} (all: ${connected.join(", ")})`);
+        if (!isConnected) {
+          console.log(`⚠️ Provider ${providerName} not connected. Available: ${connected.join(", ")}`);
+        } else if (this.options.verbose) {
+          console.log(`🔑 Provider ${providerName} connected`);
+        }
       }
 
       // debug: check MCP status and available tools
@@ -275,8 +279,10 @@ Task: ${prompt}`;
         break;
       }
       case "session.status": {
-        // always log session status to debug auth issues
-        console.log(`📊 Session status: ${JSON.stringify(event.properties)}`);
+        // log session status in verbose mode
+        if (this.options.verbose) {
+          console.log(`📊 Session status: ${JSON.stringify(event.properties)}`);
+        }
         break;
       }
       case "message.updated": {
@@ -341,8 +347,10 @@ Task: ${prompt}`;
         break;
       }
       default: {
-        // log all events for debugging auth issues
-        console.log(`📨 Event: ${event.type} ${JSON.stringify(event.properties).slice(0, 200)}`);
+        // log unknown events in verbose mode
+        if (this.options.verbose) {
+          console.log(`📨 Event: ${event.type} ${JSON.stringify(event.properties).slice(0, 200)}`);
+        }
       }
     }
   }
