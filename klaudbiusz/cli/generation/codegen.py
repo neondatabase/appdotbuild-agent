@@ -5,7 +5,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NotRequired, TypedDict
+from typing import NotRequired, TypedDict
 from uuid import UUID, uuid4
 
 from claude_agent_sdk import (
@@ -18,7 +18,6 @@ from claude_agent_sdk import (
     UserMessage,
     query,
 )
-from claude_agent_sdk.types import PermissionResultAllow, ToolPermissionContext
 from dotenv import load_dotenv
 
 from cli.utils.shared import ScaffoldTracker, Tracker, setup_logging
@@ -26,16 +25,7 @@ from cli.utils.shared import ScaffoldTracker, Tracker, setup_logging
 
 def _is_running_as_root() -> bool:
     """Check if running as root user."""
-    return os.geteuid() == 0 if hasattr(os, 'geteuid') else False
-
-
-async def _auto_approve_tool(
-    tool_name: str,
-    tool_input: dict[str, Any],
-    context: ToolPermissionContext,
-) -> PermissionResultAllow:
-    """Auto-approve all tool uses (used when running as root with streaming mode)."""
-    return PermissionResultAllow()
+    return os.geteuid() == 0 if hasattr(os, "geteuid") else False
 
 try:
     import asyncpg  # type: ignore[import-untyped]
@@ -101,10 +91,15 @@ Never deploy the app, just scaffold and build it.
 
         disallowed_tools = ["NotebookEdit", "WebSearch", "WebFetch"]
 
-        # When running as root (e.g., Databricks clusters), use streaming mode with
-        # can_use_tool callback instead of bypassPermissions, because the CLI's
-        # --dangerously-skip-permissions flag doesn't work with root privileges.
-        use_streaming_mode = _is_running_as_root()
+        # When running as root (e.g., Databricks clusters), the CLI's
+        # --dangerously-skip-permissions flag doesn't work by default.
+        # Solution: Set IS_SANDBOX=1 env var to allow bypassing the root check.
+        # See: https://github.com/anthropics/claude-code/issues/3490
+        is_root = _is_running_as_root()
+        env_vars: dict[str, str] = {}
+        if is_root:
+            logger.info("Running as root, setting IS_SANDBOX=1 to allow permission bypass")
+            env_vars["IS_SANDBOX"] = "1"
 
         options = ClaudeAgentOptions(
             system_prompt={
@@ -112,10 +107,8 @@ Never deploy the app, just scaffold and build it.
                 "preset": "claude_code",
                 "append": base_instructions,
             },
-            # Use bypassPermissions only when not running as root
-            permission_mode=None if use_streaming_mode else "bypassPermissions",
-            # Use can_use_tool callback to auto-approve when running as root
-            can_use_tool=_auto_approve_tool if use_streaming_mode else None,
+            permission_mode="bypassPermissions",
+            env=env_vars,
             disallowed_tools=disallowed_tools,
             setting_sources=["user", "project"],
             max_turns=75,
@@ -139,15 +132,8 @@ Never deploy the app, just scaffold and build it.
         app_dir = self.output_dir / self.app_name
         user_prompt = f"App name: {self.app_name}\nApp directory: {app_dir}\n\nTask: {prompt}"
 
-        # Create streaming prompt generator for streaming mode (required for can_use_tool)
-        async def streaming_prompt():
-            yield {"type": "user", "message": {"role": "user", "content": user_prompt}}
-
-        # Use streaming mode when running as root (for can_use_tool callback)
-        prompt_input = streaming_prompt() if use_streaming_mode else user_prompt
-
         try:
-            async for message in query(prompt=prompt_input, options=options):
+            async for message in query(prompt=user_prompt, options=options):
                 await self._log_message(message)
                 match message:
                     case ResultMessage(total_cost_usd=None):
