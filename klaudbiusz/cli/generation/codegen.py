@@ -18,6 +18,7 @@ from claude_agent_sdk import (
     UserMessage,
     query,
 )
+from claude_agent_sdk.types import McpServerConfig, McpStdioServerConfig
 from dotenv import load_dotenv
 
 from cli.utils.shared import ScaffoldTracker, Tracker, setup_logging
@@ -68,6 +69,7 @@ class ClaudeAppBuilder:
         output_dir: str | None = None,
         mcp_binary: str | None = None,
         mcp_args: list[str] | None = None,
+        model: str | None = None,
     ):
         load_dotenv()
         self.wipe_db = wipe_db
@@ -77,6 +79,7 @@ class ClaudeAppBuilder:
         self.output_dir = Path(output_dir) if output_dir else Path.cwd() / "app"
         self.mcp_binary = mcp_binary
         self.mcp_args = mcp_args or ["experimental", "apps-mcp", "mcp"]
+        self.model = model
         self.tracker = Tracker(self.run_id, app_name, suppress_logs)
         self.scaffold_tracker = ScaffoldTracker()
 
@@ -86,23 +89,17 @@ class ClaudeAppBuilder:
         setup_logging(self.suppress_logs)
         await self.tracker.init(wipe_db=self.wipe_db)
 
-        # Use MCP tools directly if mcp_binary is provided, otherwise fall back to skills
-        if self.mcp_binary:
-            base_instructions = """Use the mcp__edda__scaffold_data_app tool to scaffold the app.
-Use the mcp__edda__databricks_* tools to explore data in Databricks when relevant.
-Be concise and to the point in your responses.
-Use up to 10 tools per call to speed up the process.
-Never deploy the app, just scaffold and build it.
-"""
-        else:
-            base_instructions = """Use /databricks-apps skill to scaffold, build, and test the app.
-Use /databricks skill to explore data in Databricks when relevant.
+        # Base instructions for non-interactive generation
+        base_instructions = """You are running in non-interactive mode. Never use AskUserQuestion - make reasonable assumptions instead.
+
+Scaffold, build, and test the app.
+Use data from Databricks when relevant.
 Be concise and to the point in your responses.
 Use up to 10 tools per call to speed up the process.
 Never deploy the app, just scaffold and build it.
 """
 
-        disallowed_tools = ["NotebookEdit", "WebSearch", "WebFetch"]
+        disallowed_tools = ["NotebookEdit", "WebSearch", "WebFetch", "AskUserQuestion"]
 
         # When running as root (e.g., Databricks clusters), the CLI's
         # --dangerously-skip-permissions flag doesn't work by default.
@@ -114,15 +111,31 @@ Never deploy the app, just scaffold and build it.
             logger.info("Running as root, setting IS_SANDBOX=1 to allow permission bypass")
             env_vars["IS_SANDBOX"] = "1"
 
+        # configure OpenRouter if model starts with "openrouter/"
+        # see: https://openrouter.ai/docs/guides/guides/claude-code-integration
+        model_for_sdk: str | None = None
+        if self.model and self.model.startswith("openrouter/"):
+            openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
+            if not openrouter_key:
+                raise ValueError("OPENROUTER_API_KEY environment variable required for openrouter/ models")
+            env_vars["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api"
+            env_vars["ANTHROPIC_AUTH_TOKEN"] = openrouter_key
+            env_vars["ANTHROPIC_API_KEY"] = ""
+            # extract model name after "openrouter/" prefix for logging
+            model_for_sdk = self.model[len("openrouter/"):]
+            logger.info(f"Using OpenRouter with model: {model_for_sdk}")
+        elif self.model:
+            model_for_sdk = self.model
+
         # Configure MCP server if binary is provided
-        mcp_servers: dict[str, dict[str, object]] = {}
+        mcp_servers: dict[str, McpServerConfig] = {}
         if self.mcp_binary:
             logger.info(f"Configuring MCP server: {self.mcp_binary} {self.mcp_args}")
-            mcp_servers["edda"] = {
-                "type": "stdio",
-                "command": self.mcp_binary,
-                "args": self.mcp_args,
-            }
+            mcp_servers["edda"] = McpStdioServerConfig(
+                type="stdio",
+                command=self.mcp_binary,
+                args=self.mcp_args or [],
+            )
 
         options = ClaudeAgentOptions(
             system_prompt={
@@ -132,11 +145,12 @@ Never deploy the app, just scaffold and build it.
             },
             permission_mode="bypassPermissions",
             env=env_vars,
-            mcp_servers=mcp_servers if mcp_servers else {},
+            mcp_servers=mcp_servers,
             disallowed_tools=disallowed_tools,
             setting_sources=["user", "project"],
             max_turns=75,
             max_buffer_size=3 * 1024 * 1024,
+            model=model_for_sdk,
         )
 
         if not self.suppress_logs:
@@ -198,7 +212,7 @@ Never deploy the app, just scaffold and build it.
                 total_tokens=metrics["input_tokens"] + metrics["output_tokens"],
                 turns=metrics["turns"],
                 backend="claude",
-                model="claude-sonnet-4-5-20250929",
+                model=self.model or "claude-sonnet-4-5-20250929",
                 app_dir=self.scaffold_tracker.app_dir,
             )
             await self.tracker.close()

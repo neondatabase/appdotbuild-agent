@@ -15,6 +15,7 @@ def run(
     prompt: str,
     app_name: str | None = None,
     output_dir: str | None = None,
+    model: str | None = None,
 ) -> dict[str, str | None]:
     """Run app generation locally (no Dagger).
 
@@ -25,9 +26,11 @@ def run(
         prompt: The prompt describing what to build
         app_name: Optional app name (default: timestamp-based)
         output_dir: Directory to store generated apps (default: ./app)
+        model: LLM model (e.g. "openrouter/moonshotai/kimi-k2.5")
 
     Usage:
         uv run python -m cli.generation.local_run "build dashboard"
+        uv run python -m cli.generation.local_run "build dashboard" --model="openrouter/moonshotai/kimi-k2.5"
     """
     if app_name is None:
         app_name = f"app-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -37,6 +40,7 @@ def run(
     builder = ClaudeAppBuilder(
         app_name=app_name,
         output_dir=str(resolved_output_dir),
+        model=model,
     )
     metrics = builder.run(prompt)
     app_dir = metrics.get("app_dir")

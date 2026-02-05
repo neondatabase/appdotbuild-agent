@@ -36,6 +36,7 @@ def run(
                 wipe_db=False,
                 suppress_logs=False,
                 output_dir=output_dir,
+                model=model,
             )
             try:
                 metrics = builder.run(prompt, wipe_db=False)
