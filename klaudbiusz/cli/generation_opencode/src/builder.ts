@@ -9,7 +9,9 @@ function logTiming(label: string, startMs: number): void {
   console.log(`⏱️  [${label}] ${elapsed}ms`);
 }
 
-const BASE_INSTRUCTIONS = `Scaffold, build, and test the app.
+const BASE_INSTRUCTIONS = `You are running in non-interactive mode. Never use the question tool - make reasonable assumptions instead.
+
+Scaffold, build, and test the app.
 Use data from Databricks when relevant.
 Be concise and to the point in your responses.
 Use up to 10 tools per call to speed up the process.
@@ -32,6 +34,7 @@ export class OpencodeAppBuilder {
   private scaffoldedDir: string | null = null;
   private lastEventTime: number = Date.now();
   private messageUsage: Map<string, MessageUsage> = new Map();
+  private loggedToolCalls: Set<string> = new Set(); // track logged tool calls to avoid duplicates
 
   constructor(options: BuilderOptions) {
     this.options = options;
@@ -64,8 +67,9 @@ export class OpencodeAppBuilder {
       turns: 0,
     };
 
-    // reset message usage tracking
+    // reset tracking state
     this.messageUsage.clear();
+    this.loggedToolCalls.clear();
 
     // save original cwd and change to app directory so opencode picks up config
     const originalCwd = process.cwd();
@@ -143,21 +147,6 @@ export class OpencodeAppBuilder {
           console.log(`  ${JSON.stringify(toolIds.data)}`);
         }
 
-        // get full tool list with provider to see MCP tools
-        const model = this.options.model ?? "anthropic/claude-sonnet-4-5-20250929";
-        const providerName = model.split("/")[0];
-        const modelName = model.split("/").slice(1).join("/");
-        const toolList = await client.tool.list({ query: { provider: providerName, model: modelName } });
-        console.log(`\n🔧 Full tool list (provider=${providerName}, model=${modelName}):`);
-        if (toolList.error) {
-          console.log(`  Error: ${JSON.stringify(toolList.error)}`);
-        } else {
-          // show full tool objects, not just names
-          console.log(`  Count: ${toolList.data.length}`);
-          for (const t of toolList.data) {
-            console.log(`  - ${JSON.stringify(t)}`);
-          }
-        }
         console.log("");
       }
 
@@ -314,20 +303,33 @@ Task: ${prompt}`;
           case "tool": {
             const toolName = part.tool;
             const state = part.state;
+            const partId = part.id;
 
-            // log tool state transitions
+            // log tool state transitions (only once per tool call)
             if ("status" in state && state.status === "running") {
-              const input = "input" in state ? state.input : undefined;
-              const inputStr = input ? JSON.stringify(input).slice(0, 150) : "";
-              console.log(`🔧 Tool: ${toolName}(${inputStr})`);
+              const runKey = `${partId}:running`;
+              if (!this.loggedToolCalls.has(runKey)) {
+                this.loggedToolCalls.add(runKey);
+                const input = "input" in state ? state.input : undefined;
+                const inputStr = input ? JSON.stringify(input).slice(0, 150) : "";
+                console.log(`🔧 Tool: ${toolName}(${inputStr})`);
+              }
             } else if ("status" in state && state.status === "completed") {
-              const output = "output" in state ? String(state.output).slice(0, 200) : "";
-              if (this.options.verbose) {
-                console.log(`✅ Result: ${output}`);
+              const completeKey = `${partId}:completed`;
+              if (!this.loggedToolCalls.has(completeKey)) {
+                this.loggedToolCalls.add(completeKey);
+                const output = "output" in state ? String(state.output).slice(0, 200) : "";
+                if (this.options.verbose) {
+                  console.log(`✅ Result: ${output}`);
+                }
               }
             } else if ("status" in state && state.status === "error") {
-              const error = "error" in state ? state.error : "unknown";
-              console.log(`❌ Tool error: ${error}`);
+              const errorKey = `${partId}:error`;
+              if (!this.loggedToolCalls.has(errorKey)) {
+                this.loggedToolCalls.add(errorKey);
+                const error = "error" in state ? state.error : "unknown";
+                console.log(`❌ Tool error: ${error}`);
+              }
             }
 
             // detect scaffold tool to track app_dir
