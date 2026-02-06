@@ -40,7 +40,7 @@ class Tracker:
 
         # log events (both console + trajectory)
         tracker.log_text("assistant", "Building dashboard...")
-        tracker.log_tool_call("scaffold_data_app", {"app_name": "test"})
+        tracker.log_tool_call("Write", {"file_path": "/workspace/test/app.py"})
         tracker.log_tool_result(tool_id, "Success!")
 
         await tracker.save(prompt, metrics, backend, model, app_dir)
@@ -262,62 +262,6 @@ class Tracker:
         if not self.suppress_logs and traj_file:
             logger.info(f"💾 Trajectory saved to {traj_file}")
 
-
-class ScaffoldTracker:
-    """Track scaffold_data_app tool calls to capture app directory."""
-
-    def __init__(self):
-        self._pending: dict[str, str] = {}
-        self.app_dir: str | None = None
-
-    def track(self, tool_id: str, work_dir: str) -> None:
-        """Track a scaffold tool call."""
-        self._pending[tool_id] = work_dir
-
-    def resolve(self, tool_id: str) -> None:
-        """Resolve app_dir from completed scaffold call."""
-        if tool_id in self._pending:
-            self.app_dir = self._pending.pop(tool_id)
-
-    def detect_from_filesystem(self, search_root: Path | None = None) -> str | None:
-        """Fallback: detect scaffold by finding marker files.
-
-        Tries databricks.yml first (preferred), then falls back to package.json.
-        This works in dagger environments where /workspace is the base.
-
-        Args:
-            search_root: Root directory to search from (e.g., /workspace or output_dir)
-
-        Returns:
-            Path to detected app directory, or None if not found
-        """
-        if search_root is None:
-            search_root = Path("/workspace")
-
-        if not search_root.exists():
-            logger.warning(f"⚠️ Search root does not exist: {search_root}")
-            return None
-
-        logger.info(f"🔍 Searching for scaffolded app directory under {search_root}")
-
-        # Try databricks.yml first (official scaffold marker)
-        marker_files = list(search_root.glob("**/databricks.yml"))
-        if not marker_files:
-            # Fallback to package.json (for manually created apps)
-            marker_files = list(search_root.glob("**/package.json"))
-            # Exclude node_modules
-            marker_files = [f for f in marker_files if "node_modules" not in str(f)]
-
-        if not marker_files:
-            logger.warning("⚠️ Could not detect scaffolded app directory from filesystem")
-            return None
-
-        # Choose the shallowest match (closest to search_root)
-        marker_files.sort(key=lambda f: len(f.parts))
-        file = marker_files[0]
-        app_dir = file.parent
-        logger.info(f"✅ Detected scaffolded app directory: {app_dir}")
-        return str(app_dir)
 
 
 def setup_logging(suppress_logs: bool) -> None:

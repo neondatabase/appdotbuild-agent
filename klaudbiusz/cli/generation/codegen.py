@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -21,7 +22,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import McpServerConfig, McpStdioServerConfig
 from dotenv import load_dotenv
 
-from cli.utils.shared import ScaffoldTracker, Tracker, setup_logging
+from cli.utils.shared import Tracker, setup_logging
 
 
 def _is_running_as_root() -> bool:
@@ -81,7 +82,6 @@ class ClaudeAppBuilder:
         self.mcp_args = mcp_args or ["experimental", "apps-mcp", "mcp"]
         self.model = model
         self.tracker = Tracker(self.run_id, app_name, suppress_logs)
-        self.scaffold_tracker = ScaffoldTracker()
 
     async def run_async(self, prompt: str) -> GenerationMetrics:
         start_time = time.time()
@@ -165,8 +165,6 @@ Never deploy the app, just scaffold and build it.
             "turns": 0,
         }
 
-        # inject app_name into user prompt to avoid caching issues with system prompt
-        # use absolute path for MCP tool (scaffold_data_app requires absolute path)
         app_dir = self.output_dir / self.app_name
         user_prompt = f"App name: {self.app_name}\nApp directory: {app_dir}\n\nTask: {prompt}"
 
@@ -189,7 +187,7 @@ Never deploy the app, just scaffold and build it.
                             "output_tokens": msg.usage.get("output_tokens", 0),
                             "turns": msg.num_turns,
                             "generation_time_sec": generation_time_sec,
-                            "app_dir": self.scaffold_tracker.app_dir,
+                            "app_dir": str(app_dir),
                         }
                     case _:
                         pass
@@ -198,13 +196,6 @@ Never deploy the app, just scaffold and build it.
                 print(f"\n❌ Error: {e}", file=sys.stderr)
             raise
         finally:
-            # fallback: detect app_dir from filesystem if not tracked
-            if not self.scaffold_tracker.app_dir:
-                detected = self.scaffold_tracker.detect_from_filesystem(self.output_dir)
-                if detected:
-                    self.scaffold_tracker.app_dir = detected
-                    logger.info(f"📁 Detected app directory from filesystem: {detected}")
-
             # save trajectory via tracker
             await self.tracker.save(
                 prompt=prompt,
@@ -213,26 +204,24 @@ Never deploy the app, just scaffold and build it.
                 turns=metrics["turns"],
                 backend="claude",
                 model=self.model or "claude-sonnet-4-5-20250929",
-                app_dir=self.scaffold_tracker.app_dir,
+                app_dir=str(app_dir),
             )
             await self.tracker.close()
 
-        # Save generation_metrics.json to app directory for evaluation
-        if self.scaffold_tracker.app_dir:
-            import json
-
-            metrics_file = Path(self.scaffold_tracker.app_dir) / "generation_metrics.json"
-            metrics_file.write_text(
-                json.dumps(
-                    {
-                        "cost_usd": metrics["cost_usd"],
-                        "input_tokens": metrics["input_tokens"],
-                        "output_tokens": metrics["output_tokens"],
-                        "turns": metrics["turns"],
-                    },
-                    indent=2,
-                )
+        # save generation_metrics.json to app directory for evaluation
+        app_dir.mkdir(parents=True, exist_ok=True)
+        metrics_file = app_dir / "generation_metrics.json"
+        metrics_file.write_text(
+            json.dumps(
+                {
+                    "cost_usd": metrics["cost_usd"],
+                    "input_tokens": metrics["input_tokens"],
+                    "output_tokens": metrics["output_tokens"],
+                    "turns": metrics["turns"],
+                },
+                indent=2,
             )
+        )
 
         return metrics
 
@@ -277,8 +266,6 @@ Never deploy the app, just scaffold and build it.
         for block in message.content:
             match block:
                 case ToolResultBlock(tool_use_id=tool_id):
-                    if not block.is_error:
-                        self.scaffold_tracker.resolve(tool_id)
                     result_text = str(block.content)
                     if result_text:
                         self.tracker.log_tool_result(tool_id, result_text, block.is_error or False)
