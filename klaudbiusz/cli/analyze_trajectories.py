@@ -267,7 +267,7 @@ Analyze the data and provide your recommendations."""
         system_prompt=base_instructions,
         permission_mode="bypassPermissions",
         disallowed_tools=disallowed_tools,
-        model="claude-opus-4-5",
+        model="claude-opus-4-6",
         allowed_tools=[
             "Read",
             "Glob",
