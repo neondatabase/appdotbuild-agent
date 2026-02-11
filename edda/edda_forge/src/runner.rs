@@ -173,9 +173,7 @@ pub async fn review(sandbox: &mut impl Sandbox, task_list: &str, language: &str)
             return Ok(ReviewVerdict::Approved);
         }
         if trimmed.starts_with("REJECTED") {
-            let feedback = output
-                .splitn(2, "REJECTED")
-                .nth(1)
+            let feedback = output.split_once("REJECTED").map(|x| x.1)
                 .unwrap_or("")
                 .trim()
                 .to_string();
