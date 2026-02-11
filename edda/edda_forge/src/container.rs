@@ -7,6 +7,7 @@ pub async fn setup_container(
     client: DaggerConn,
     api_key: &str,
     template_path: &Path,
+    image: Option<&str>,
 ) -> Result<DaggerSandbox> {
     let template_dir = client
         .host()
@@ -32,7 +33,7 @@ pub async fn setup_container(
 
     let ctr = client
         .container()
-        .from("rust:latest")
+        .from(image.unwrap_or("rust:latest"))
         .with_exec(install_deps)
         .with_exec(create_user)
         .with_user("forge")

@@ -28,6 +28,10 @@ struct Cli {
     /// max retries per backtrack edge
     #[arg(long, default_value_t = 3)]
     max_retries: usize,
+
+    /// custom base Docker image (must have cargo/rustc)
+    #[arg(long)]
+    image: Option<String>,
 }
 
 #[tokio::main]
@@ -50,11 +54,12 @@ async fn main() -> Result<()> {
     let output = cli.output.clone();
     let prompt = cli.prompt.clone();
     let max_retries = cli.max_retries;
+    let image = cli.image.clone();
 
     let opts = ConnectOpts::new(Logger::Tracing, Some(600));
     opts.connect(move |client| async move {
         let mut sandbox =
-            container::setup_container(client, &api_key, &template_path).await?;
+            container::setup_container(client, &api_key, &template_path, image.as_deref()).await?;
 
         let mut state = State::Init { prompt };
         let mut retries = RetryTracker::new(max_retries);
