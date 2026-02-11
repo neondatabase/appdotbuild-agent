@@ -16,6 +16,8 @@ Failures backtrack with retry limits (default: 3 per edge):
 
 In `Tests` phase, validation steps with `retry_on_fail = "write_code"` are skipped (code doesn't exist yet).
 
+Stale `tasks.md` from previous runs is cleaned up automatically before the state machine starts. Review stage operates on the git diff, not individual files.
+
 ## Usage
 
 ```bash
