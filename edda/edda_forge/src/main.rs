@@ -19,9 +19,13 @@ struct Cli {
     #[arg(long)]
     prompt: String,
 
-    /// path to forge.toml config file
-    #[arg(long, default_value = "forge.toml")]
-    config: PathBuf,
+    /// path to forge.toml config file (looked up in source dir if not provided)
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// path to source directory (used when no config file is found)
+    #[arg(long)]
+    source: Option<PathBuf>,
 
     /// output path (default: patch file; with --export-dir: directory)
     #[arg(long, default_value = "./forge-output")]
@@ -50,33 +54,55 @@ async fn main() -> Result<()> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .map_err(|_| eyre::eyre!("ANTHROPIC_API_KEY not set"))?;
 
-    let forge_config = if cli.config.exists() {
-        info!(config = %cli.config.display(), "loading config");
-        ForgeConfig::load(&cli.config)?
-    } else {
-        info!("no config file found, using default Rust config");
-        ForgeConfig::default_rust()
+    // resolve config: explicit --config > forge.toml in --source dir > forge.toml in cwd > default
+    let config_path = match &cli.config {
+        Some(p) => {
+            if !p.exists() {
+                bail!("config file not found: {}", p.display());
+            }
+            Some(p.clone())
+        }
+        None => {
+            // look in --source dir first, then cwd
+            let candidates = cli
+                .source
+                .iter()
+                .map(|s| s.join("forge.toml"))
+                .chain(std::iter::once(PathBuf::from("forge.toml")));
+            candidates.into_iter().find(|p| p.exists())
+        }
     };
 
-    let config_dir = cli
-        .config
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .to_path_buf();
-
-    let source_path = if forge_config.project.source == "." && !cli.config.exists() {
-        // no config file: use embedded template
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let template = std::path::Path::new(manifest_dir).join("template");
-        if !template.exists() {
-            bail!(
-                "embedded template not found at {}",
-                template.display()
-            );
+    let (forge_config, config_dir) = match &config_path {
+        Some(p) => {
+            info!(config = %p.display(), "loading config");
+            let cfg = ForgeConfig::load(p)?;
+            let dir = p.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+            (cfg, dir)
         }
-        template
-    } else {
-        config::resolve_source_path(&forge_config, &config_dir)?
+        None => {
+            info!("no config file found, using default Rust config");
+            (ForgeConfig::default_rust(), PathBuf::from("."))
+        }
+    };
+
+    let source_path = match &cli.source {
+        Some(p) => {
+            if !p.exists() {
+                bail!("source path does not exist: {}", p.display());
+            }
+            p.clone()
+        }
+        None if config_path.is_none() => {
+            // no config, no source: use embedded template
+            let manifest_dir = env!("CARGO_MANIFEST_DIR");
+            let template = std::path::Path::new(manifest_dir).join("template");
+            if !template.exists() {
+                bail!("embedded template not found at {}", template.display());
+            }
+            template
+        }
+        None => config::resolve_source_path(&forge_config, &config_dir)?,
     };
 
     info!(source = %source_path.display(), "resolved source path");
