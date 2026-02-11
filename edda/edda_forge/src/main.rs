@@ -355,6 +355,7 @@ async fn step(
                     if retries.try_retry("review") {
                         warn!(
                             attempt = retries.count("review"),
+                            feedback = %feedback,
                             "review rejected, retrying WriteCode"
                         );
                         let task_list = read_task_list(sandbox).await;
