@@ -210,7 +210,7 @@ async fn step(
         State::RunTests => match runner::run_tests(sandbox).await {
             Ok(result) if result.exit_code == 0 => {
                 info!("all tests passed");
-                State::RunBenchmark
+                State::Review
             }
             Ok(result) => {
                 let error_output = format!("{}\n{}", result.stdout, result.stderr);
@@ -241,6 +241,43 @@ async fn step(
                 reason: format!("cargo test exec error: {e}"),
             },
         },
+
+        State::Review => {
+            let task_list = read_task_list(sandbox).await;
+            match runner::review(sandbox, &task_list).await {
+                Ok(runner::ReviewVerdict::Approved) => {
+                    info!("review approved");
+                    State::RunBenchmark
+                }
+                Ok(runner::ReviewVerdict::Rejected { feedback }) => {
+                    if retries.try_retry("review") {
+                        warn!(
+                            attempt = retries.count("review"),
+                            "review rejected, retrying WriteCode"
+                        );
+                        let task_list = read_task_list(sandbox).await;
+                        match runner::write_code(sandbox, &task_list, Some(&feedback)).await {
+                            Ok(()) => State::CargoCheck {
+                                phase: Phase::Code,
+                            },
+                            Err(e) => State::Failed {
+                                reason: format!("WriteCode retry after review rejection: {e}"),
+                            },
+                        }
+                    } else {
+                        State::Failed {
+                            reason: format!(
+                                "review rejected after max retries: {}",
+                                truncate_string(&feedback, 500)
+                            ),
+                        }
+                    }
+                }
+                Err(e) => State::Failed {
+                    reason: format!("review exec error: {e}"),
+                },
+            }
+        }
 
         State::RunBenchmark => {
             match runner::run_benchmark(sandbox).await {

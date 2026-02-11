@@ -25,6 +25,7 @@ pub enum State {
     CargoCheck { phase: Phase },
     WriteCode { task_list: String, context: Option<String> },
     RunTests,
+    Review,
     RunBenchmark,
     Export,
     Done,
@@ -53,6 +54,7 @@ impl fmt::Display for State {
                 }
             }
             State::RunTests => write!(f, "RunTests"),
+            State::Review => write!(f, "Review"),
             State::RunBenchmark => write!(f, "RunBenchmark"),
             State::Export => write!(f, "Export"),
             State::Done => write!(f, "Done"),

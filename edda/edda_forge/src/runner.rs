@@ -117,6 +117,50 @@ pub async fn write_code(
     Ok(())
 }
 
+pub enum ReviewVerdict {
+    Approved,
+    Rejected { feedback: String },
+}
+
+/// ask Claude to review the implementation
+pub async fn review(sandbox: &mut impl Sandbox, task_list: &str) -> Result<ReviewVerdict> {
+    let source = sandbox.read_file("/app/src/lib.rs").await?;
+    let tests = sandbox.read_file("/app/tests/integration.rs").await?;
+
+    let instruction = format!(
+        "You are a senior Rust code reviewer. \
+         Review the following implementation against the task list and tests.\n\n\
+         Task list:\n{task_list}\n\n\
+         Implementation:\n```rust\n{source}\n```\n\n\
+         Tests:\n```rust\n{tests}\n```\n\n\
+         Check for: correctness, idiomatic Rust, error handling, edge cases, API design.\n\n\
+         You MUST respond with exactly one of:\n\
+         - First line: APPROVED (if the code is acceptable)\n\
+         - First line: REJECTED (if changes are needed), followed by specific feedback on what to fix\n\n\
+         Do NOT write or modify any files. Only output your verdict."
+    );
+
+    info!("reviewing code");
+    let result = sandbox.exec(&claude_exec(&instruction)).await?;
+    check_exec(&result, "Review")?;
+
+    let output = result.stdout.trim().to_string();
+    if output.starts_with("APPROVED") {
+        Ok(ReviewVerdict::Approved)
+    } else if output.starts_with("REJECTED") {
+        let feedback = output
+            .strip_prefix("REJECTED")
+            .unwrap_or(&output)
+            .trim()
+            .to_string();
+        Ok(ReviewVerdict::Rejected { feedback })
+    } else {
+        // if the model didn't follow the format strictly, treat as rejection with full output as feedback
+        warn!("review output did not start with APPROVED/REJECTED, treating as rejection");
+        Ok(ReviewVerdict::Rejected { feedback: output })
+    }
+}
+
 /// run cargo check
 pub async fn cargo_check(sandbox: &mut impl Sandbox) -> Result<ExecResult> {
     info!("running cargo check");
