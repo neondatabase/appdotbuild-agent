@@ -100,17 +100,15 @@ async fn step(
         State::Init { prompt } => State::RewriteTask { prompt },
 
         State::RewriteTask { prompt } => match runner::rewrite_task(sandbox, &prompt).await {
-            Ok(_task_list) => State::CloneTemplate,
+            Ok(task_list) => State::LoadTaskList { task_list },
             Err(e) => State::Failed {
                 reason: format!("RewriteTask: {e}"),
             },
         },
 
-        State::CloneTemplate => {
+        State::LoadTaskList { task_list } => {
             // template is already mounted at /app during container setup
-            State::WriteTests {
-                task_list: read_task_list(sandbox).await,
-            }
+            State::WriteTests { task_list }
         }
 
         State::WriteTests { task_list } => {
@@ -310,7 +308,10 @@ async fn read_task_list(sandbox: &mut impl Sandbox) -> String {
     sandbox
         .read_file("/app/tasks.md")
         .await
-        .unwrap_or_else(|_| "no task list available".to_string())
+        .unwrap_or_else(|e| {
+            warn!(error = %e, "failed to read tasks.md");
+            "no task list available".to_string()
+        })
 }
 
 fn truncate_string(s: &str, max: usize) -> String {

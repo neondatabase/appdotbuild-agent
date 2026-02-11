@@ -18,18 +18,33 @@ impl fmt::Display for Phase {
 
 #[derive(Debug, Clone)]
 pub enum State {
-    Init { prompt: String },
-    RewriteTask { prompt: String },
-    CloneTemplate,
-    WriteTests { task_list: String },
-    CargoCheck { phase: Phase },
-    WriteCode { task_list: String, context: Option<String> },
+    Init {
+        prompt: String,
+    },
+    RewriteTask {
+        prompt: String,
+    },
+    LoadTaskList {
+        task_list: String,
+    },
+    WriteTests {
+        task_list: String,
+    },
+    CargoCheck {
+        phase: Phase,
+    },
+    WriteCode {
+        task_list: String,
+        context: Option<String>,
+    },
     RunTests,
     Review,
     RunBenchmark,
     Export,
     Done,
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
 }
 
 impl State {
@@ -43,7 +58,7 @@ impl fmt::Display for State {
         match self {
             State::Init { .. } => write!(f, "Init"),
             State::RewriteTask { .. } => write!(f, "RewriteTask"),
-            State::CloneTemplate => write!(f, "CloneTemplate"),
+            State::LoadTaskList { .. } => write!(f, "LoadTaskList"),
             State::WriteTests { .. } => write!(f, "WriteTests"),
             State::CargoCheck { phase } => write!(f, "CargoCheck({})", phase),
             State::WriteCode { context, .. } => {
