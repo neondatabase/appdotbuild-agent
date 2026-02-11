@@ -1,0 +1,17 @@
+[package]
+name = "edda_forge"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "edda-forge"
+path = "src/main.rs"
+
+[dependencies]
+edda_sandbox = { path = "../edda_sandbox" }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["full"] }
+eyre = "0.6"
+dagger-sdk = "0.18.16"

@@ -1029,6 +1029,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "edda_forge"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dagger-sdk",
+ "edda_sandbox",
+ "eyre",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "edda_integrations"
 version = "0.1.0"
 dependencies = [
