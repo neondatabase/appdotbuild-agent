@@ -1,74 +1,56 @@
+use crate::config::ForgeConfig;
 use dagger_sdk::DaggerConn;
 use edda_sandbox::DaggerSandbox;
-use eyre::{Result, bail};
+use eyre::Result;
 use std::path::Path;
+
+fn sh(cmd: &str) -> Vec<String> {
+    vec!["sh".into(), "-c".into(), cmd.into()]
+}
 
 pub async fn setup_container(
     client: DaggerConn,
     api_key: &str,
-    template_path: &Path,
-    image: Option<&str>,
+    config: &ForgeConfig,
+    source_path: &Path,
 ) -> Result<DaggerSandbox> {
-    let template_dir = client
+    let source_dir = client
         .host()
-        .directory(template_path.to_string_lossy().to_string());
+        .directory(source_path.to_string_lossy().to_string());
 
-    let install_deps: Vec<String> = vec![
-        "sh".into(),
-        "-c".into(),
-        "apt-get update && apt-get install -y curl sudo".into(),
-    ];
+    let mut ctr = client.container().from(&config.container.image);
 
-    let create_user: Vec<String> = vec![
-        "sh".into(),
-        "-c".into(),
-        "useradd -m -s /bin/bash forge && echo 'forge ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && cp -r /usr/local/cargo /home/forge/.cargo && cp -r /usr/local/rustup /home/forge/.rustup && chown -R forge:forge /home/forge/.cargo /home/forge/.rustup".into(),
-    ];
+    // run setup commands (as root)
+    for cmd in &config.container.setup {
+        ctr = ctr.with_exec(sh(cmd));
+    }
 
-    let install_claude: Vec<String> = vec![
-        "sh".into(),
-        "-c".into(),
-        "curl -fsSL https://claude.ai/install.sh | bash".into(),
-    ];
+    // create user
+    ctr = ctr.with_exec(sh(&config.container.user_setup));
 
-    let ctr = client
-        .container()
-        .from(image.unwrap_or("rust:latest"))
-        .with_exec(install_deps)
-        .with_exec(create_user)
-        .with_user("forge")
-        .with_env_variable("PATH", "/home/forge/.local/bin:/home/forge/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-        .with_env_variable("CARGO_HOME", "/home/forge/.cargo")
-        .with_env_variable("RUSTUP_HOME", "/home/forge/.rustup")
-        .with_exec(install_claude)
+    // mount source and chown to user (still running as root)
+    let user = &config.container.user;
+    let workdir = &config.project.workdir;
+    ctr = ctr
+        .with_directory(workdir, source_dir)
+        .with_exec(sh(&format!("chown -R {user}:{user} {workdir}")));
+
+    // switch to user
+    ctr = ctr.with_user(user);
+
+    // set env vars
+    for (key, value) in &config.container.env {
+        ctr = ctr.with_env_variable(key, value);
+    }
+
+    // install claude CLI (always needed)
+    ctr = ctr.with_exec(sh("curl -fsSL https://claude.ai/install.sh | bash"));
+
+    // set API key and workdir
+    ctr = ctr
         .with_env_variable("ANTHROPIC_API_KEY", api_key)
-        .with_directory("/app", template_dir)
-        .with_workdir("/app");
+        .with_workdir(workdir);
 
     let sandbox = DaggerSandbox::from_container(ctr, client);
     Ok(sandbox)
-}
-
-/// resolve template path: use provided path or fall back to embedded template
-pub fn resolve_template_path(custom_template: Option<&Path>) -> Result<std::path::PathBuf> {
-    match custom_template {
-        Some(p) => {
-            if !p.exists() {
-                bail!("template path does not exist: {}", p.display());
-            }
-            Ok(p.to_path_buf())
-        }
-        None => {
-            // use the embedded template relative to the crate
-            let manifest_dir = env!("CARGO_MANIFEST_DIR");
-            let template = Path::new(manifest_dir).join("template");
-            if !template.exists() {
-                bail!(
-                    "embedded template not found at {}",
-                    template.display()
-                );
-            }
-            Ok(template)
-        }
-    }
 }

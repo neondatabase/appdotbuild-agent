@@ -1,3 +1,4 @@
+use crate::config::ValidateStep;
 use edda_sandbox::{ExecResult, Sandbox};
 use eyre::{Result, bail};
 use tracing::{debug, info, warn};
@@ -37,14 +38,18 @@ fn truncate(s: &str, max: usize) -> &str {
 }
 
 /// ask Claude to decompose the prompt into a task list (tasks.md)
-pub async fn rewrite_task(sandbox: &mut impl Sandbox, prompt: &str) -> Result<String> {
+pub async fn rewrite_task(
+    sandbox: &mut impl Sandbox,
+    prompt: &str,
+    language: &str,
+) -> Result<String> {
     let instruction = format!(
-        "You are working in /app, a Rust library project. \
+        "You are working in /app, a {language} project. \
          The user wants: {prompt}\n\n\
          Create a file called /app/tasks.md that breaks this down into a clear, \
-         numbered task list for implementing this as a Rust library. \
+         numbered task list for implementing this as a {language} library. \
          Focus on the public API, data structures, and key algorithms. \
-         Do NOT write any Rust code yet — only the task list."
+         Do NOT write any code yet — only the task list."
     );
 
     info!("rewriting task into tasks.md");
@@ -63,16 +68,16 @@ pub async fn rewrite_task(sandbox: &mut impl Sandbox, prompt: &str) -> Result<St
 pub async fn write_tests(
     sandbox: &mut impl Sandbox,
     task_list: &str,
+    language: &str,
     error_context: Option<&str>,
 ) -> Result<()> {
     let mut instruction = format!(
-        "You are working in /app, a Rust library project. \
+        "You are working in /app, a {language} project. \
          Here is the task list:\n\n{task_list}\n\n\
-         Write comprehensive tests in /app/tests/integration.rs that verify the \
-         public API described in the task list. \
+         Write comprehensive tests that verify the public API described in the task list. \
          Write ONLY tests — do not implement the library code. \
-         The tests should use the crate name `forge_project`. \
-         Make sure the test file compiles on its own (all necessary imports, etc.), \
+         Place tests in the conventional location for a {language} project. \
+         Make sure the test files compile/parse on their own (all necessary imports, etc.), \
          though tests will fail until the code is implemented."
     );
 
@@ -92,16 +97,15 @@ pub async fn write_tests(
 pub async fn write_code(
     sandbox: &mut impl Sandbox,
     task_list: &str,
+    language: &str,
     context: Option<&str>,
 ) -> Result<()> {
-    let tests = sandbox.read_file("/app/tests/integration.rs").await?;
-
     let mut instruction = format!(
-        "You are working in /app, a Rust library project. \
+        "You are working in /app, a {language} project. \
          Here is the task list:\n\n{task_list}\n\n\
-         Here are the tests that must pass:\n\n```rust\n{tests}\n```\n\n\
-         Implement the library in /app/src/lib.rs so that all tests pass. \
-         You may create additional modules under /app/src/ if needed. \
+         Read the existing test files in the project to understand what must pass. \
+         Implement the library so that all tests pass. \
+         You may create additional modules/files as needed. \
          Focus on correctness — make all tests pass."
     );
 
@@ -122,65 +126,79 @@ pub enum ReviewVerdict {
     Rejected { feedback: String },
 }
 
-/// ask Claude to review the implementation
-pub async fn review(sandbox: &mut impl Sandbox, task_list: &str) -> Result<ReviewVerdict> {
-    let source = sandbox.read_file("/app/src/lib.rs").await?;
-    let tests = sandbox.read_file("/app/tests/integration.rs").await?;
+/// ask Claude to review the diff
+pub async fn review(sandbox: &mut impl Sandbox, task_list: &str, language: &str) -> Result<ReviewVerdict> {
+    let diff_result = sandbox.exec("git add -A && git diff --cached").await?;
+    let diff = if diff_result.exit_code == 0 {
+        diff_result.stdout
+    } else {
+        warn!("git diff failed during review, falling back to file inspection");
+        String::new()
+    };
 
-    let instruction = format!(
-        "You are a senior Rust code reviewer. \
-         Review the following implementation against the task list and tests.\n\n\
-         Task list:\n{task_list}\n\n\
-         Implementation:\n```rust\n{source}\n```\n\n\
-         Tests:\n```rust\n{tests}\n```\n\n\
-         Check for: correctness, idiomatic Rust, error handling, edge cases, API design.\n\n\
-         You MUST respond with exactly one of:\n\
-         - First line: APPROVED (if the code is acceptable)\n\
-         - First line: REJECTED (if changes are needed), followed by specific feedback on what to fix\n\n\
-         Do NOT write or modify any files. Only output your verdict."
-    );
+    let instruction = if diff.is_empty() {
+        format!(
+            "You are a senior {language} code reviewer. \
+             You are working in /app. Read the source code and test files yourself.\n\n\
+             Review the implementation against this task list:\n{task_list}\n\n\
+             Check for: correctness, idiomatic {language}, error handling, edge cases, API design.\n\n\
+             IMPORTANT: Your response MUST contain exactly one of these words on its own line:\n\
+             APPROVED — if the code is acceptable\n\
+             REJECTED — if changes are needed, followed by specific feedback on what to fix\n\n\
+             Do NOT write or modify any files."
+        )
+    } else {
+        format!(
+            "You are a senior {language} code reviewer. \
+             Review the following diff against the task list.\n\n\
+             Task list:\n{task_list}\n\n\
+             Diff:\n```diff\n{diff}\n```\n\n\
+             Check for: correctness, idiomatic {language}, error handling, edge cases, API design.\n\n\
+             IMPORTANT: Your response MUST contain exactly one of these words on its own line:\n\
+             APPROVED — if the code is acceptable\n\
+             REJECTED — if changes are needed, followed by specific feedback on what to fix\n\n\
+             Do NOT write or modify any files."
+        )
+    };
 
     info!("reviewing code");
     let result = sandbox.exec(&claude_exec(&instruction)).await?;
     check_exec(&result, "Review")?;
 
     let output = result.stdout.trim().to_string();
-    if output.starts_with("APPROVED") {
-        Ok(ReviewVerdict::Approved)
-    } else if output.starts_with("REJECTED") {
-        let feedback = output
-            .strip_prefix("REJECTED")
-            .unwrap_or(&output)
-            .trim()
-            .to_string();
-        Ok(ReviewVerdict::Rejected { feedback })
-    } else {
-        // if the model didn't follow the format strictly, treat as rejection with full output as feedback
-        warn!("review output did not start with APPROVED/REJECTED, treating as rejection");
-        Ok(ReviewVerdict::Rejected { feedback: output })
+    // scan lines for verdict — model doesn't always put it on the first line
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("APPROVED") {
+            return Ok(ReviewVerdict::Approved);
+        }
+        if trimmed.starts_with("REJECTED") {
+            let feedback = output
+                .splitn(2, "REJECTED")
+                .nth(1)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            return Ok(ReviewVerdict::Rejected { feedback });
+        }
     }
+
+    // no explicit verdict found — treat as rejection
+    warn!("review output did not contain APPROVED/REJECTED, treating as rejection");
+    Ok(ReviewVerdict::Rejected { feedback: output })
 }
 
-/// run cargo check
-pub async fn cargo_check(sandbox: &mut impl Sandbox) -> Result<ExecResult> {
-    info!("running cargo check");
-    let result = sandbox.exec("cargo check 2>&1").await?;
-    debug!(exit_code = result.exit_code, "cargo check finished");
-    Ok(result)
-}
-
-/// run cargo test
-pub async fn run_tests(sandbox: &mut impl Sandbox) -> Result<ExecResult> {
-    info!("running cargo test");
-    let result = sandbox.exec("cargo test 2>&1").await?;
-    debug!(exit_code = result.exit_code, "cargo test finished");
-    Ok(result)
-}
-
-/// run cargo bench (non-fatal — we just log the output)
-pub async fn run_benchmark(sandbox: &mut impl Sandbox) -> Result<ExecResult> {
-    info!("running cargo bench");
-    let result = sandbox.exec("cargo bench 2>&1").await?;
-    debug!(exit_code = result.exit_code, "cargo bench finished");
+/// run a single validation step
+pub async fn run_validate_step(
+    sandbox: &mut impl Sandbox,
+    step: &ValidateStep,
+) -> Result<ExecResult> {
+    info!(step = %step.name, command = %step.command, "running validation step");
+    let result = sandbox.exec(&step.command).await?;
+    debug!(
+        step = %step.name,
+        exit_code = result.exit_code,
+        "validation step finished"
+    );
     Ok(result)
 }

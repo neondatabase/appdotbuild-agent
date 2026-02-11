@@ -14,4 +14,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["full"] }
 eyre = "0.6"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 dagger-sdk = "0.18.16"

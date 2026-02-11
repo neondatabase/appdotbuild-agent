@@ -1,111 +1,113 @@
 # edda-forge
 
-Deterministic coding agent that generates Rust libraries from a prompt using Claude Code inside a Dagger container.
+Deterministic coding agent that generates code from a prompt using Claude Code inside a Dagger container. Config-driven — works with any language/stack via `forge.toml`.
 
 ## State machine
 
 ```
-Init → RewriteTask → CloneTemplate → WriteTests → CargoCheck(Tests)
-  → WriteCode → CargoCheck(Code) → RunTests → Review → RunBenchmark → Export → Done
+Init → RewriteTask → LoadTaskList → [WriteTests →] Validate(Tests)
+  → WriteCode → Validate(Code) → Review → Export → Done
 ```
 
 Failures backtrack with retry limits (default: 3 per edge):
-- `CargoCheck(Tests)` fails → retry `WriteTests`
-- `CargoCheck(Code)` fails → retry `WriteCode`
-- `RunTests` fails → retry `WriteCode`
+- `Validate(Tests)` fails → retry target specified by step's `retry_on_fail`
+- `Validate(Code)` fails → retry target specified by step's `retry_on_fail`
 - `Review` rejects → retry `WriteCode` with reviewer feedback
+
+In `Tests` phase, validation steps with `retry_on_fail = "write_code"` are skipped (code doesn't exist yet).
 
 ## Usage
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-cargo run -p edda_forge -- --prompt "implement an LRU cache" --output ./out
+cargo run -p edda_forge -- --prompt "implement an LRU cache"
 ```
 
 Options:
 - `--prompt` — task description (required)
-- `--template` — path to custom project template (default: built-in)
-- `--output` — export directory (default: `./forge-output`)
+- `--config` — path to `forge.toml` config (default: `forge.toml`)
+- `--output` — output path (default: `./forge-output`; produces `.patch` by default)
+- `--export-dir` — export full directory instead of patch
 - `--max-retries` — retry limit per backtrack edge (default: 3)
-- `--image` — custom base Docker image (default: `rust:latest`)
 
-## Extending
+## Output
 
-### Custom template
+By default, edda-forge produces a **unified diff** (`.patch` file). A git baseline is committed after container setup, and the final diff captures all changes.
 
-The `--template` flag points to a Rust project directory that gets mounted into the container at `/app`. Claude generates code on top of it.
+```bash
+# default: patch output
+cargo run -p edda_forge -- --prompt "implement a stack" --output my-stack
+# → writes my-stack.patch
 
-```
-my-template/
-├── Cargo.toml
-├── src/
-│   └── lib.rs            # can be empty or contain scaffolding
-├── tests/
-│   └── integration.rs    # your pre-written tests
-└── benches/
-    └── bench.rs          # your pre-written benchmarks
+# directory export (previous behavior)
+cargo run -p edda_forge -- --prompt "implement a stack" --output ./out --export-dir
 ```
 
-### Custom tests
+## Configuration
 
-Put your tests at `tests/integration.rs`. The `WriteTests` step tells Claude to write tests there — if the file already has content, Claude sees it and extends it. To preserve your tests, add a marker:
+edda-forge is driven by `forge.toml`. When no config file is found, a built-in Rust default is used.
 
-```rust
-// === DO NOT MODIFY TESTS ABOVE THIS LINE ===
-```
-
-The crate name in `Cargo.toml` matters — tests import it. Default is `forge_project`.
-
-### Custom benchmarks
-
-Put criterion benchmarks in `benches/bench.rs`. `RunBenchmark` runs `cargo bench` — non-fatal, failures won't block export.
-
-Required in `Cargo.toml`:
 ```toml
-[dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+[container]
+image = "rust:latest"
+setup = ["apt-get update && apt-get install -y curl sudo git"]
+user = "forge"
+user_setup = """
+useradd -m -s /bin/bash forge \
+  && echo 'forge ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers \
+  && cp -r /usr/local/cargo /home/forge/.cargo \
+  && cp -r /usr/local/rustup /home/forge/.rustup \
+  && chown -R forge:forge /home/forge/.cargo /home/forge/.rustup
+"""
 
-[[bench]]
+[container.env]
+PATH = "/home/forge/.local/bin:/home/forge/.cargo/bin:..."
+CARGO_HOME = "/home/forge/.cargo"
+RUSTUP_HOME = "/home/forge/.rustup"
+
+[project]
+language = "rust"
+source = "."         # codebase to copy into container (relative to config file)
+workdir = "/app"
+
+[steps]
+write_tests = true   # include WriteTests phase
+
+[[steps.validate]]
+name = "check"
+command = "cargo check 2>&1"
+retry_on_fail = "write_tests"
+
+[[steps.validate]]
+name = "test"
+command = "cargo test 2>&1"
+retry_on_fail = "write_code"
+
+[[steps.validate]]
 name = "bench"
-harness = false
+command = "cargo bench 2>&1"
+retry_on_fail = "write_code"
 ```
 
-### Adding more test/bench files
+### Config fields
 
-```toml
-[[test]]
-name = "my_other_test"
-path = "tests/my_other_test.rs"
+**`[container]`** — Docker container setup
+- `image` — base Docker image
+- `setup` — list of shell commands run as root (install deps)
+- `user` — non-root user name (Claude CLI requires non-root)
+- `user_setup` — shell command to create the user
+- `env` — environment variables
 
-[[bench]]
-name = "my_other_bench"
-harness = false
-```
+**`[project]`** — project settings
+- `language` — used in AI prompts (e.g. "rust", "python", "typescript")
+- `source` — directory to copy into container (relative to config file)
+- `workdir` — working directory inside container
 
-### Custom Docker image
+**`[steps]`** — pipeline configuration
+- `write_tests` — whether to include the WriteTests phase
+- `validate` — ordered list of validation commands
 
-Use `--image` to provide a pre-built image. The image must have `cargo` and `rustc` available. The container setup will still:
-1. Install `curl` and `sudo` via `apt-get`
-2. Create a non-root `forge` user (Claude CLI refuses `--dangerously-skip-permissions` as root)
-3. Install Claude CLI
-4. Mount your template at `/app`
-
-```bash
-cargo run -p edda_forge -- \
-  --prompt "implement an LRU cache" \
-  --image my-registry/rust-with-extras:latest \
-  --template ./my-template
-```
-
-If your image already has a non-root user, Claude CLI, or extra dependencies, you'll need to modify `container.rs` — the setup steps are currently hardcoded.
-
-### Full example
-
-```bash
-cargo run -p edda_forge -- \
-  --prompt "implement a thread-safe LRU cache with TTL support" \
-  --template ./my-lru-template \
-  --image rust:1.84 \
-  --output ./lru-output \
-  --max-retries 5
-```
+**`[[steps.validate]]`** — validation step
+- `name` — step identifier (used in logs and retry tracking)
+- `command` — shell command to run
+- `retry_on_fail` — which AI step to retry: `"write_tests"` or `"write_code"`

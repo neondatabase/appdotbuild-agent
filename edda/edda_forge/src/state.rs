@@ -30,16 +30,15 @@ pub enum State {
     WriteTests {
         task_list: String,
     },
-    CargoCheck {
-        phase: Phase,
-    },
     WriteCode {
         task_list: String,
         context: Option<String>,
     },
-    RunTests,
+    Validate {
+        phase: Phase,
+        step_idx: usize,
+    },
     Review,
-    RunBenchmark,
     Export,
     Done,
     Failed {
@@ -60,7 +59,6 @@ impl fmt::Display for State {
             State::RewriteTask { .. } => write!(f, "RewriteTask"),
             State::LoadTaskList { .. } => write!(f, "LoadTaskList"),
             State::WriteTests { .. } => write!(f, "WriteTests"),
-            State::CargoCheck { phase } => write!(f, "CargoCheck({})", phase),
             State::WriteCode { context, .. } => {
                 if context.is_some() {
                     write!(f, "WriteCode(retry)")
@@ -68,9 +66,10 @@ impl fmt::Display for State {
                     write!(f, "WriteCode")
                 }
             }
-            State::RunTests => write!(f, "RunTests"),
+            State::Validate { phase, step_idx } => {
+                write!(f, "Validate({}, step={})", phase, step_idx)
+            }
             State::Review => write!(f, "Review"),
-            State::RunBenchmark => write!(f, "RunBenchmark"),
             State::Export => write!(f, "Export"),
             State::Done => write!(f, "Done"),
             State::Failed { reason } => write!(f, "Failed({})", reason),

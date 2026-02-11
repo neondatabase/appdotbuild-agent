@@ -1,0 +1,41 @@
+# Default Rust project configuration for edda-forge
+
+[container]
+image = "rust:latest"
+setup = ["apt-get update && apt-get install -y curl sudo git"]
+user = "forge"
+user_setup = """
+useradd -m -s /bin/bash forge \
+  && echo 'forge ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers \
+  && cp -r /usr/local/cargo /home/forge/.cargo \
+  && cp -r /usr/local/rustup /home/forge/.rustup \
+  && chown -R forge:forge /home/forge/.cargo /home/forge/.rustup
+"""
+
+[container.env]
+PATH = "/home/forge/.local/bin:/home/forge/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+CARGO_HOME = "/home/forge/.cargo"
+RUSTUP_HOME = "/home/forge/.rustup"
+
+[project]
+language = "rust"
+source = "."
+workdir = "/app"
+
+[steps]
+write_tests = true
+
+[[steps.validate]]
+name = "check"
+command = "cargo check 2>&1"
+retry_on_fail = "write_tests"
+
+[[steps.validate]]
+name = "test"
+command = "cargo test 2>&1"
+retry_on_fail = "write_code"
+
+[[steps.validate]]
+name = "bench"
+command = "cargo bench 2>&1"
+retry_on_fail = "write_code"
