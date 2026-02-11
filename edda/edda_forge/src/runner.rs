@@ -124,6 +124,7 @@ pub async fn write_code(
 pub enum ReviewVerdict {
     Approved,
     Rejected { feedback: String },
+    InvalidFormat,
 }
 
 /// ask Claude to review the diff
@@ -136,28 +137,24 @@ pub async fn review(sandbox: &mut impl Sandbox, task_list: &str, language: &str)
         String::new()
     };
 
+    let verdict_format = "\n\nRespond ONLY with one of:\n\
+         APPROVED\n\
+         REJECTED: <short reason>\n\n\
+         No analysis, no markdown, no explanation — just the verdict line.";
+
     let instruction = if diff.is_empty() {
         format!(
-            "You are a senior {language} code reviewer. \
-             You are working in /app. Read the source code and test files yourself.\n\n\
-             Review the implementation against this task list:\n{task_list}\n\n\
-             Check for: correctness, idiomatic {language}, error handling, edge cases, API design.\n\n\
-             IMPORTANT: Your response MUST contain exactly one of these words on its own line:\n\
-             APPROVED — if the code is acceptable\n\
-             REJECTED — if changes are needed, followed by specific feedback on what to fix\n\n\
-             Do NOT write or modify any files."
+            "You are a {language} code reviewer. \
+             You are working in /app. Read the source code yourself.\n\n\
+             Task list:\n{task_list}\n\n\
+             Check for correctness and bugs only. Do NOT write or modify any files.{verdict_format}"
         )
     } else {
         format!(
-            "You are a senior {language} code reviewer. \
-             Review the following diff against the task list.\n\n\
+            "You are a {language} code reviewer. Review this diff.\n\n\
              Task list:\n{task_list}\n\n\
              Diff:\n```diff\n{diff}\n```\n\n\
-             Check for: correctness, idiomatic {language}, error handling, edge cases, API design.\n\n\
-             IMPORTANT: Your response MUST contain exactly one of these words on its own line:\n\
-             APPROVED — if the code is acceptable\n\
-             REJECTED — if changes are needed, followed by specific feedback on what to fix\n\n\
-             Do NOT write or modify any files."
+             Check for correctness and bugs only. Do NOT write or modify any files.{verdict_format}"
         )
     };
 
@@ -181,9 +178,9 @@ pub async fn review(sandbox: &mut impl Sandbox, task_list: &str, language: &str)
         }
     }
 
-    // no explicit verdict found — treat as rejection
-    warn!("review output did not contain APPROVED/REJECTED, treating as rejection");
-    Ok(ReviewVerdict::Rejected { feedback: output })
+    // no explicit verdict found — invalid format, should retry review itself
+    warn!("review output did not contain APPROVED/REJECTED");
+    Ok(ReviewVerdict::InvalidFormat)
 }
 
 /// run a single validation step

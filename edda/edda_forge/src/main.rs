@@ -379,6 +379,19 @@ async fn step(
                         }
                     }
                 }
+                Ok(runner::ReviewVerdict::InvalidFormat) => {
+                    if retries.try_retry("review_format") {
+                        warn!(
+                            attempt = retries.count("review_format"),
+                            "review returned invalid format, retrying review"
+                        );
+                        State::Review
+                    } else {
+                        State::Failed {
+                            reason: "review returned invalid format after max retries".into(),
+                        }
+                    }
+                }
                 Err(e) => State::Failed {
                     reason: format!("review exec error: {e}"),
                 },
