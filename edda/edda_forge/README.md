@@ -70,6 +70,10 @@ RUSTUP_HOME = "/home/forge/.rustup"
 language = "rust"
 source = "."         # codebase to copy into container (relative to config file)
 workdir = "/app"
+exclude = [".git", "target"]  # not mounted into container
+
+[patch]
+exclude = ["tasks.md", "*SUMMARY*.md", "*REPORT*.md", "*venv*/**", "__pycache__/**"]
 
 [steps]
 
@@ -99,6 +103,10 @@ command = "cargo bench 2>&1"
 - `language` — used in AI prompts (e.g. "rust", "python", "typescript")
 - `source` — directory to copy into container (relative to config file)
 - `workdir` — working directory inside container
+- `exclude` — glob patterns excluded from container mount (default: `.git`, `target`, `node_modules`, `.venv`, `__pycache__`)
+
+**`[patch]`** — output patch filtering
+- `exclude` — glob patterns excluded from the output diff (default: `tasks.md`, `*SUMMARY*.md`, `*REPORT*.md`, `*venv*/**`, `__pycache__/**`)
 
 **`[steps]`** — pipeline configuration
 - `validate` — ordered list of validation commands
