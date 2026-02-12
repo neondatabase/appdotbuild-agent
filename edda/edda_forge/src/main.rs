@@ -212,7 +212,10 @@ async fn main() -> Result<()> {
                     };
                     info!(patch = %patch_path.display(), "generating patch");
                     let diff_result = sandbox
-                        .exec("git add -A && git diff --cached -- . ':!tasks.md'")
+                        .exec(&format!(
+                            "git add -A && git diff --cached {}",
+                            forge_config.patch.git_diff_pathspec()
+                        ))
                         .await?;
                     if diff_result.exit_code != 0 {
                         bail!("git diff failed: {}", diff_result.stderr);

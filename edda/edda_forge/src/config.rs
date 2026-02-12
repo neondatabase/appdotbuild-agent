@@ -8,6 +8,34 @@ pub struct ForgeConfig {
     pub container: ContainerConfig,
     pub project: ProjectConfig,
     pub steps: StepsConfig,
+    #[serde(default)]
+    pub patch: PatchConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PatchConfig {
+    /// glob patterns to exclude from the output patch (git pathspec exclude)
+    #[serde(default = "default_patch_excludes")]
+    pub exclude: Vec<String>,
+}
+
+impl Default for PatchConfig {
+    fn default() -> Self {
+        Self {
+            exclude: default_patch_excludes(),
+        }
+    }
+}
+
+fn default_patch_excludes() -> Vec<String> {
+    vec![
+        "tasks.md".into(),
+        "*SUMMARY*.md".into(),
+        "*REPORT*.md".into(),
+        "*_venv*".into(),
+        "*venv*/**".into(),
+        "__pycache__/**".into(),
+    ]
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -77,6 +105,7 @@ impl ForgeConfig {
                 workdir: "/app".into(),
                 exclude: default_excludes(),
             },
+            patch: PatchConfig::default(),
             steps: StepsConfig {
                 validate: vec![
                     ValidateStep {
@@ -124,6 +153,17 @@ fn default_excludes() -> Vec<String> {
         ".venv".into(),
         "__pycache__".into(),
     ]
+}
+
+impl PatchConfig {
+    /// build git pathspec exclusion args: `-- . ':!pat1' ':!pat2' ...`
+    pub fn git_diff_pathspec(&self) -> String {
+        let mut spec = String::from("-- .");
+        for pat in &self.exclude {
+            spec.push_str(&format!(" ':!{pat}'"));
+        }
+        spec
+    }
 }
 
 /// resolve source path relative to the config file's directory

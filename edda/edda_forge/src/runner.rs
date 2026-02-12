@@ -97,7 +97,10 @@ pub async fn work(sandbox: &mut impl Sandbox, language: &str) -> Result<()> {
          Work on the unchecked tasks (- [ ]). For each task you complete, \
          update /app/tasks.md to mark it as done (- [x]). \
          You may complete multiple tasks in one go. \
-         Focus on correctness."
+         Focus on correctness.\n\n\
+         IMPORTANT: Do NOT create summary/report files (SUMMARY.md, REPORT.md, etc.), \
+         scratch test scripts at the project root, or virtual environments. \
+         Only create files that are part of the project deliverable."
     );
 
     info!("working on unchecked tasks");
