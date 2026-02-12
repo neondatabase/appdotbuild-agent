@@ -76,12 +76,12 @@ pub fn parse_task_stats(task_list: &str) -> TaskStats {
     let mut pending_tasks = Vec::new();
     for line in task_list.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+        if let Some(rest) = trimmed.strip_prefix("- [x]").or_else(|| trimmed.strip_prefix("- [X]")) {
             done += 1;
-            done_tasks.push(trimmed[5..].trim().to_string());
-        } else if trimmed.starts_with("- [ ]") {
+            done_tasks.push(rest.trim().to_string());
+        } else if let Some(rest) = trimmed.strip_prefix("- [ ]") {
             pending += 1;
-            pending_tasks.push(trimmed[5..].trim().to_string());
+            pending_tasks.push(rest.trim().to_string());
         }
     }
     TaskStats { done, pending, done_tasks, pending_tasks }
