@@ -1,5 +1,5 @@
 use crate::config::ForgeConfig;
-use dagger_sdk::DaggerConn;
+use dagger_sdk::{DaggerConn, HostDirectoryOpts};
 use edda_sandbox::DaggerSandbox;
 use eyre::Result;
 use std::path::Path;
@@ -14,9 +14,22 @@ pub async fn setup_container(
     config: &ForgeConfig,
     source_path: &Path,
 ) -> Result<DaggerSandbox> {
-    let source_dir = client
-        .host()
-        .directory(source_path.to_string_lossy().to_string());
+    let exclude_refs: Vec<&str> = config.project.exclude.iter().map(|s| s.as_str()).collect();
+    let source_dir = if exclude_refs.is_empty() {
+        client
+            .host()
+            .directory(source_path.to_string_lossy().to_string())
+    } else {
+        client.host().directory_opts(
+            source_path.to_string_lossy().to_string(),
+            HostDirectoryOpts {
+                exclude: Some(exclude_refs),
+                include: None,
+                no_cache: None,
+                gitignore: None,
+            },
+        )
+    };
 
     let mut ctr = client.container().from(&config.container.image);
 

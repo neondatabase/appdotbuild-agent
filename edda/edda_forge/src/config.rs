@@ -25,6 +25,9 @@ pub struct ProjectConfig {
     pub language: String,
     pub source: String,
     pub workdir: String,
+    /// glob patterns to exclude when mounting source into container
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -72,6 +75,7 @@ impl ForgeConfig {
                 language: "rust".into(),
                 source: ".".into(),
                 workdir: "/app".into(),
+                exclude: default_excludes(),
             },
             steps: StepsConfig {
                 validate: vec![
@@ -110,6 +114,16 @@ impl ForgeConfig {
         }
         Ok(())
     }
+}
+
+fn default_excludes() -> Vec<String> {
+    vec![
+        ".git".into(),
+        "target".into(),
+        "node_modules".into(),
+        ".venv".into(),
+        "__pycache__".into(),
+    ]
 }
 
 /// resolve source path relative to the config file's directory
