@@ -111,6 +111,13 @@ async fn main() -> Result<()> {
 
     let prompt = cli.prompt.expect("--prompt is required");
 
+    if let Ok(home) = std::env::var("HOME") {
+        let cmd_path = PathBuf::from(home).join(".claude/commands/forge.md");
+        if !cmd_path.exists() {
+            eprintln!("hint: run `edda-forge --install-claude` to install the /forge slash command for Claude Code");
+        }
+    }
+
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .map_err(|_| eyre::eyre!("ANTHROPIC_API_KEY not set"))?;
 
