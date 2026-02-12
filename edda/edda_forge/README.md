@@ -1,22 +1,20 @@
 # edda-forge
 
-Deterministic coding agent that generates code from a prompt using Claude Code inside a Dagger container. Config-driven — works with any language/stack via `forge.toml`.
+Generates validated git patches from natural language prompts. Runs Claude Code inside a Dagger container through a deterministic state machine with task tracking and retry logic. Config-driven — works with any language/stack via `forge.toml`.
 
 ## State machine
 
 ```
-Init → RewriteTask → LoadTaskList → [WriteTests →] Validate(Tests)
-  → WriteCode → Validate(Code) → Review → Export → Done
+Init → Plan → Work (loop) → Validate → Review → Export → Done
 ```
 
-Failures backtrack with retry limits (default: 3 per edge):
-- `Validate(Tests)` fails → retry target specified by step's `retry_on_fail`
-- `Validate(Code)` fails → retry target specified by step's `retry_on_fail`
-- `Review` rejects → retry `WriteCode` with reviewer feedback
+- **Plan** — Claude creates a checkbox task list (`tasks.md`) from the prompt, including tests
+- **Work** — each iteration calls `claude -p` to work on unchecked items and mark them done. Loops until all tasks are checked off. Fails if an iteration makes no progress.
+- **Validate** — runs configured validation steps (build, test, bench). On failure, appends a fix task to `tasks.md` and loops back to Work.
+- **Review** — Claude reviews the git diff for correctness. On rejection, appends a fix task and loops back to Work.
+- **Export** — generates a `.patch` file (or exports the full directory)
 
-In `Tests` phase, validation steps with `retry_on_fail = "write_code"` are skipped (code doesn't exist yet).
-
-Stale `tasks.md` from previous runs is cleaned up automatically before the state machine starts. Review stage operates on the git diff, not individual files.
+The task list is append-only — failures add new `- [ ] Fix: ...` entries rather than reverting previous work. This gives Claude full context of what was tried.
 
 ## Usage
 
@@ -27,10 +25,11 @@ cargo run -p edda_forge -- --prompt "implement an LRU cache"
 
 Options:
 - `--prompt` — task description (required)
-- `--config` — path to `forge.toml` config (default: `forge.toml`)
+- `--config` — path to `forge.toml` (default: auto-discovered)
+- `--source` — source directory to mount in container
 - `--output` — output path (default: `./forge-output`; produces `.patch` by default)
 - `--export-dir` — export full directory instead of patch
-- `--max-retries` — retry limit per backtrack edge (default: 3)
+- `--max-retries` — max retries for validation/review failures (default: 3)
 
 ## Output
 
@@ -41,7 +40,7 @@ By default, edda-forge produces a **unified diff** (`.patch` file). A git baseli
 cargo run -p edda_forge -- --prompt "implement a stack" --output my-stack
 # → writes my-stack.patch
 
-# directory export (previous behavior)
+# directory export
 cargo run -p edda_forge -- --prompt "implement a stack" --output ./out --export-dir
 ```
 
@@ -73,22 +72,18 @@ source = "."         # codebase to copy into container (relative to config file)
 workdir = "/app"
 
 [steps]
-write_tests = true   # include WriteTests phase
 
 [[steps.validate]]
 name = "check"
 command = "cargo check 2>&1"
-retry_on_fail = "write_tests"
 
 [[steps.validate]]
 name = "test"
 command = "cargo test 2>&1"
-retry_on_fail = "write_code"
 
 [[steps.validate]]
 name = "bench"
 command = "cargo bench 2>&1"
-retry_on_fail = "write_code"
 ```
 
 ### Config fields
@@ -106,10 +101,8 @@ retry_on_fail = "write_code"
 - `workdir` — working directory inside container
 
 **`[steps]`** — pipeline configuration
-- `write_tests` — whether to include the WriteTests phase
 - `validate` — ordered list of validation commands
 
 **`[[steps.validate]]`** — validation step
 - `name` — step identifier (used in logs and retry tracking)
 - `command` — shell command to run
-- `retry_on_fail` — which AI step to retry: `"write_tests"` or `"write_code"`

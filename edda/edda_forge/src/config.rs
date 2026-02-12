@@ -29,7 +29,6 @@ pub struct ProjectConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StepsConfig {
-    pub write_tests: bool,
     pub validate: Vec<ValidateStep>,
 }
 
@@ -37,14 +36,6 @@ pub struct StepsConfig {
 pub struct ValidateStep {
     pub name: String,
     pub command: String,
-    pub retry_on_fail: RetryTarget,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RetryTarget {
-    WriteTests,
-    WriteCode,
 }
 
 impl ForgeConfig {
@@ -83,22 +74,18 @@ impl ForgeConfig {
                 workdir: "/app".into(),
             },
             steps: StepsConfig {
-                write_tests: true,
                 validate: vec![
                     ValidateStep {
                         name: "check".into(),
                         command: "cargo check 2>&1".into(),
-                        retry_on_fail: RetryTarget::WriteTests,
                     },
                     ValidateStep {
                         name: "test".into(),
                         command: "cargo test 2>&1".into(),
-                        retry_on_fail: RetryTarget::WriteCode,
                     },
                     ValidateStep {
                         name: "bench".into(),
                         command: "cargo bench 2>&1".into(),
-                        retry_on_fail: RetryTarget::WriteCode,
                     },
                 ],
             },

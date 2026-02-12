@@ -4,38 +4,88 @@ mod runner;
 mod state;
 
 use clap::Parser;
-use config::{ForgeConfig, RetryTarget};
+use config::ForgeConfig;
 use edda_sandbox::Sandbox;
 use edda_sandbox::dagger::{ConnectOpts, Logger};
 use eyre::{Result, bail};
-use state::{Phase, RetryTracker, State};
+use state::State;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
 
 #[derive(Parser)]
-#[command(name = "edda-forge", about = "Deterministic coding agent")]
+#[command(
+    name = "edda-forge",
+    about = "Generates validated git patches from natural language prompts via Claude Code in a Dagger sandbox",
+    long_about = "\
+Generates validated git patches from natural language prompts.
+
+Runs Claude Code in a Dagger container through a deterministic state machine:
+  Init → Plan → Work (loop) → Validate → Review → Export
+
+The Plan stage creates a checkbox task list (tasks.md). Each Work iteration calls
+Claude to work on unchecked items and mark them done. Once all tasks are checked off,
+validation runs. Failures append fix tasks to the list and loop back to Work.
+
+Output is a unified diff that has passed all configured validation steps (build, test, etc.)
+and a self-review. Apply with `git apply`.",
+    after_long_help = "\
+CONFIGURATION:
+  Behavior is driven by a forge.toml config file. Resolution order:
+    1. Explicit --config path (must exist)
+    2. forge.toml in --source directory
+    3. forge.toml in current working directory
+    4. Built-in default (Rust project with cargo check/test/bench)
+
+  See the forge.toml reference for container, project, and validation step settings.
+
+ENVIRONMENT:
+  ANTHROPIC_API_KEY    Required. API key for Claude.
+  RUST_LOG             Optional. Controls log verbosity (default: edda_forge=info).
+
+EXAMPLES:
+  # generate a patch from a prompt (uses default Rust config + embedded template)
+  edda-forge --prompt 'add a CLI that parses --name and prints a greeting'
+
+  # use a custom config and source directory
+  edda-forge --prompt 'add input validation' --config ./forge.toml --source ./my-project
+
+  # export the full project directory instead of a patch
+  edda-forge --prompt 'implement a REST API' --export-dir --output ./generated-app
+
+  # allow more retries for flaky validation steps
+  edda-forge --prompt 'add benchmarks' --max-retries 5"
+)]
 struct Cli {
-    /// task description for code generation
+    /// Natural language task description for code generation
     #[arg(long)]
     prompt: String,
 
-    /// path to forge.toml config file (looked up in source dir if not provided)
-    #[arg(long)]
+    /// Path to forge.toml config file
+    ///
+    /// If not provided, looks for forge.toml in --source dir, then cwd.
+    /// Falls back to the built-in default Rust config if nothing is found.
+    #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
 
-    /// path to source directory (used when no config file is found)
-    #[arg(long)]
+    /// Path to source directory to mount into the container
+    ///
+    /// If omitted and a config is found, resolves from config's project.source field.
+    /// If omitted and no config is found, uses the embedded Rust template.
+    #[arg(long, value_name = "DIR")]
     source: Option<PathBuf>,
 
-    /// output path (default: patch file; with --export-dir: directory)
-    #[arg(long, default_value = "./forge-output")]
+    /// Output path for the result
+    ///
+    /// Without --export-dir: writes a .patch file (extension added automatically).
+    /// With --export-dir: exports the full project directory to this path.
+    #[arg(long, default_value = "./forge-output", value_name = "PATH")]
     output: PathBuf,
 
-    /// max retries per backtrack edge
-    #[arg(long, default_value_t = 3)]
+    /// Max retries for validation and review failures
+    #[arg(long, default_value_t = 3, value_name = "N")]
     max_retries: usize,
 
-    /// export full directory instead of generating a .patch file
+    /// Export the full project directory instead of generating a .patch file
     #[arg(long)]
     export_dir: bool,
 }
@@ -63,7 +113,6 @@ async fn main() -> Result<()> {
             Some(p.clone())
         }
         None => {
-            // look in --source dir first, then cwd
             let candidates = cli
                 .source
                 .iter()
@@ -94,7 +143,6 @@ async fn main() -> Result<()> {
             p.clone()
         }
         None if config_path.is_none() => {
-            // no config, no source: use embedded template
             let manifest_dir = env!("CARGO_MANIFEST_DIR");
             let template = std::path::Path::new(manifest_dir).join("template");
             if !template.exists() {
@@ -140,11 +188,11 @@ async fn main() -> Result<()> {
         let _ = sandbox.exec("rm -f tasks.md").await;
 
         let mut state = State::Init { prompt };
-        let mut retries = RetryTracker::new(max_retries);
+        let mut retries = 0usize;
 
         while !state.is_terminal() {
             let old = format!("{state}");
-            state = step(state, &mut sandbox, &mut retries, &forge_config).await;
+            state = step(state, &mut sandbox, &mut retries, max_retries, &forge_config).await;
             info!(from = %old, to = %state, "state transition");
         }
 
@@ -164,7 +212,7 @@ async fn main() -> Result<()> {
                     };
                     info!(patch = %patch_path.display(), "generating patch");
                     let diff_result = sandbox
-                        .exec("git add -A && git diff --cached")
+                        .exec("git add -A && git diff --cached -- . ':!tasks.md'")
                         .await?;
                     if diff_result.exit_code != 0 {
                         bail!("git diff failed: {}", diff_result.stderr);
@@ -191,151 +239,146 @@ async fn main() -> Result<()> {
 async fn step(
     state: State,
     sandbox: &mut impl Sandbox,
-    retries: &mut RetryTracker,
+    retries: &mut usize,
+    max_retries: usize,
     config: &ForgeConfig,
 ) -> State {
     let language = &config.project.language;
 
     match state {
-        State::Init { prompt } => State::RewriteTask { prompt },
+        State::Init { prompt } => State::Plan { prompt },
 
-        State::RewriteTask { prompt } => {
-            match runner::rewrite_task(sandbox, &prompt, language).await {
-                Ok(task_list) => State::LoadTaskList { task_list },
-                Err(e) => State::Failed {
-                    reason: format!("RewriteTask: {e}"),
-                },
-            }
-        }
-
-        State::LoadTaskList { task_list } => {
-            if config.steps.write_tests {
-                State::WriteTests { task_list }
-            } else {
-                State::WriteCode {
-                    task_list,
-                    context: None,
+        State::Plan { prompt } => match runner::plan(sandbox, &prompt, language).await {
+            Ok(()) => match runner::read_tasks(sandbox).await {
+                Ok(tasks) => {
+                    let stats = runner::parse_task_stats(&tasks);
+                    if stats.pending == 0 {
+                        return State::Failed {
+                            reason: "Plan produced no tasks (no `- [ ]` items in tasks.md)"
+                                .into(),
+                        };
+                    }
+                    info!(tasks = stats.pending, "plan created");
+                    for task in &stats.pending_tasks {
+                        info!(task = %task, "planned");
+                    }
+                    State::Work
                 }
-            }
-        }
-
-        State::WriteTests { task_list } => {
-            match runner::write_tests(sandbox, &task_list, language, None).await {
-                Ok(()) => State::Validate {
-                    phase: Phase::Tests,
-                    step_idx: 0,
-                },
                 Err(e) => State::Failed {
-                    reason: format!("WriteTests: {e}"),
+                    reason: format!("reading tasks.md after plan: {e}"),
                 },
-            }
-        }
+            },
+            Err(e) => State::Failed {
+                reason: format!("Plan: {e}"),
+            },
+        },
 
-        State::WriteCode { task_list, context } => {
-            match runner::write_code(sandbox, &task_list, language, context.as_deref()).await {
-                Ok(()) => State::Validate {
-                    phase: Phase::Code,
-                    step_idx: 0,
-                },
-                Err(e) => State::Failed {
-                    reason: format!("WriteCode: {e}"),
-                },
-            }
-        }
-
-        State::Validate { phase, step_idx } => {
-            // find the next applicable step
-            let steps = &config.steps.validate;
-
-            // in Tests phase, skip steps with retry_on_fail = WriteCode (code doesn't exist yet)
-            let applicable_idx = (step_idx..steps.len()).find(|&i| match phase {
-                Phase::Tests => steps[i].retry_on_fail != RetryTarget::WriteCode,
-                Phase::Code => true,
-            });
-
-            let Some(idx) = applicable_idx else {
-                // no more steps — advance to next major state
-                return match phase {
-                    Phase::Tests => State::WriteCode {
-                        task_list: read_task_list(sandbox).await,
-                        context: None,
-                    },
-                    Phase::Code => State::Review,
-                };
+        State::Work => {
+            let before = match runner::read_tasks(sandbox).await {
+                Ok(tasks) => {
+                    let stats = runner::parse_task_stats(&tasks);
+                    if stats.pending == 0 {
+                        info!(done = stats.done, "all tasks done, moving to validation");
+                        return State::Validate { step_idx: 0 };
+                    }
+                    info!(
+                        pending = stats.pending,
+                        done = stats.done,
+                        "working on remaining tasks"
+                    );
+                    stats
+                }
+                Err(e) => {
+                    return State::Failed {
+                        reason: format!("reading tasks.md: {e}"),
+                    }
+                }
             };
 
-            let step = &steps[idx];
+            if let Err(e) = runner::work(sandbox, language).await {
+                return State::Failed {
+                    reason: format!("Work: {e}"),
+                };
+            }
+
+            match runner::read_tasks(sandbox).await {
+                Ok(tasks) => {
+                    let after = runner::parse_task_stats(&tasks);
+                    if after.done <= before.done {
+                        State::Failed {
+                            reason: format!(
+                                "Work made no progress ({} tasks still pending)",
+                                after.pending
+                            ),
+                        }
+                    } else {
+                        let newly_done = after.done - before.done;
+                        // log each newly completed task
+                        for task in after.done_tasks.iter().skip(before.done) {
+                            info!(task = %task, "completed");
+                        }
+                        info!(
+                            completed = newly_done,
+                            done = after.done,
+                            pending = after.pending,
+                            "work iteration finished"
+                        );
+                        State::Work
+                    }
+                }
+                Err(e) => State::Failed {
+                    reason: format!("reading tasks.md after work: {e}"),
+                },
+            }
+        }
+
+        State::Validate { step_idx } => {
+            let steps = &config.steps.validate;
+
+            if step_idx >= steps.len() {
+                return State::Review;
+            }
+
+            let step = &steps[step_idx];
 
             match runner::run_validate_step(sandbox, step).await {
                 Ok(result) if result.exit_code == 0 => {
                     info!(step = %step.name, "validation step passed");
-                    // advance to next step
                     State::Validate {
-                        phase,
-                        step_idx: idx + 1,
+                        step_idx: step_idx + 1,
                     }
                 }
                 Ok(result) => {
                     let error_output = format!("{}\n{}", result.stdout, result.stderr);
-                    let retry_edge = format!("validate_{}_{}", step.name, phase);
-                    // leak to get &'static str for retry tracker
-                    let retry_edge: &'static str = Box::leak(retry_edge.into_boxed_str());
-
-                    if retries.try_retry(retry_edge) {
-                        warn!(
-                            step = %step.name,
-                            attempt = retries.count(retry_edge),
-                            "validation failed, retrying"
-                        );
-
-                        let task_list = read_task_list(sandbox).await;
-
-                        match step.retry_on_fail {
-                            RetryTarget::WriteTests => {
-                                match runner::write_tests(
-                                    sandbox,
-                                    &task_list,
-                                    language,
-                                    Some(&error_output),
-                                )
-                                .await
-                                {
-                                    Ok(()) => State::Validate {
-                                        phase,
-                                        step_idx: 0,
-                                    },
-                                    Err(e) => State::Failed {
-                                        reason: format!("WriteTests retry: {e}"),
-                                    },
-                                }
-                            }
-                            RetryTarget::WriteCode => {
-                                match runner::write_code(
-                                    sandbox,
-                                    &task_list,
-                                    language,
-                                    Some(&error_output),
-                                )
-                                .await
-                                {
-                                    Ok(()) => State::Validate {
-                                        phase,
-                                        step_idx: 0,
-                                    },
-                                    Err(e) => State::Failed {
-                                        reason: format!("WriteCode retry: {e}"),
-                                    },
-                                }
-                            }
-                        }
-                    } else {
-                        State::Failed {
+                    *retries += 1;
+                    if *retries > max_retries {
+                        return State::Failed {
                             reason: format!(
-                                "validation step '{}' failed after max retries: {}",
+                                "validation step '{}' failed after {} retries: {}",
                                 step.name,
+                                max_retries,
                                 truncate_string(&error_output, 500)
                             ),
-                        }
+                        };
+                    }
+
+                    warn!(
+                        step = %step.name,
+                        attempt = *retries,
+                        "validation failed, appending fix task"
+                    );
+
+                    let description = format!(
+                        "Fix: `{}` failed (attempt {}) — {}",
+                        step.name,
+                        *retries,
+                        truncate_string(&error_output, 300)
+                    );
+                    match runner::append_task(sandbox, &description).await {
+                        Ok(()) => State::Work,
+                        Err(e) => State::Failed {
+                            reason: format!("failed to append fix task: {e}"),
+                        },
                     }
                 }
                 Err(e) => State::Failed {
@@ -345,52 +388,49 @@ async fn step(
         }
 
         State::Review => {
-            let task_list = read_task_list(sandbox).await;
-            match runner::review(sandbox, &task_list, language).await {
+            match runner::review(sandbox, language).await {
                 Ok(runner::ReviewVerdict::Approved) => {
                     info!("review approved");
                     State::Export
                 }
                 Ok(runner::ReviewVerdict::Rejected { feedback }) => {
-                    if retries.try_retry("review") {
-                        warn!(
-                            attempt = retries.count("review"),
-                            feedback = %feedback,
-                            "review rejected, retrying WriteCode"
-                        );
-                        let task_list = read_task_list(sandbox).await;
-                        match runner::write_code(sandbox, &task_list, language, Some(&feedback))
-                            .await
-                        {
-                            Ok(()) => State::Validate {
-                                phase: Phase::Code,
-                                step_idx: 0,
-                            },
-                            Err(e) => State::Failed {
-                                reason: format!("WriteCode retry after review rejection: {e}"),
-                            },
-                        }
-                    } else {
-                        State::Failed {
+                    *retries += 1;
+                    if *retries > max_retries {
+                        return State::Failed {
                             reason: format!(
-                                "review rejected after max retries: {}",
+                                "review rejected after {} retries: {}",
+                                max_retries,
                                 truncate_string(&feedback, 500)
                             ),
-                        }
+                        };
+                    }
+
+                    warn!(
+                        attempt = *retries,
+                        feedback = %feedback,
+                        "review rejected, appending fix task"
+                    );
+
+                    let description = format!(
+                        "Fix: review rejected (attempt {}) — {}",
+                        *retries, feedback
+                    );
+                    match runner::append_task(sandbox, &description).await {
+                        Ok(()) => State::Work,
+                        Err(e) => State::Failed {
+                            reason: format!("failed to append fix task: {e}"),
+                        },
                     }
                 }
                 Ok(runner::ReviewVerdict::InvalidFormat) => {
-                    if retries.try_retry("review_format") {
-                        warn!(
-                            attempt = retries.count("review_format"),
-                            "review returned invalid format, retrying review"
-                        );
-                        State::Review
-                    } else {
-                        State::Failed {
+                    *retries += 1;
+                    if *retries > max_retries {
+                        return State::Failed {
                             reason: "review returned invalid format after max retries".into(),
-                        }
+                        };
                     }
+                    warn!(attempt = *retries, "review returned invalid format, retrying");
+                    State::Review
                 }
                 Err(e) => State::Failed {
                     reason: format!("review exec error: {e}"),
@@ -402,16 +442,6 @@ async fn step(
 
         State::Done | State::Failed { .. } => state,
     }
-}
-
-async fn read_task_list(sandbox: &mut impl Sandbox) -> String {
-    sandbox
-        .read_file("/app/tasks.md")
-        .await
-        .unwrap_or_else(|e| {
-            warn!(error = %e, "failed to read tasks.md");
-            "no task list available".to_string()
-        })
 }
 
 fn truncate_string(s: &str, max: usize) -> String {

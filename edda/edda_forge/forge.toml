@@ -23,19 +23,15 @@ source = "."
 workdir = "/app"
 
 [steps]
-write_tests = true
 
 [[steps.validate]]
 name = "check"
 command = "cargo check 2>&1"
-retry_on_fail = "write_tests"
 
 [[steps.validate]]
 name = "test"
 command = "cargo test 2>&1"
-retry_on_fail = "write_code"
 
 [[steps.validate]]
 name = "bench"
 command = "cargo bench 2>&1"
-retry_on_fail = "write_code"
