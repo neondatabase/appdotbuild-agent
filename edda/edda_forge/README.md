@@ -16,15 +16,30 @@ Init → Plan → Work (loop) → Validate → Review → Export → Done
 
 The task list is append-only — failures add new `- [ ] Fix: ...` entries rather than reverting previous work. This gives Claude full context of what was tried.
 
+## Install
+
+```bash
+cargo install --git https://github.com/neondatabase/appdotbuild-agent.git --path edda/edda_forge
+```
+
+Requires [Dagger CLI](https://docs.dagger.io/install/) and a running Docker daemon.
+
+To install the `/forge` slash command for Claude Code:
+
+```bash
+edda-forge --install-claude
+```
+
 ## Usage
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-cargo run -p edda_forge -- --prompt "implement an LRU cache"
+edda-forge --prompt "implement an LRU cache"
 ```
 
 Options:
-- `--prompt` — task description (required)
+- `--prompt` — task description
+- `--install-claude` — install `/forge` slash command for Claude Code
 - `--config` — path to `forge.toml` (default: auto-discovered)
 - `--source` — source directory to mount in container
 - `--output` — output path (default: `./forge-output`; produces `.patch` by default)
@@ -37,11 +52,11 @@ By default, edda-forge produces a **unified diff** (`.patch` file). A git baseli
 
 ```bash
 # default: patch output
-cargo run -p edda_forge -- --prompt "implement a stack" --output my-stack
+edda-forge --prompt "implement a stack" --output my-stack
 # → writes my-stack.patch
 
 # directory export
-cargo run -p edda_forge -- --prompt "implement a stack" --output ./out --export-dir
+edda-forge --prompt "implement a stack" --output ./out --export-dir
 ```
 
 ## Configuration
