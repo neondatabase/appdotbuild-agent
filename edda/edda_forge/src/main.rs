@@ -251,7 +251,7 @@ async fn main() -> Result<()> {
         Ok(())
     })
     .await
-    .map_err(|e| eyre::eyre!("dagger error: {e}"))?;
+    .map_err(|e| eyre::eyre!("dagger error: {e:#}"))?;
 
     Ok(())
 }

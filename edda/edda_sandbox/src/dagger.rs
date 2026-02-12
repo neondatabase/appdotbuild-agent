@@ -5,11 +5,17 @@ use eyre::Result;
 use globset::{GlobSet, GlobSetBuilder};
 use std::{future::Future, io::Write, sync::Arc};
 
+/// Max number of chained Dagger operations before auto-syncing.
+/// Dagger's GraphQL query depth limit is ~120; we sync well before that.
+const AUTO_SYNC_THRESHOLD: usize = 80;
+
 #[derive(Clone)]
 pub struct Sandbox {
     ctr: dagger_sdk::Container,
     client: dagger_sdk::DaggerConn,
     restricted_files: GlobSet,
+    /// Tracks chained operations since last sync to avoid hitting Dagger query depth limits.
+    ops_since_sync: usize,
 }
 
 impl Sandbox {
@@ -19,6 +25,7 @@ impl Sandbox {
             ctr,
             client,
             restricted_files: GlobSet::empty(),
+            ops_since_sync: 0,
         }
     }
 
@@ -42,10 +49,33 @@ impl Sandbox {
     pub fn container(&self) -> dagger_sdk::Container {
         self.ctr.clone()
     }
+
+    /// Flatten the Dagger query chain by syncing the container and reloading from its ID.
+    ///
+    /// Dagger builds a nested GraphQL query for every chained operation (exec, write_file, etc.).
+    /// After ~120 operations the query exceeds engine limits. Calling sync() materialises the
+    /// current container state and replaces the internal reference with a fresh one that has a
+    /// depth-1 query, allowing further operations to proceed.
+    pub async fn sync(&mut self) -> Result<()> {
+        let id = self.ctr.sync().await.map_err(|e| eyre::eyre!("sync: {e}"))?;
+        self.ctr = self.client.load_container_from_id(id);
+        self.ops_since_sync = 0;
+        Ok(())
+    }
+
+    /// Sync if we're approaching the Dagger query depth limit.
+    async fn auto_sync_if_needed(&mut self) -> Result<()> {
+        if self.ops_since_sync >= AUTO_SYNC_THRESHOLD {
+            tracing::debug!(ops = self.ops_since_sync, "auto-syncing container to flatten query chain");
+            self.sync().await?;
+        }
+        Ok(())
+    }
 }
 
 impl crate::Sandbox for Sandbox {
     async fn exec(&mut self, command: &str) -> Result<ExecResult> {
+        self.auto_sync_if_needed().await?;
         let ctr = self.ctr.clone();
         let command = vec!["sh".to_string(), "-c".to_string(), command.to_string()];
         let opts = dagger_sdk::ContainerWithExecOptsBuilder::default()
@@ -55,6 +85,7 @@ impl crate::Sandbox for Sandbox {
         let ctr = ctr.with_exec_opts(command, opts);
         let res = ExecResult::get_output(&ctr).await?;
         self.ctr = ctr;
+        self.ops_since_sync += 1;
         Ok(res)
     }
 
@@ -65,7 +96,9 @@ impl crate::Sandbox for Sandbox {
                 path
             ));
         }
+        self.auto_sync_if_needed().await?;
         self.ctr = self.ctr.with_new_file(path, content);
+        self.ops_since_sync += 1;
         Ok(())
     }
 
@@ -111,8 +144,8 @@ impl crate::Sandbox for Sandbox {
         // Mount the entire temporary directory to root, which will merge all files
         self.ctr = self.ctr.with_directory("/", host_dir);
 
-        // Force evaluation to ensure files are written
-        let _ = self.ctr.sync().await?;
+        // Force evaluation and flatten the query chain
+        self.sync().await?;
 
         Ok(())
     }
@@ -129,6 +162,7 @@ impl crate::Sandbox for Sandbox {
             ));
         }
         self.ctr = self.ctr.without_file(path);
+        self.ops_since_sync += 1;
         Ok(())
     }
 
@@ -138,6 +172,7 @@ impl crate::Sandbox for Sandbox {
 
     async fn set_workdir(&mut self, path: &str) -> Result<()> {
         self.ctr = self.ctr.with_workdir(path);
+        self.ops_since_sync += 1;
         Ok(())
     }
 
@@ -149,6 +184,7 @@ impl crate::Sandbox for Sandbox {
     async fn refresh_from_host(&mut self, host_path: &str, container_path: &str) -> Result<()> {
         let host_dir = self.client.host().directory(host_path.to_string());
         self.ctr = self.ctr.with_directory(container_path, host_dir);
+        self.ops_since_sync += 1;
         Ok(())
     }
 
@@ -163,6 +199,7 @@ impl crate::Sandbox for Sandbox {
             ctr,
             client,
             restricted_files,
+            ops_since_sync: self.ops_since_sync,
         })
     }
 }
