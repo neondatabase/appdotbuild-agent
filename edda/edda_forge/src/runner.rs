@@ -27,7 +27,10 @@ fn check_exec(result: &ExecResult, step: &str) -> Result<()> {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+    match s.get(..max) {
+        Some(prefix) => prefix,
+        None => s,
+    }
 }
 
 /// ask Claude to decompose the prompt into a checkbox task list (tasks.md)
@@ -137,9 +140,18 @@ pub enum ReviewVerdict {
 
 /// ask Claude to review the diff
 pub async fn review(sandbox: &mut impl Sandbox, language: &str) -> Result<ReviewVerdict> {
-    let task_list = read_tasks(sandbox).await.unwrap_or_default();
+    let task_list = match read_tasks(sandbox).await {
+        Ok(tasks) => tasks,
+        Err(e) => {
+            warn!("could not read tasks.md for review context: {e}");
+            String::new()
+        }
+    };
     // stage all changes so Claude can inspect via `git diff --cached`
-    let _ = sandbox.exec("git add -A").await;
+    let stage = sandbox.exec("git add -A").await?;
+    if stage.exit_code != 0 {
+        bail!("git add -A failed: {}", stage.stderr);
+    }
 
     let instruction = format!(
         "You are a {language} code reviewer working in /app. \

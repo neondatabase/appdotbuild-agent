@@ -35,6 +35,8 @@ fn default_patch_excludes() -> Vec<String> {
         "*_venv*".into(),
         "*venv*/**".into(),
         "__pycache__/**".into(),
+        "target/**".into(),
+        "node_modules/**".into(),
     ]
 }
 
@@ -156,11 +158,11 @@ fn default_excludes() -> Vec<String> {
 }
 
 impl PatchConfig {
-    /// build git pathspec exclusion args: `-- . ':!pat1' ':!pat2' ...`
+    /// build git pathspec exclusion args: `-- . ':(exclude)pat1' ':(exclude)pat2' ...`
     pub fn git_diff_pathspec(&self) -> String {
         let mut spec = String::from("-- .");
         for pat in &self.exclude {
-            spec.push_str(&format!(" ':!{pat}'"));
+            spec.push_str(&format!(" ':(exclude){pat}'"));
         }
         spec
     }
