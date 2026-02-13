@@ -10,6 +10,7 @@ use edda_sandbox::dagger::{ConnectOpts, Logger};
 use eyre::{Result, bail};
 use state::State;
 use std::path::PathBuf;
+use std::time::Instant;
 use tracing::{error, info, warn};
 
 #[derive(Parser)]
@@ -173,7 +174,6 @@ async fn main() -> Result<()> {
     info!(source = %source_path.display(), "resolved source path");
 
     let output = cli.output.clone();
-    let prompt = prompt.clone();
     let max_retries = cli.max_retries;
     let export_dir = cli.export_dir;
 
@@ -205,13 +205,30 @@ async fn main() -> Result<()> {
         let _ = sandbox.exec("rm -f tasks.md").await;
 
         let mut state = State::Init { prompt };
-        let mut retries = 0usize;
+        let mut validate_retries = 0usize;
+        let mut review_retries = 0usize;
+        let run_start = Instant::now();
 
         while !state.is_terminal() {
             let old = format!("{state}");
-            state = step(state, &mut sandbox, &mut retries, max_retries, &forge_config).await;
-            info!(from = %old, to = %state, "state transition");
+            let step_start = Instant::now();
+            state = step(
+                state,
+                &mut sandbox,
+                &mut validate_retries,
+                &mut review_retries,
+                max_retries,
+                &forge_config,
+            )
+            .await;
+            info!(
+                from = %old,
+                to = %state,
+                elapsed_secs = step_start.elapsed().as_secs(),
+                "state transition"
+            );
         }
+        info!(total_secs = run_start.elapsed().as_secs(), "forge finished");
 
         // sync container before export to flatten the query chain
         sandbox.sync().await?;
@@ -221,7 +238,7 @@ async fn main() -> Result<()> {
                 if export_dir {
                     info!(output = %output.display(), "exporting project directory");
                     sandbox
-                        .export_directory("/app", &output.to_string_lossy())
+                        .export_directory(workdir, &output.to_string_lossy())
                         .await?;
                     info!("directory export complete");
                 } else {
@@ -231,11 +248,20 @@ async fn main() -> Result<()> {
                         output.with_extension("patch")
                     };
                     info!(patch = %patch_path.display(), "generating patch");
+                    // stage everything and discover binary files
+                    let numstat = sandbox
+                        .exec("git add -A && git diff --cached --numstat")
+                        .await?;
+                    let mut pathspec = forge_config.patch.git_diff_pathspec();
+                    for line in numstat.stdout.lines() {
+                        // binary files show as "-\t-\tpath"
+                        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+                        if parts.len() == 3 && parts[0] == "-" && parts[1] == "-" {
+                            pathspec.push_str(&format!(" ':(exclude){}'", parts[2]));
+                        }
+                    }
                     let diff_result = sandbox
-                        .exec(&format!(
-                            "git add -A && git diff --cached {}",
-                            forge_config.patch.git_diff_pathspec()
-                        ))
+                        .exec(&format!("git diff --cached {pathspec}"))
                         .await?;
                     if diff_result.exit_code != 0 {
                         bail!("git diff failed: {}", diff_result.stderr);
@@ -270,7 +296,8 @@ async fn main() -> Result<()> {
 async fn step(
     state: State,
     sandbox: &mut impl Sandbox,
-    retries: &mut usize,
+    validate_retries: &mut usize,
+    review_retries: &mut usize,
     max_retries: usize,
     config: &ForgeConfig,
 ) -> State {
@@ -381,8 +408,8 @@ async fn step(
                 }
                 Ok(result) => {
                     let error_output = format!("{}\n{}", result.stdout, result.stderr);
-                    *retries += 1;
-                    if *retries > max_retries {
+                    *validate_retries += 1;
+                    if *validate_retries > max_retries {
                         return State::Failed {
                             reason: format!(
                                 "validation step '{}' failed after {} retries: {}",
@@ -395,14 +422,14 @@ async fn step(
 
                     warn!(
                         step = %step.name,
-                        attempt = *retries,
+                        attempt = *validate_retries,
                         "validation failed, appending fix task"
                     );
 
                     let description = format!(
                         "Fix: `{}` failed (attempt {}) — {}",
                         step.name,
-                        *retries,
+                        *validate_retries,
                         truncate_string(&error_output, 300)
                     );
                     match runner::append_task(sandbox, &description).await {
@@ -419,14 +446,14 @@ async fn step(
         }
 
         State::Review => {
-            match runner::review(sandbox, language).await {
+            match runner::review(sandbox, language, &config.patch.git_diff_pathspec()).await {
                 Ok(runner::ReviewVerdict::Approved) => {
                     info!("review approved");
                     State::Export
                 }
                 Ok(runner::ReviewVerdict::Rejected { feedback }) => {
-                    *retries += 1;
-                    if *retries > max_retries {
+                    *review_retries += 1;
+                    if *review_retries > max_retries {
                         return State::Failed {
                             reason: format!(
                                 "review rejected after {} retries: {}",
@@ -437,14 +464,14 @@ async fn step(
                     }
 
                     warn!(
-                        attempt = *retries,
+                        attempt = *review_retries,
                         feedback = %feedback,
                         "review rejected, appending fix task"
                     );
 
                     let description = format!(
                         "Fix: review rejected (attempt {}) — {}",
-                        *retries, feedback
+                        *review_retries, feedback
                     );
                     match runner::append_task(sandbox, &description).await {
                         Ok(()) => State::Work,
@@ -454,13 +481,13 @@ async fn step(
                     }
                 }
                 Ok(runner::ReviewVerdict::InvalidFormat) => {
-                    *retries += 1;
-                    if *retries > max_retries {
+                    *review_retries += 1;
+                    if *review_retries > max_retries {
                         return State::Failed {
                             reason: "review returned invalid format after max retries".into(),
                         };
                     }
-                    warn!(attempt = *retries, "review returned invalid format, retrying");
+                    warn!(attempt = *review_retries, "review returned invalid format, retrying");
                     State::Review
                 }
                 Err(e) => State::Failed {
@@ -487,9 +514,8 @@ fn install_claude_command() -> Result<()> {
 }
 
 fn truncate_string(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max])
+    match s.get(..max) {
+        Some(prefix) => format!("{prefix}..."),
+        None => s.to_string(),
     }
 }
