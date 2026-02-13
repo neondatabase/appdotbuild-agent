@@ -3,8 +3,56 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone)]
+pub enum AgentBackend {
+    Claude,
+    OpenCode,
+}
+
+/// Parsed from a "backend" or "backend/model" string, e.g. "claude", "opencode/kimi-k2.5-free"
+#[derive(Debug, Clone)]
+pub struct AgentConfig {
+    pub backend: AgentBackend,
+    pub model: Option<String>,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            backend: AgentBackend::Claude,
+            model: None,
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AgentConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        // "backend" or "backend:model" — e.g. "claude", "opencode:opencode/kimi-k2.5-free"
+        let (backend_str, model) = match s.split_once(':') {
+            Some((b, m)) => (b, Some(m.to_string())),
+            None => (s.as_str(), None),
+        };
+        let backend = match backend_str {
+            "claude" => AgentBackend::Claude,
+            "opencode" => AgentBackend::OpenCode,
+            other => {
+                return Err(serde::de::Error::custom(format!(
+                    "unknown agent backend: '{other}' (expected 'claude' or 'opencode')"
+                )));
+            }
+        };
+        Ok(AgentConfig { backend, model })
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ForgeConfig {
+    #[serde(default)]
+    pub agent: AgentConfig,
     pub container: ContainerConfig,
     pub project: ProjectConfig,
     pub steps: StepsConfig,
@@ -30,6 +78,7 @@ impl Default for PatchConfig {
 fn default_patch_excludes() -> Vec<String> {
     vec![
         "tasks.md".into(),
+        "opencode.json".into(),
         "*SUMMARY*.md".into(),
         "*REPORT*.md".into(),
         "*_venv*".into(),
@@ -83,6 +132,7 @@ impl ForgeConfig {
 
     pub fn default_rust() -> Self {
         Self {
+            agent: AgentConfig::default(),
             container: ContainerConfig {
                 image: "rust:latest".into(),
                 setup: vec!["apt-get update && apt-get install -y curl sudo git".into()],
@@ -180,4 +230,64 @@ pub fn resolve_source_path(config: &ForgeConfig, config_dir: &Path) -> Result<Pa
         );
     }
     Ok(resolved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_config_deserialize_claude_no_model() {
+        let config: AgentConfig = serde_json::from_str("\"claude\"").unwrap();
+        assert!(matches!(config.backend, AgentBackend::Claude));
+        assert_eq!(config.model, None);
+    }
+
+    #[test]
+    fn test_agent_config_deserialize_claude_with_model() {
+        let config: AgentConfig = serde_json::from_str("\"claude:claude-sonnet-4-5-20250929\"").unwrap();
+        assert!(matches!(config.backend, AgentBackend::Claude));
+        assert_eq!(config.model, Some("claude-sonnet-4-5-20250929".to_string()));
+    }
+
+    #[test]
+    fn test_agent_config_deserialize_opencode_with_model() {
+        let config: AgentConfig = serde_json::from_str("\"opencode:opencode/kimi-k2.5-free\"").unwrap();
+        assert!(matches!(config.backend, AgentBackend::OpenCode));
+        assert_eq!(config.model, Some("opencode/kimi-k2.5-free".to_string()));
+    }
+
+    #[test]
+    fn test_agent_config_deserialize_opencode_no_model() {
+        let config: AgentConfig = serde_json::from_str("\"opencode\"").unwrap();
+        assert!(matches!(config.backend, AgentBackend::OpenCode));
+        assert_eq!(config.model, None);
+    }
+
+    #[test]
+    fn test_agent_config_deserialize_invalid_backend() {
+        let result: Result<AgentConfig, _> = serde_json::from_str("\"invalid-backend\"");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown agent backend"));
+        assert!(err.contains("invalid-backend"));
+    }
+
+    #[test]
+    fn test_agent_backend_variants() {
+        // Ensure we can create both variants
+        let claude = AgentBackend::Claude;
+        let opencode = AgentBackend::OpenCode;
+        
+        // Test that they are different variants
+        assert!(!matches!(claude, AgentBackend::OpenCode));
+        assert!(!matches!(opencode, AgentBackend::Claude));
+    }
+
+    #[test]
+    fn test_agent_config_default() {
+        let config = AgentConfig::default();
+        assert!(matches!(config.backend, AgentBackend::Claude));
+        assert_eq!(config.model, None);
+    }
 }

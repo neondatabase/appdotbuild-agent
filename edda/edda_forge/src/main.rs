@@ -119,9 +119,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| eyre::eyre!("ANTHROPIC_API_KEY not set"))?;
-
     // resolve config: explicit --config > forge.toml in --source dir > forge.toml in cwd > default
     let config_path = match &cli.config {
         Some(p) => {
@@ -153,6 +150,35 @@ async fn main() -> Result<()> {
         }
     };
 
+    let agent_auth = match &forge_config.agent.backend {
+        config::AgentBackend::Claude => {
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .map_err(|_| eyre::eyre!("ANTHROPIC_API_KEY not set"))?;
+            container::AgentAuth {
+                api_key: Some(api_key),
+                opencode_auth_file: None,
+                opencode_config_dir: None,
+            }
+        }
+        config::AgentBackend::OpenCode => {
+            let home = std::env::var("HOME").map_err(|_| eyre::eyre!("HOME not set"))?;
+            let auth_file = PathBuf::from(&home).join(".local/share/opencode/auth.json");
+            let config_dir = PathBuf::from(&home).join(".config/opencode");
+            if !auth_file.exists() && !config_dir.exists() {
+                warn!("no opencode auth/config found — run `opencode` and `/connect` first");
+            }
+            container::AgentAuth {
+                api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
+                opencode_auth_file: auth_file
+                    .exists()
+                    .then(|| auth_file.to_string_lossy().into()),
+                opencode_config_dir: config_dir
+                    .exists()
+                    .then(|| config_dir.to_string_lossy().into()),
+            }
+        }
+    };
+
     let source_path = match &cli.source {
         Some(p) => {
             if !p.exists() {
@@ -180,7 +206,7 @@ async fn main() -> Result<()> {
     let opts = ConnectOpts::new(Logger::Tracing, Some(600));
     opts.connect(move |client| async move {
         let mut sandbox =
-            container::setup_container(client, &api_key, &forge_config, &source_path).await?;
+            container::setup_container(client, &agent_auth, &forge_config, &source_path).await?;
 
         // create git baseline for diff output
         info!("creating git baseline commit");
@@ -302,11 +328,13 @@ async fn step(
     config: &ForgeConfig,
 ) -> State {
     let language = &config.project.language;
+    let agent = &config.agent;
+
 
     match state {
         State::Init { prompt } => State::Plan { prompt },
 
-        State::Plan { prompt } => match runner::plan(sandbox, &prompt, language).await {
+        State::Plan { prompt } => match runner::plan(sandbox, agent, &prompt, language).await {
             Ok(()) => match runner::read_tasks(sandbox).await {
                 Ok(tasks) => {
                     let stats = runner::parse_task_stats(&tasks);
@@ -353,7 +381,7 @@ async fn step(
                 }
             };
 
-            if let Err(e) = runner::work(sandbox, language).await {
+            if let Err(e) = runner::work(sandbox, agent, language).await {
                 return State::Failed {
                     reason: format!("Work: {e}"),
                 };
@@ -446,7 +474,7 @@ async fn step(
         }
 
         State::Review => {
-            match runner::review(sandbox, language, &config.patch.git_diff_pathspec()).await {
+            match runner::review(sandbox, agent, language, &config.patch.git_diff_pathspec()).await {
                 Ok(runner::ReviewVerdict::Approved) => {
                     info!("review approved");
                     State::Export

@@ -1,12 +1,23 @@
-use crate::config::ValidateStep;
+use crate::config::{AgentBackend, AgentConfig, ValidateStep};
 use edda_sandbox::{ExecResult, Sandbox};
 use eyre::{Result, bail};
 use tracing::{debug, info, warn};
 
-const CLAUDE_FLAGS: &str = "--dangerously-skip-permissions";
-fn claude_cmd(prompt: &str) -> String {
+fn agent_cmd(agent: &AgentConfig, prompt: &str) -> String {
     let escaped = prompt.replace('\'', "'\\''");
-    format!("claude -p '{escaped}' {CLAUDE_FLAGS}")
+    let model_flag = agent
+        .model
+        .as_deref()
+        .map(|m| format!(" --model {m}"))
+        .unwrap_or_default();
+    match &agent.backend {
+        AgentBackend::Claude => {
+            format!("claude -p '{escaped}'{model_flag} --dangerously-skip-permissions")
+        }
+        AgentBackend::OpenCode => {
+            format!("opencode run{model_flag} '{escaped}'")
+        }
+    }
 }
 
 fn check_exec(result: &ExecResult, step: &str) -> Result<()> {
@@ -33,9 +44,10 @@ fn truncate(s: &str, max: usize) -> &str {
     }
 }
 
-/// ask Claude to decompose the prompt into a checkbox task list (tasks.md)
+/// ask the agent to decompose the prompt into a checkbox task list (tasks.md)
 pub async fn plan(
     sandbox: &mut impl Sandbox,
+    agent: &AgentConfig,
     prompt: &str,
     language: &str,
 ) -> Result<()> {
@@ -52,7 +64,7 @@ pub async fn plan(
     );
 
     info!("creating task plan");
-    let result = sandbox.exec(&claude_cmd(&instruction)).await?;
+    let result = sandbox.exec(&agent_cmd(agent, &instruction)).await?;
     check_exec(&result, "Plan")?;
 
     let task_list = sandbox.read_file("/app/tasks.md").await?;
@@ -90,8 +102,8 @@ pub fn parse_task_stats(task_list: &str) -> TaskStats {
     TaskStats { done, pending, done_tasks, pending_tasks }
 }
 
-/// ask Claude to work on unchecked tasks and check them off
-pub async fn work(sandbox: &mut impl Sandbox, language: &str) -> Result<()> {
+/// ask the agent to work on unchecked tasks and check them off
+pub async fn work(sandbox: &mut impl Sandbox, agent: &AgentConfig, language: &str) -> Result<()> {
     let task_list = read_tasks(sandbox).await?;
 
     let instruction = format!(
@@ -107,7 +119,7 @@ pub async fn work(sandbox: &mut impl Sandbox, language: &str) -> Result<()> {
     );
 
     info!("working on unchecked tasks");
-    let result = sandbox.exec(&claude_cmd(&instruction)).await?;
+    let result = sandbox.exec(&agent_cmd(agent, &instruction)).await?;
     check_exec(&result, "Work")?;
     Ok(())
 }
@@ -138,8 +150,8 @@ pub enum ReviewVerdict {
     InvalidFormat,
 }
 
-/// ask Claude to review the diff
-pub async fn review(sandbox: &mut impl Sandbox, language: &str, diff_pathspec: &str) -> Result<ReviewVerdict> {
+/// ask the agent to review the diff
+pub async fn review(sandbox: &mut impl Sandbox, agent: &AgentConfig, language: &str, diff_pathspec: &str) -> Result<ReviewVerdict> {
     let task_list = match read_tasks(sandbox).await {
         Ok(tasks) => tasks,
         Err(e) => {
@@ -147,7 +159,7 @@ pub async fn review(sandbox: &mut impl Sandbox, language: &str, diff_pathspec: &
             String::new()
         }
     };
-    // stage all changes so Claude can inspect via `git diff --cached`
+    // stage all changes so the agent can inspect via `git diff --cached`
     let stage = sandbox.exec("git add -A").await?;
     if stage.exit_code != 0 {
         bail!("git add -A failed: {}", stage.stderr);
@@ -165,7 +177,7 @@ pub async fn review(sandbox: &mut impl Sandbox, language: &str, diff_pathspec: &
     );
 
     info!("reviewing code");
-    let result = sandbox.exec(&claude_cmd(&instruction)).await?;
+    let result = sandbox.exec(&agent_cmd(agent, &instruction)).await?;
     debug!(
         stdout_len = result.stdout.len(),
         stderr_len = result.stderr.len(),
