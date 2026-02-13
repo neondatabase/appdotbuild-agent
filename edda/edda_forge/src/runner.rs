@@ -139,7 +139,7 @@ pub enum ReviewVerdict {
 }
 
 /// ask Claude to review the diff
-pub async fn review(sandbox: &mut impl Sandbox, language: &str) -> Result<ReviewVerdict> {
+pub async fn review(sandbox: &mut impl Sandbox, language: &str, diff_pathspec: &str) -> Result<ReviewVerdict> {
     let task_list = match read_tasks(sandbox).await {
         Ok(tasks) => tasks,
         Err(e) => {
@@ -155,7 +155,7 @@ pub async fn review(sandbox: &mut impl Sandbox, language: &str) -> Result<Review
 
     let instruction = format!(
         "You are a {language} code reviewer working in /app. \
-         Review the staged changes (run `git diff --cached` to see the diff).\n\n\
+         Review the staged changes (run `git diff --cached {diff_pathspec}` to see the diff).\n\n\
          Task list:\n{task_list}\n\n\
          Check for correctness and bugs only. Do NOT write or modify any files.\n\n\
          Respond ONLY with one of:\n\

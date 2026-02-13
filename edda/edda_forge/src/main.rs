@@ -446,7 +446,7 @@ async fn step(
         }
 
         State::Review => {
-            match runner::review(sandbox, language).await {
+            match runner::review(sandbox, language, &config.patch.git_diff_pathspec()).await {
                 Ok(runner::ReviewVerdict::Approved) => {
                     info!("review approved");
                     State::Export
