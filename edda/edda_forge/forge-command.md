@@ -1,10 +1,49 @@
 Delegate coding tasks to edda-forge — a sandboxed agent that loops (plan → implement → validate → review) until the code compiles and tests pass, then produces a validated patch. Think of it as delegating to an engineer who returns a tested diff.
 
-Use forge when each subtask is self-contained. Forge runs in an isolated Dagger container, so the user's working tree stays clean until the validated patch is applied.
+Use forge when subtasks are self-contained. Forge runs in an isolated Dagger container, so the user's working tree stays clean until a validated patch is applied.
 
-Aim for the maximum concurrency when possible. Decompose the problem into multiple independent subtasks that can be run in parallel. Sometimes it makes sense to run first task to create core functionality, then run dependent subtasks that build on it. But when subtasks are independent (e.g. separate utility modules, separate test files), run them concurrently to save time (each with a unique --output path). Apply patches sequentially once they are complete.
+Your primary responsibility is orchestration quality: decompose well, maximize safe parallelism, keep ownership boundaries clear, and avoid patch conflicts.
 
 The problem is: $ARGUMENTS
+
+## 0. Decompose first (strict protocol)
+
+Before running anything, create a task DAG and validate it.
+
+### Output format (required)
+
+Produce a plan in this exact shape:
+
+```markdown
+## Task DAG
+- T1: <name>
+  - goal: <specific deliverable>
+  - depends_on: [T? ...]
+  - owned_paths: [glob, glob, ...]
+  - validate: <single targeted command>
+  - prompt_summary: <1-2 lines>
+```
+
+Use these rules:
+- Decompose proportionally. Use `3-5` tasks when that is enough. Use more only when it clearly increases parallelism or isolation.
+- Every task must have clear file ownership (`owned_paths`). Avoid overlap across parallel tasks.
+- Prefer vertical slices (`feature + tests`) over horizontal slices (`models first, then services, then tests`).
+- Put shared glue/init files (e.g. `mod.rs`, `lib.rs`, `index.ts`, `__init__.py`) into later integration tasks, not early parallel tasks.
+- If two tasks must touch the same file, add a dependency edge (`depends_on`) or restructure tasks.
+- Each task must have one focused validation command (targeted test/module where possible).
+- No vague tasks ("improve", "cleanup", "polish"). Every task must produce concrete code and tests.
+
+### Special playbook: rewrite project to Rust while keeping source tests
+
+When the goal is "rewrite project to Rust while keeping original test suite":
+- Keep existing tests as the source of truth.
+- Ignore original implementation files unless needed only for behavior reference.
+- Start with one core/bootstrap task (`T1`) to create crate structure, test harness wiring, and minimal API surface needed for tests to run.
+- Then create `N` feature tasks, preferably one per test file (or per coherent test group).
+- Feature tasks should depend on `T1` and be parallelizable with each other when they own separate modules.
+- Add a final integration task to unify exports, resolve shared types, and run full test suite.
+
+Only continue when the DAG is coherent (acyclic, ownership conflicts resolved, validation commands present).
 
 ## 1. Check forge.toml
 
@@ -20,7 +59,7 @@ edda-forge --config forge-auth.toml --prompt '...' --source . --output ./forge-a
 edda-forge --config forge-api.toml --prompt '...' --source . --output ./forge-api
 ```
 
-The configs should differ only in the test step. Keep a single shared `forge.toml` for solo runs.
+The configs should differ only in the validation step. Keep one shared base `forge.toml` for solo runs.
 
 ### Templates
 
@@ -164,21 +203,34 @@ Note: Rust and uv are installed as the forge user (via `su - forge -c`), not as 
 
 Show the generated forge.toml to the user and ask for confirmation before writing it.
 
-## 2. Run forge
+## 2. Generate per-task prompts and config variants
 
-Always specify a unique output path to avoid conflicts between concurrent runs. Derive it from the subtask (e.g. slugified keyword):
+For each DAG task:
+- Expand `prompt_summary` into a precise prompt with explicit acceptance criteria.
+- Mention exact files/modules and exact tests that must pass.
+- In Rust rewrite scenarios, include expected signatures/invariants from the related tests.
+- Generate a unique output path and dedicated config file (`forge-<task>.toml`) with targeted validation.
+
+Always specify a unique output path:
 
 ```bash
-edda-forge --prompt '<the subtask>' --source . --output ./forge-<slug> --max-retries 3
+edda-forge --config forge-<task>.toml --prompt '<task prompt>' --source . --output ./forge-<task> --max-retries 3
 ```
 
 ANTHROPIC_API_KEY must be set.
 
-If running multiple forge instances concurrently, launch each in the background and wait for all to complete. Forge tasks take a while, so don't check on them too frequently — give at least 5 minutes to start and get some progress.
+## 3. Execute by DAG waves (parallel where safe)
+
+Run tasks by dependency waves:
+- Wave = tasks whose `depends_on` are complete.
+- Launch tasks in the same wave concurrently.
+- Keep a practical concurrency cap based on environment stability.
+
+If running multiple forge instances concurrently, launch each in the background and wait for all to complete. Forge tasks take time, so do not poll too frequently — give at least 5 minutes before first progress check.
 
 ### Prompt quality matters
 
-For simple tasks ("add a logging middleware"), a short prompt is fine. For algorithmic or precision-sensitive tasks, **include the exact contract in the prompt** — don't just say "study the test file." Spell out:
+For simple tasks ("add a logging middleware"), a short prompt is fine. For algorithmic or precision-sensitive tasks, include the exact contract in the prompt — do not just say "study the test file." Spell out:
 - The exact function signatures and return types
 - Key invariants and assertions the code must satisfy
 - Edge cases (zero weights, NaN handling, empty inputs)
@@ -190,7 +242,7 @@ A vague prompt that fails review 3 times wastes more time than a detailed prompt
 - Simple tasks (wrapping existing APIs, straightforward CRUD): `--max-retries 3`
 - Complex tasks (algorithms, precision-sensitive, many edge cases): `--max-retries 5`
 
-## 3. Apply and clean up
+## 4. Apply and clean up
 
 On success (exit 0), apply each patch sequentially:
 ```bash
@@ -215,11 +267,11 @@ Solutions, in order of preference:
    git apply --3way forge-second.patch
    ```
 
-3. **Apply smallest/most-independent patches first.** Order by: utility modules → core logic → integration/glue code. The glue patches (which touch shared files like `__init__.py`) should go last.
+3. **Apply dependency order.** Use DAG order first; within same wave, apply most independent patches first.
 
 On forge failure: show the error and suggest the user refine the prompt or adjust forge.toml validation steps.
 
-## 4. Verify
+## 5. Verify
 
 Run the **actual target tests** locally after applying patches — not just a build check. The container environment may differ from local (different random seeds, dependency versions, etc.):
 

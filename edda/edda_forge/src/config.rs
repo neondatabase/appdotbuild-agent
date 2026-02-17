@@ -58,6 +58,17 @@ pub struct ForgeConfig {
     pub steps: StepsConfig,
     #[serde(default)]
     pub patch: PatchConfig,
+    /// extra host paths to mount into the container
+    #[serde(default)]
+    pub mounts: Vec<MountConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MountConfig {
+    /// host path (~ is expanded to $HOME)
+    pub host: String,
+    /// absolute path inside the container
+    pub container: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -158,6 +169,7 @@ impl ForgeConfig {
                 exclude: default_excludes(),
             },
             patch: PatchConfig::default(),
+            mounts: vec![],
             steps: StepsConfig {
                 validate: vec![
                     ValidateStep {
@@ -193,6 +205,17 @@ impl ForgeConfig {
         if self.steps.validate.is_empty() {
             bail!("steps.validate must have at least one step");
         }
+        for m in &self.mounts {
+            if m.host.is_empty() {
+                bail!("mount host path must not be empty");
+            }
+            if !m.container.starts_with('/') {
+                bail!(
+                    "mount container path must be absolute, got: '{}'",
+                    m.container
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -215,6 +238,23 @@ impl PatchConfig {
             spec.push_str(&format!(" ':(exclude){pat}'"));
         }
         spec
+    }
+}
+
+impl MountConfig {
+    /// expand ~ to $HOME in the host path
+    pub fn resolve_host_path(&self) -> Result<PathBuf> {
+        let path = if self.host.starts_with('~') {
+            let home = std::env::var("HOME")
+                .map_err(|_| eyre::eyre!("HOME not set, cannot expand ~ in mount path"))?;
+            PathBuf::from(self.host.replacen('~', &home, 1))
+        } else {
+            PathBuf::from(&self.host)
+        };
+        if !path.exists() {
+            bail!("mount host path does not exist: {}", path.display());
+        }
+        Ok(path)
     }
 }
 

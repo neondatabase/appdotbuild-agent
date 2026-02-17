@@ -203,7 +203,9 @@ async fn main() -> Result<()> {
     let max_retries = cli.max_retries;
     let export_dir = cli.export_dir;
 
-    let opts = ConnectOpts::new(Logger::Tracing, Some(600));
+    // Claude installer + first cold container materialization can exceed the
+    // default timeout, especially when multiple forge runs execute in parallel.
+    let opts = ConnectOpts::new(Logger::Tracing, Some(3600));
     opts.connect(move |client| async move {
         let mut sandbox =
             container::setup_container(client, &agent_auth, &forge_config, &source_path).await?;
