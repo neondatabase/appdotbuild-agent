@@ -120,7 +120,10 @@ fn log_trajectory(stdout: &str, step: &str) {
         }
         let parsed: TrajectoryLine = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(e) => {
+                warn!(step, error = %e, line = %truncate_tail(line, 200), "failed to parse trajectory line");
+                continue;
+            }
         };
         match parsed.msg_type.as_str() {
             "assistant" => {

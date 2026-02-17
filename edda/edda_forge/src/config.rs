@@ -242,14 +242,14 @@ impl PatchConfig {
 }
 
 impl MountConfig {
-    /// expand ~ to $HOME in the host path
-    pub fn resolve_host_path(&self) -> Result<PathBuf> {
+    /// resolve host path relative to config_dir, with ~ expansion
+    pub fn resolve_host_path(&self, config_dir: &Path) -> Result<PathBuf> {
         let path = if self.host.starts_with('~') {
             let home = std::env::var("HOME")
                 .map_err(|_| eyre::eyre!("HOME not set, cannot expand ~ in mount path"))?;
             PathBuf::from(self.host.replacen('~', &home, 1))
         } else {
-            PathBuf::from(&self.host)
+            config_dir.join(&self.host)
         };
         if !path.exists() {
             bail!("mount host path does not exist: {}", path.display());

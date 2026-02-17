@@ -20,6 +20,7 @@ pub async fn setup_container(
     auth: &AgentAuth,
     config: &ForgeConfig,
     source_path: &Path,
+    config_dir: &Path,
 ) -> Result<DaggerSandbox> {
     let exclude_refs: Vec<&str> = config.project.exclude.iter().map(|s| s.as_str()).collect();
     let source_dir = if exclude_refs.is_empty() {
@@ -59,7 +60,7 @@ pub async fn setup_container(
 
     // mount custom paths before switching to user (needs root for chown)
     for mount in &config.mounts {
-        let host_path = mount.resolve_host_path()?;
+        let host_path = mount.resolve_host_path(config_dir)?;
         let target = &mount.container;
         if host_path.is_file() {
             let host_file = client.host().file(host_path.to_string_lossy().to_string());
@@ -70,10 +71,8 @@ pub async fn setup_container(
                 .directory(host_path.to_string_lossy().to_string());
             ctr = ctr.with_directory(target, host_dir);
         }
+        ctr = ctr.with_exec(sh(&format!("chown -R {user}:{user} {target}")));
         tracing::info!(host = %host_path.display(), container = %target, "mounted custom path");
-    }
-    if !config.mounts.is_empty() {
-        ctr = ctr.with_exec(sh(&format!("chown -R {user}:{user} {home}")));
     }
 
     // mount opencode auth/config before switching to user (needs root for chown)
@@ -88,7 +87,6 @@ pub async fn setup_container(
             let host_dir = client.host().directory(config_dir);
             ctr = ctr.with_directory(&target, host_dir);
         }
-        // chown the whole user home to fix ownership of mounted files
         ctr = ctr.with_exec(sh(&format!("chown -R {user}:{user} {home}")));
     }
 

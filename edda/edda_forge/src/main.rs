@@ -208,7 +208,7 @@ async fn main() -> Result<()> {
     let opts = ConnectOpts::new(Logger::Tracing, Some(3600));
     opts.connect(move |client| async move {
         let mut sandbox =
-            container::setup_container(client, &agent_auth, &forge_config, &source_path).await?;
+            container::setup_container(client, &agent_auth, &forge_config, &source_path, &config_dir).await?;
 
         // create git baseline for diff output
         info!("creating git baseline commit");
