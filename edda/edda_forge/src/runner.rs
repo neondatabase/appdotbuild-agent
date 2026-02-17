@@ -1,9 +1,10 @@
 use crate::config::{AgentBackend, AgentConfig, ValidateStep};
 use edda_sandbox::{ExecResult, Sandbox};
 use eyre::{Result, bail};
+use serde::Deserialize;
 use tracing::{debug, info, warn};
 
-fn agent_cmd(agent: &AgentConfig, prompt: &str) -> String {
+fn agent_cmd(agent: &AgentConfig, prompt: &str, trajectory: bool) -> String {
     let escaped = prompt.replace('\'', "'\\''");
     let model_flag = agent
         .model
@@ -12,7 +13,12 @@ fn agent_cmd(agent: &AgentConfig, prompt: &str) -> String {
         .unwrap_or_default();
     match &agent.backend {
         AgentBackend::Claude => {
-            format!("claude -p '{escaped}'{model_flag} --dangerously-skip-permissions")
+            let traj_flags = if trajectory {
+                " --output-format stream-json --verbose"
+            } else {
+                ""
+            };
+            format!("claude -p '{escaped}'{model_flag} --dangerously-skip-permissions{traj_flags}")
         }
         AgentBackend::OpenCode => {
             format!("opencode run{model_flag} '{escaped}'")
@@ -20,27 +26,139 @@ fn agent_cmd(agent: &AgentConfig, prompt: &str) -> String {
     }
 }
 
+fn log_exec(result: &ExecResult, step: &str) {
+    debug!(
+        step,
+        exit_code = result.exit_code,
+        stdout_len = result.stdout.len(),
+        stderr_len = result.stderr.len(),
+        stdout_tail = %truncate_tail(&result.stdout, 500),
+        stderr_tail = %truncate_tail(&result.stderr, 500),
+        "exec output"
+    );
+}
+
 fn check_exec(result: &ExecResult, step: &str) -> Result<()> {
     if result.exit_code != 0 {
         warn!(
             step,
             exit_code = result.exit_code,
-            stderr_len = result.stderr.len(),
+            stdout = %result.stdout,
+            stderr = %result.stderr,
             "step failed"
         );
         bail!(
-            "{step} failed (exit {}): {}",
+            "{step} failed (exit {}):\nstdout: {}\nstderr: {}",
             result.exit_code,
-            truncate(&result.stderr, 2000)
+            result.stdout,
+            result.stderr
         );
     }
+    log_exec(result, step);
     Ok(())
 }
 
-fn truncate(s: &str, max: usize) -> &str {
-    match s.get(..max) {
-        Some(prefix) => prefix,
-        None => s,
+fn truncate_tail(s: &str, max: usize) -> &str {
+    let len = s.len();
+    if len <= max {
+        return s;
+    }
+    let mut start = len - max;
+    while !s.is_char_boundary(start) {
+        start += 1;
+    }
+    &s[start..]
+}
+
+// --- stream-json trajectory parsing ---
+
+#[derive(Deserialize)]
+struct TrajectoryLine {
+    #[serde(rename = "type")]
+    msg_type: String,
+    #[serde(default)]
+    message: Option<AssistantMessage>,
+    // result fields
+    #[serde(default)]
+    num_turns: Option<u32>,
+    #[serde(default)]
+    total_cost_usd: Option<f64>,
+    #[serde(default)]
+    is_error: Option<bool>,
+    // tool result content
+    #[serde(default)]
+    content: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct AssistantMessage {
+    #[serde(default)]
+    content: Vec<ContentBlock>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum ContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        name: String,
+        #[serde(default)]
+        input: serde_json::Value,
+    },
+    #[serde(other)]
+    Other,
+}
+
+/// log each line of a stream-json trajectory
+fn log_trajectory(stdout: &str, step: &str) {
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parsed: TrajectoryLine = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match parsed.msg_type.as_str() {
+            "assistant" => {
+                if let Some(msg) = &parsed.message {
+                    for block in &msg.content {
+                        match block {
+                            ContentBlock::Text { text } => {
+                                info!(step, text = %truncate_tail(text, 200), "agent text");
+                            }
+                            ContentBlock::ToolUse { name, input } => {
+                                let args = serde_json::to_string(input).unwrap_or_default();
+                                info!(step, tool = %name, args = %truncate_tail(&args, 200), "agent tool_use");
+                            }
+                            ContentBlock::Other => {}
+                        }
+                    }
+                }
+            }
+            "tool" => {
+                if let Some(content) = &parsed.content {
+                    let s = match content {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => serde_json::to_string(other).unwrap_or_default(),
+                    };
+                    debug!(step, result = %truncate_tail(&s, 300), "tool result");
+                }
+            }
+            "result" => {
+                info!(
+                    step,
+                    turns = parsed.num_turns.unwrap_or(0),
+                    cost_usd = parsed.total_cost_usd.unwrap_or(0.0),
+                    is_error = parsed.is_error.unwrap_or(false),
+                    "agent finished"
+                );
+            }
+            _ => {}
+        }
     }
 }
 
@@ -64,7 +182,8 @@ pub async fn plan(
     );
 
     info!("creating task plan");
-    let result = sandbox.exec(&agent_cmd(agent, &instruction)).await?;
+    let result = sandbox.exec(&agent_cmd(agent, &instruction, true)).await?;
+    log_trajectory(&result.stdout, "Plan");
     check_exec(&result, "Plan")?;
 
     let task_list = sandbox.read_file("/app/tasks.md").await?;
@@ -119,7 +238,8 @@ pub async fn work(sandbox: &mut impl Sandbox, agent: &AgentConfig, language: &st
     );
 
     info!("working on unchecked tasks");
-    let result = sandbox.exec(&agent_cmd(agent, &instruction)).await?;
+    let result = sandbox.exec(&agent_cmd(agent, &instruction, true)).await?;
+    log_trajectory(&result.stdout, "Work");
     check_exec(&result, "Work")?;
     Ok(())
 }
@@ -177,15 +297,7 @@ pub async fn review(sandbox: &mut impl Sandbox, agent: &AgentConfig, language: &
     );
 
     info!("reviewing code");
-    let result = sandbox.exec(&agent_cmd(agent, &instruction)).await?;
-    debug!(
-        stdout_len = result.stdout.len(),
-        stderr_len = result.stderr.len(),
-        exit_code = result.exit_code,
-        stdout_head = %truncate(&result.stdout, 500),
-        stderr_head = %truncate(&result.stderr, 500),
-        "review raw output"
-    );
+    let result = sandbox.exec(&agent_cmd(agent, &instruction, false)).await?;
     check_exec(&result, "Review")?;
 
     let output = result.stdout.trim().to_string();
