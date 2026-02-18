@@ -26,6 +26,15 @@ fn agent_cmd(agent: &AgentConfig, prompt: &str, trajectory: bool) -> String {
     }
 }
 
+fn tasks_path(workdir: &str) -> String {
+    let base = workdir.trim_end_matches('/');
+    if base.is_empty() {
+        "/tasks.md".to_string()
+    } else {
+        format!("{base}/tasks.md")
+    }
+}
+
 fn log_exec(result: &ExecResult, step: &str) {
     debug!(
         step,
@@ -171,11 +180,13 @@ pub async fn plan(
     agent: &AgentConfig,
     prompt: &str,
     language: &str,
+    workdir: &str,
 ) -> Result<()> {
+    let tasks_file = tasks_path(workdir);
     let instruction = format!(
-        "You are working in /app, a {language} project. \
+        "You are working in {workdir}, a {language} project. \
          The user wants: {prompt}\n\n\
-         Create a file called /app/tasks.md with a markdown checkbox task list \
+         Create a file called {tasks_file} with a markdown checkbox task list \
          that breaks this down into implementation steps. Use this format:\n\
          - [ ] First task\n\
          - [ ] Second task\n\n\
@@ -189,7 +200,7 @@ pub async fn plan(
     log_trajectory(&result.stdout, "Plan");
     check_exec(&result, "Plan")?;
 
-    let task_list = sandbox.read_file("/app/tasks.md").await?;
+    let task_list = sandbox.read_file(&tasks_file).await?;
     if task_list.trim().is_empty() {
         bail!("Plan produced empty tasks.md");
     }
@@ -213,7 +224,10 @@ pub fn parse_task_stats(task_list: &str) -> TaskStats {
     let mut pending_tasks = Vec::new();
     for line in task_list.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("- [x]").or_else(|| trimmed.strip_prefix("- [X]")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("- [x]")
+            .or_else(|| trimmed.strip_prefix("- [X]"))
+        {
             done += 1;
             done_tasks.push(rest.trim().to_string());
         } else if let Some(rest) = trimmed.strip_prefix("- [ ]") {
@@ -221,18 +235,29 @@ pub fn parse_task_stats(task_list: &str) -> TaskStats {
             pending_tasks.push(rest.trim().to_string());
         }
     }
-    TaskStats { done, pending, done_tasks, pending_tasks }
+    TaskStats {
+        done,
+        pending,
+        done_tasks,
+        pending_tasks,
+    }
 }
 
 /// ask the agent to work on unchecked tasks and check them off
-pub async fn work(sandbox: &mut impl Sandbox, agent: &AgentConfig, language: &str) -> Result<()> {
-    let task_list = read_tasks(sandbox).await?;
+pub async fn work(
+    sandbox: &mut impl Sandbox,
+    agent: &AgentConfig,
+    language: &str,
+    workdir: &str,
+) -> Result<()> {
+    let task_list = read_tasks(sandbox, workdir).await?;
+    let tasks_file = tasks_path(workdir);
 
     let instruction = format!(
-        "You are working in /app, a {language} project. \
-         Here is the current task list from /app/tasks.md:\n\n{task_list}\n\n\
+        "You are working in {workdir}, a {language} project. \
+         Here is the current task list from {tasks_file}:\n\n{task_list}\n\n\
          Work on the unchecked tasks (- [ ]). For each task you complete, \
-         update /app/tasks.md to mark it as done (- [x]). \
+         update {tasks_file} to mark it as done (- [x]). \
          You may complete multiple tasks in one go. \
          Focus on correctness.\n\n\
          IMPORTANT: Do NOT create summary/report files (SUMMARY.md, REPORT.md, etc.), \
@@ -251,16 +276,17 @@ pub async fn work(sandbox: &mut impl Sandbox, agent: &AgentConfig, language: &st
 pub async fn append_task(
     sandbox: &mut impl Sandbox,
     description: &str,
+    workdir: &str,
 ) -> Result<()> {
-    let task_list = read_tasks(sandbox).await?;
+    let task_list = read_tasks(sandbox, workdir).await?;
     let updated = format!("{task_list}\n- [ ] {description}\n");
-    sandbox.write_file("/app/tasks.md", &updated).await?;
+    sandbox.write_file(&tasks_path(workdir), &updated).await?;
     info!(task = %description, "appended fix task");
     Ok(())
 }
 
-pub async fn read_tasks(sandbox: &mut impl Sandbox) -> Result<String> {
-    let content = sandbox.read_file("/app/tasks.md").await?;
+pub async fn read_tasks(sandbox: &mut impl Sandbox, workdir: &str) -> Result<String> {
+    let content = sandbox.read_file(&tasks_path(workdir)).await?;
     if content.trim().is_empty() {
         bail!("tasks.md is empty");
     }
@@ -274,8 +300,14 @@ pub enum ReviewVerdict {
 }
 
 /// ask the agent to review the diff
-pub async fn review(sandbox: &mut impl Sandbox, agent: &AgentConfig, language: &str, diff_pathspec: &str) -> Result<ReviewVerdict> {
-    let task_list = match read_tasks(sandbox).await {
+pub async fn review(
+    sandbox: &mut impl Sandbox,
+    agent: &AgentConfig,
+    language: &str,
+    workdir: &str,
+    diff_pathspec: &str,
+) -> Result<ReviewVerdict> {
+    let task_list = match read_tasks(sandbox, workdir).await {
         Ok(tasks) => tasks,
         Err(e) => {
             warn!("could not read tasks.md for review context: {e}");
@@ -289,7 +321,7 @@ pub async fn review(sandbox: &mut impl Sandbox, agent: &AgentConfig, language: &
     }
 
     let instruction = format!(
-        "You are a {language} code reviewer working in /app. \
+        "You are a {language} code reviewer working in {workdir}. \
          Review the staged changes (run `git diff --cached {diff_pathspec}` to see the diff).\n\n\
          Task list:\n{task_list}\n\n\
          Check for correctness and bugs only. Do NOT write or modify any files.\n\n\

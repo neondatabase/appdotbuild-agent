@@ -1,9 +1,10 @@
 mod config;
 mod container;
+mod local;
 mod runner;
 mod state;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use config::ForgeConfig;
 use edda_sandbox::Sandbox;
 use edda_sandbox::dagger::{ConnectOpts, Logger};
@@ -13,18 +14,24 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tracing::{error, info, warn};
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum RuntimeBackend {
+    Dagger,
+    Local,
+}
+
 #[derive(Parser)]
 #[command(
     name = "edda-forge",
-    about = "Generates validated git patches from natural language prompts via Claude Code in a Dagger sandbox",
+    about = "Generates validated git patches from natural language prompts",
     long_about = "\
 Generates validated git patches from natural language prompts.
 
-Runs Claude Code in a Dagger container through a deterministic state machine:
+Runs Claude Code or OpenCode through a deterministic state machine:
   Init → Plan → Work (loop) → Validate → Review → Export
 
 The Plan stage creates a checkbox task list (tasks.md). Each Work iteration calls
-Claude to work on unchecked items and mark them done. Once all tasks are checked off,
+the agent to work on unchecked items and mark them done. Once all tasks are checked off,
 validation runs. Failures append fix tasks to the list and loop back to Work.
 
 Output is a unified diff that has passed all configured validation steps (build, test, etc.)
@@ -40,12 +47,21 @@ CONFIGURATION:
   See the forge.toml reference for container, project, and validation step settings.
 
 ENVIRONMENT:
-  ANTHROPIC_API_KEY    Required. API key for Claude.
+  ANTHROPIC_API_KEY    Required for dagger+claude. Optional in local runtime.
   RUST_LOG             Optional. Controls log verbosity (default: edda_forge=info).
 
+RUNTIME NOTES:
+  --runtime local:
+    - ignores [container].setup/user/user_setup and [container.env]
+    - mounts must be under project.workdir or define mounts.local_target
+    - OpenCode auth/config uses host state directly (no auth mount required)
+
 EXAMPLES:
-  # generate a patch from a prompt (uses default Rust config + embedded template)
+  # generate a patch from a prompt (uses dagger runtime by default)
   edda-forge --prompt 'add a CLI that parses --name and prints a greeting'
+
+  # run without dagger (host-local execution)
+  edda-forge --runtime local --prompt 'add input validation'
 
   # use a custom config and source directory
   edda-forge --prompt 'add input validation' --config ./forge.toml --source ./my-project
@@ -72,7 +88,7 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
 
-    /// Path to source directory to mount into the container
+    /// Path to source directory to copy into the runtime workspace
     ///
     /// If omitted and a config is found, resolves from config's project.source field.
     /// If omitted and no config is found, uses the embedded Rust template.
@@ -89,6 +105,10 @@ struct Cli {
     /// Max retries for validation and review failures
     #[arg(long, default_value_t = 3, value_name = "N")]
     max_retries: usize,
+
+    /// Runtime backend (`dagger` for containerized runs, `local` for host execution)
+    #[arg(long, value_enum, default_value_t = RuntimeBackend::Dagger)]
+    runtime: RuntimeBackend,
 
     /// Export the full project directory instead of generating a .patch file
     #[arg(long)]
@@ -115,7 +135,9 @@ async fn main() -> Result<()> {
     if let Ok(home) = std::env::var("HOME") {
         let cmd_path = PathBuf::from(home).join(".claude/commands/forge.md");
         if !cmd_path.exists() {
-            eprintln!("hint: run `edda-forge --install-claude` to install the /forge slash command for Claude Code");
+            eprintln!(
+                "hint: run `edda-forge --install-claude` to install the /forge slash command for Claude Code"
+            );
         }
     }
 
@@ -141,7 +163,10 @@ async fn main() -> Result<()> {
         Some(p) => {
             info!(config = %p.display(), "loading config");
             let cfg = ForgeConfig::load(p)?;
-            let dir = p.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+            let dir = p
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
             (cfg, dir)
         }
         None => {
@@ -152,10 +177,12 @@ async fn main() -> Result<()> {
 
     let agent_auth = match &forge_config.agent.backend {
         config::AgentBackend::Claude => {
-            let api_key = std::env::var("ANTHROPIC_API_KEY")
-                .map_err(|_| eyre::eyre!("ANTHROPIC_API_KEY not set"))?;
+            let api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+            if matches!(cli.runtime, RuntimeBackend::Dagger) && api_key.is_none() {
+                bail!("ANTHROPIC_API_KEY not set (required for dagger runtime)");
+            }
             container::AgentAuth {
-                api_key: Some(api_key),
+                api_key,
                 opencode_auth_file: None,
                 opencode_config_dir: None,
             }
@@ -202,121 +229,165 @@ async fn main() -> Result<()> {
     let output = cli.output.clone();
     let max_retries = cli.max_retries;
     let export_dir = cli.export_dir;
+    let runtime = cli.runtime;
 
-    // Claude installer + first cold container materialization can exceed the
-    // default timeout, especially when multiple forge runs execute in parallel.
-    let opts = ConnectOpts::new(Logger::Tracing, Some(3600));
-    opts.connect(move |client| async move {
-        let mut sandbox =
-            container::setup_container(client, &agent_auth, &forge_config, &source_path, &config_dir).await?;
+    match runtime {
+        RuntimeBackend::Dagger => {
+            // Claude installer + first cold container materialization can exceed the
+            // default timeout, especially when multiple forge runs execute in parallel.
+            let opts = ConnectOpts::new(Logger::Tracing, Some(3600));
+            opts.connect(move |client| async move {
+                let mut sandbox = container::setup_container(
+                    client,
+                    &agent_auth,
+                    &forge_config,
+                    &source_path,
+                    &config_dir,
+                )
+                .await?;
+                run_pipeline(
+                    &mut sandbox,
+                    prompt,
+                    output,
+                    max_retries,
+                    export_dir,
+                    &forge_config,
+                )
+                .await?;
 
-        // create git baseline for diff output
-        info!("creating git baseline commit");
-        let workdir = &forge_config.project.workdir;
-        let git_init = sandbox
-            .exec(&format!(
-                "git config --global --add safe.directory {workdir} && \
-                 git config --global init.defaultBranch main && \
-                 git config --global user.email forge@local && \
-                 git config --global user.name forge && \
-                 git init && git add -A && git commit -m baseline --allow-empty"
-            ))
-            .await?;
-        if git_init.exit_code != 0 {
-            warn!(
-                stderr = %git_init.stderr,
-                "git baseline setup failed (non-fatal)"
-            );
+                // flatten chained Dagger queries before finalization
+                sandbox.sync().await?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| {
+                let mut msg = format!("dagger error: {e}");
+                let mut source: &dyn std::error::Error = &e;
+                while let Some(cause) = source.source() {
+                    msg.push_str(&format!("\n  caused by: {cause}"));
+                    source = cause;
+                }
+                eyre::eyre!(msg)
+            })?;
         }
-
-        // clean up stale tasks.md from previous forge runs
-        let _ = sandbox.exec("rm -f tasks.md").await;
-
-        let mut state = State::Init { prompt };
-        let mut validate_retries = 0usize;
-        let mut review_retries = 0usize;
-        let run_start = Instant::now();
-
-        while !state.is_terminal() {
-            let old = format!("{state}");
-            let step_start = Instant::now();
-            state = step(
-                state,
-                &mut sandbox,
-                &mut validate_retries,
-                &mut review_retries,
+        RuntimeBackend::Local => {
+            info!("using local runtime backend (no dagger)");
+            let mut run =
+                local::setup_local_sandbox(&agent_auth, &forge_config, &source_path, &config_dir)?;
+            run_pipeline(
+                &mut run.sandbox,
+                prompt,
+                output,
                 max_retries,
+                export_dir,
                 &forge_config,
             )
-            .await;
-            info!(
-                from = %old,
-                to = %state,
-                elapsed_secs = step_start.elapsed().as_secs(),
-                "state transition"
-            );
+            .await?;
         }
-        info!(total_secs = run_start.elapsed().as_secs(), "forge finished");
+    }
 
-        // sync container before export to flatten the query chain
-        sandbox.sync().await?;
+    Ok(())
+}
 
-        match &state {
-            State::Done => {
-                if export_dir {
-                    info!(output = %output.display(), "exporting project directory");
-                    sandbox
-                        .export_directory(workdir, &output.to_string_lossy())
-                        .await?;
-                    info!("directory export complete");
+async fn run_pipeline(
+    sandbox: &mut impl Sandbox,
+    prompt: String,
+    output: PathBuf,
+    max_retries: usize,
+    export_dir: bool,
+    forge_config: &ForgeConfig,
+) -> Result<()> {
+    // create git baseline for diff output
+    info!("creating git baseline commit");
+    let workdir = &forge_config.project.workdir;
+    let git_init = sandbox
+        .exec(
+            "git init && \
+             (git symbolic-ref HEAD refs/heads/main >/dev/null 2>&1 || true) && \
+             git config user.email forge@local && \
+             git config user.name forge && \
+             git add -A && git commit -m baseline --allow-empty",
+        )
+        .await?;
+    if git_init.exit_code != 0 {
+        warn!(
+            stderr = %git_init.stderr,
+            "git baseline setup failed (non-fatal)"
+        );
+    }
+
+    // clean up stale tasks.md from previous forge runs
+    let _ = sandbox.exec("rm -f tasks.md").await;
+
+    let mut state = State::Init { prompt };
+    let mut validate_retries = 0usize;
+    let mut review_retries = 0usize;
+    let run_start = Instant::now();
+
+    while !state.is_terminal() {
+        let old = format!("{state}");
+        let step_start = Instant::now();
+        state = step(
+            state,
+            sandbox,
+            &mut validate_retries,
+            &mut review_retries,
+            max_retries,
+            forge_config,
+        )
+        .await;
+        info!(
+            from = %old,
+            to = %state,
+            elapsed_secs = step_start.elapsed().as_secs(),
+            "state transition"
+        );
+    }
+    info!(total_secs = run_start.elapsed().as_secs(), "forge finished");
+
+    match &state {
+        State::Done => {
+            if export_dir {
+                info!(output = %output.display(), "exporting project directory");
+                sandbox
+                    .export_directory(workdir, &output.to_string_lossy())
+                    .await?;
+                info!("directory export complete");
+            } else {
+                let patch_path = if output.extension().is_some() {
+                    output.clone()
                 } else {
-                    let patch_path = if output.extension().is_some() {
-                        output.clone()
-                    } else {
-                        output.with_extension("patch")
-                    };
-                    info!(patch = %patch_path.display(), "generating patch");
-                    // stage everything and discover binary files
-                    let numstat = sandbox
-                        .exec("git add -A && git diff --cached --numstat")
-                        .await?;
-                    let mut pathspec = forge_config.patch.git_diff_pathspec();
-                    for line in numstat.stdout.lines() {
-                        // binary files show as "-\t-\tpath"
-                        let parts: Vec<&str> = line.splitn(3, '\t').collect();
-                        if parts.len() == 3 && parts[0] == "-" && parts[1] == "-" {
-                            pathspec.push_str(&format!(" ':(exclude){}'", parts[2]));
-                        }
+                    output.with_extension("patch")
+                };
+                info!(patch = %patch_path.display(), "generating patch");
+                // stage everything and discover binary files
+                let numstat = sandbox
+                    .exec("git add -A && git diff --cached --numstat")
+                    .await?;
+                let mut pathspec = forge_config.patch.git_diff_pathspec();
+                for line in numstat.stdout.lines() {
+                    // binary files show as "-\t-\tpath"
+                    let parts: Vec<&str> = line.splitn(3, '\t').collect();
+                    if parts.len() == 3 && parts[0] == "-" && parts[1] == "-" {
+                        pathspec.push_str(&format!(" ':(exclude){}'", parts[2]));
                     }
-                    let diff_result = sandbox
-                        .exec(&format!("git diff --cached {pathspec}"))
-                        .await?;
-                    if diff_result.exit_code != 0 {
-                        bail!("git diff failed: {}", diff_result.stderr);
-                    }
-                    std::fs::write(&patch_path, &diff_result.stdout)?;
-                    info!(patch = %patch_path.display(), "patch written");
                 }
+                let diff_result = sandbox
+                    .exec(&format!("git diff --cached {pathspec}"))
+                    .await?;
+                if diff_result.exit_code != 0 {
+                    bail!("git diff failed: {}", diff_result.stderr);
+                }
+                std::fs::write(&patch_path, &diff_result.stdout)?;
+                info!(patch = %patch_path.display(), "patch written");
             }
-            State::Failed { reason } => {
-                error!(%reason, "forge failed");
-                bail!("forge failed: {reason}");
-            }
-            _ => unreachable!(),
         }
-
-        Ok(())
-    })
-    .await
-    .map_err(|e| {
-        let mut msg = format!("dagger error: {e}");
-        let mut source: &dyn std::error::Error = &e;
-        while let Some(cause) = source.source() {
-            msg.push_str(&format!("\n  caused by: {cause}"));
-            source = cause;
+        State::Failed { reason } => {
+            error!(%reason, "forge failed");
+            bail!("forge failed: {reason}");
         }
-        eyre::eyre!(msg)
-    })?;
+        _ => unreachable!(),
+    }
 
     Ok(())
 }
@@ -331,19 +402,20 @@ async fn step(
 ) -> State {
     let language = &config.project.language;
     let agent = &config.agent;
-
+    let workdir = &config.project.workdir;
 
     match state {
         State::Init { prompt } => State::Plan { prompt },
 
-        State::Plan { prompt } => match runner::plan(sandbox, agent, &prompt, language).await {
-            Ok(()) => match runner::read_tasks(sandbox).await {
+        State::Plan { prompt } => match runner::plan(sandbox, agent, &prompt, language, workdir)
+            .await
+        {
+            Ok(()) => match runner::read_tasks(sandbox, workdir).await {
                 Ok(tasks) => {
                     let stats = runner::parse_task_stats(&tasks);
                     if stats.pending == 0 {
                         return State::Failed {
-                            reason: "Plan produced no tasks (no `- [ ]` items in tasks.md)"
-                                .into(),
+                            reason: "Plan produced no tasks (no `- [ ]` items in tasks.md)".into(),
                         };
                     }
                     info!(tasks = stats.pending, "plan created");
@@ -362,7 +434,7 @@ async fn step(
         },
 
         State::Work => {
-            let before = match runner::read_tasks(sandbox).await {
+            let before = match runner::read_tasks(sandbox, workdir).await {
                 Ok(tasks) => {
                     let stats = runner::parse_task_stats(&tasks);
                     if stats.pending == 0 {
@@ -379,17 +451,17 @@ async fn step(
                 Err(e) => {
                     return State::Failed {
                         reason: format!("reading tasks.md: {e}"),
-                    }
+                    };
                 }
             };
 
-            if let Err(e) = runner::work(sandbox, agent, language).await {
+            if let Err(e) = runner::work(sandbox, agent, language, workdir).await {
                 return State::Failed {
                     reason: format!("Work: {e}"),
                 };
             }
 
-            match runner::read_tasks(sandbox).await {
+            match runner::read_tasks(sandbox, workdir).await {
                 Ok(tasks) => {
                     let after = runner::parse_task_stats(&tasks);
                     if after.done <= before.done {
@@ -462,7 +534,7 @@ async fn step(
                         *validate_retries,
                         truncate_string(&error_output, 300)
                     );
-                    match runner::append_task(sandbox, &description).await {
+                    match runner::append_task(sandbox, &description, workdir).await {
                         Ok(()) => State::Work,
                         Err(e) => State::Failed {
                             reason: format!("failed to append fix task: {e}"),
@@ -476,7 +548,15 @@ async fn step(
         }
 
         State::Review => {
-            match runner::review(sandbox, agent, language, &config.patch.git_diff_pathspec()).await {
+            match runner::review(
+                sandbox,
+                agent,
+                language,
+                workdir,
+                &config.patch.git_diff_pathspec(),
+            )
+            .await
+            {
                 Ok(runner::ReviewVerdict::Approved) => {
                     info!("review approved");
                     State::Export
@@ -503,7 +583,7 @@ async fn step(
                         "Fix: review rejected (attempt {}) — {}",
                         *review_retries, feedback
                     );
-                    match runner::append_task(sandbox, &description).await {
+                    match runner::append_task(sandbox, &description, workdir).await {
                         Ok(()) => State::Work,
                         Err(e) => State::Failed {
                             reason: format!("failed to append fix task: {e}"),
@@ -517,7 +597,10 @@ async fn step(
                             reason: "review returned invalid format after max retries".into(),
                         };
                     }
-                    warn!(attempt = *review_retries, "review returned invalid format, retrying");
+                    warn!(
+                        attempt = *review_retries,
+                        "review returned invalid format, retrying"
+                    );
                     State::Review
                 }
                 Err(e) => State::Failed {
