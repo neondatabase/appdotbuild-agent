@@ -1,7 +1,7 @@
 use eyre::{Result, bail};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub enum AgentBackend {
@@ -58,7 +58,7 @@ pub struct ForgeConfig {
     pub steps: StepsConfig,
     #[serde(default)]
     pub patch: PatchConfig,
-    /// extra host paths to mount into the container
+    /// extra host paths to expose to runtime
     #[serde(default)]
     pub mounts: Vec<MountConfig>,
 }
@@ -69,6 +69,9 @@ pub struct MountConfig {
     pub host: String,
     /// absolute path inside the container
     pub container: String,
+    /// local runtime target path relative to project.workdir
+    #[serde(default)]
+    pub local_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -215,6 +218,12 @@ impl ForgeConfig {
                     m.container
                 );
             }
+            if let Some(local) = &m.local_target {
+                if local.is_empty() {
+                    bail!("mount local_target must not be empty");
+                }
+                normalize_relative_path(local)?;
+            }
         }
         Ok(())
     }
@@ -223,10 +232,20 @@ impl ForgeConfig {
 fn default_excludes() -> Vec<String> {
     vec![
         ".git".into(),
+        "**/.git".into(),
+        "**/.git/**".into(),
         "target".into(),
+        "**/target".into(),
+        "**/target/**".into(),
         "node_modules".into(),
+        "**/node_modules".into(),
+        "**/node_modules/**".into(),
         ".venv".into(),
+        "**/.venv".into(),
+        "**/.venv/**".into(),
         "__pycache__".into(),
+        "**/__pycache__".into(),
+        "**/__pycache__/**".into(),
     ]
 }
 
@@ -256,6 +275,13 @@ impl MountConfig {
         }
         Ok(path)
     }
+
+    pub fn resolve_local_target(&self) -> Result<Option<PathBuf>> {
+        self.local_target
+            .as_deref()
+            .map(normalize_relative_path)
+            .transpose()
+    }
 }
 
 /// resolve source path relative to the config file's directory
@@ -272,6 +298,22 @@ pub fn resolve_source_path(config: &ForgeConfig, config_dir: &Path) -> Result<Pa
     Ok(resolved)
 }
 
+fn normalize_relative_path(path: &str) -> Result<PathBuf> {
+    let mut out = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::Prefix(_) => bail!("windows paths are not supported"),
+            Component::RootDir => bail!("local_target must be relative, got: '{path}'"),
+            Component::CurDir => {}
+            Component::Normal(segment) => out.push(segment),
+            Component::ParentDir => {
+                bail!("path traversal is not allowed in local_target: '{path}'")
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,14 +327,16 @@ mod tests {
 
     #[test]
     fn test_agent_config_deserialize_claude_with_model() {
-        let config: AgentConfig = serde_json::from_str("\"claude:claude-sonnet-4-5-20250929\"").unwrap();
+        let config: AgentConfig =
+            serde_json::from_str("\"claude:claude-sonnet-4-5-20250929\"").unwrap();
         assert!(matches!(config.backend, AgentBackend::Claude));
         assert_eq!(config.model, Some("claude-sonnet-4-5-20250929".to_string()));
     }
 
     #[test]
     fn test_agent_config_deserialize_opencode_with_model() {
-        let config: AgentConfig = serde_json::from_str("\"opencode:opencode/kimi-k2.5-free\"").unwrap();
+        let config: AgentConfig =
+            serde_json::from_str("\"opencode:opencode/kimi-k2.5-free\"").unwrap();
         assert!(matches!(config.backend, AgentBackend::OpenCode));
         assert_eq!(config.model, Some("opencode/kimi-k2.5-free".to_string()));
     }
@@ -318,7 +362,7 @@ mod tests {
         // Ensure we can create both variants
         let claude = AgentBackend::Claude;
         let opencode = AgentBackend::OpenCode;
-        
+
         // Test that they are different variants
         assert!(!matches!(claude, AgentBackend::OpenCode));
         assert!(!matches!(opencode, AgentBackend::Claude));

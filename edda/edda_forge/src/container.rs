@@ -122,9 +122,7 @@ pub async fn setup_container(
             ctr = ctr.with_exec(sh(&install_cmd));
         }
         AgentBackend::OpenCode => {
-            ctr = ctr.with_exec(sh(
-                "curl -fsSL https://opencode.ai/install | bash",
-            ));
+            ctr = ctr.with_exec(sh("curl -fsSL https://opencode.ai/install | bash"));
             // symlink into a standard PATH location since Dagger doesn't expand $PATH
             ctr = ctr.with_exec(sh(&format!(
                 "sudo ln -sf {home}/.opencode/bin/opencode /usr/local/bin/opencode"

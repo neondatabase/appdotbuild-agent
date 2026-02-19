@@ -1,0 +1,30 @@
+agent = "claude"
+
+[container]
+image = "python:3.11"
+setup = ["pip install uv"]
+user = "forge"
+user_setup = ""
+
+[project]
+language = "python+streamlit"
+source = "."
+workdir = "/app"
+exclude = [".git", "**/.git/**", "__pycache__", "**/__pycache__/**", ".venv", "**/.venv/**"]
+
+[patch]
+exclude = ["tasks.md", "*SUMMARY*.md", "*REPORT*.md", "*venv*/**", "__pycache__/**"]
+
+[steps]
+
+[[steps.validate]]
+name = "uv-setup"
+command = "uv init --bare --no-readme 2>/dev/null; uv add --dev ruff"
+
+[[steps.validate]]
+name = "python-syntax"
+command = "uv run python -m py_compile app.py"
+
+[[steps.validate]]
+name = "ruff-lint"
+command = "uv run ruff check ."
