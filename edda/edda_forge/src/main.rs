@@ -108,7 +108,7 @@ struct Cli {
     max_retries: usize,
 
     /// Runtime backend (`dagger` for containerized runs, `local` for host execution)
-    #[arg(long, value_enum, default_value_t = RuntimeBackend::Dagger)]
+    #[arg(long, value_enum, default_value_t = RuntimeBackend::Local)]
     runtime: RuntimeBackend,
 
     /// Export the full project directory instead of generating a .patch file
