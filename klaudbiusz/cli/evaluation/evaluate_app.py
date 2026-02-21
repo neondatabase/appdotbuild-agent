@@ -52,6 +52,50 @@ try:
 except ImportError:
     anthropic = None
 
+async def capture_screenshot_local(app_dir: Path, port: int = 8000, wait_time: int = 10000) -> bool:
+    """Capture a screenshot of a running app using Playwright.
+
+    Args:
+        app_dir: Path to the app directory (screenshot saved here)
+        port: Port the app is running on
+        wait_time: Milliseconds to wait for network idle
+
+    Returns:
+        True if screenshot was captured successfully
+    """
+    try:
+        from playwright.async_api import async_playwright  # type: ignore[import-not-found]
+    except ImportError:
+        print("    ⚠️  Playwright not available, skipping screenshot")
+        return False
+
+    screenshot_dir = app_dir / "screenshot_output"
+    screenshot_dir.mkdir(exist_ok=True)
+    screenshot_path = screenshot_dir / "screenshot.png"
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            try:
+                await page.goto(f"http://localhost:{port}", wait_until="networkidle", timeout=wait_time)
+                await page.screenshot(path=str(screenshot_path), full_page=True)
+                print("    ✅ Screenshot captured")
+                return True
+            except Exception as e:
+                # Take screenshot anyway to capture error state
+                try:
+                    await page.screenshot(path=str(screenshot_path), full_page=True)
+                except Exception:
+                    pass
+                print(f"    ⚠️  Screenshot captured with errors: {e}")
+                return True
+            finally:
+                await browser.close()
+    except Exception as e:
+        print(f"    ⚠️  Screenshot failed: {e}")
+        return False
+
 
 def _is_running_as_root() -> bool:
     """Check if running as root user.
@@ -257,10 +301,18 @@ def _prepare_runtime_env(app_dir: Path, container_name: str = "", port: int = 80
     return env
 
 
-async def check_runtime_success(agent: EvalAgent, app_dir: Path, container_name: str, template: str = "unknown", port: int = 8000) -> tuple[bool, dict]:
+async def check_runtime_success(agent: EvalAgent, app_dir: Path, container_name: str, template: str = "unknown", port: int = 8000, keep_running: bool = False) -> tuple[bool, dict]:
     """Metric 2: App starts and responds to requests.
 
     Uses the evaluation agent to start and health check the app.
+
+    Args:
+        agent: Evaluation agent
+        app_dir: Path to app directory
+        container_name: Container name for Docker apps
+        template: Template type
+        port: Port to run on
+        keep_running: If True, don't stop the app after health check (for screenshot capture)
     """
     print("  [2/7] Checking runtime success...")
 
@@ -294,8 +346,9 @@ async def check_runtime_success(agent: EvalAgent, app_dir: Path, container_name:
             )
             startup_time = time.time() - start_time
 
-            # Cleanup regardless of success/failure
-            await _stop_app(agent, app_dir, template, port)
+            # Cleanup unless keep_running requested
+            if not keep_running or not success:
+                await _stop_app(agent, app_dir, template, port)
 
             if success:
                 return True, {"startup_time_sec": round(startup_time, 1)}
@@ -316,8 +369,9 @@ async def check_runtime_success(agent: EvalAgent, app_dir: Path, container_name:
         success, output = await agent.start(port=port)
         startup_time = time.time() - start_time
 
-        # Cleanup regardless of success/failure
-        await _stop_app(agent, app_dir, template, port)
+        # Cleanup unless keep_running requested
+        if not keep_running or not success:
+            await _stop_app(agent, app_dir, template, port)
 
         if success:
             return True, {"startup_time_sec": round(startup_time, 1)}
@@ -789,7 +843,8 @@ async def evaluate_app(app_dir: Path, prompt: str | None = None, port: int = 800
                 issues.append("Build failed (npm install)")
 
         # Metric 2: Runtime (always try, not just if build succeeded)
-        runtime_success, runtime_meta = await check_runtime_success(agent, app_dir, container_name, template, port)
+        # Keep app running for screenshot capture
+        runtime_success, runtime_meta = await check_runtime_success(agent, app_dir, container_name, template, port, keep_running=True)
         metrics.runtime_success = runtime_success
         metrics.startup_time_sec = runtime_meta.get("startup_time_sec", 0.0)
         if not runtime_success:
@@ -797,6 +852,28 @@ async def evaluate_app(app_dir: Path, prompt: str | None = None, port: int = 800
                 issues.append("Container failed to start or healthcheck failed")
             else:
                 issues.append("App failed to start or respond")
+
+        # Capture screenshot and DB checks RIGHT AFTER runtime (before tests which may kill the app)
+        if runtime_success:
+            # Capture screenshot for UI check (app must still be running)
+            print("  [3/9] Capturing screenshot...")
+            await capture_screenshot_local(app_dir, port)
+
+            # Metric 5: Databricks connectivity (check while app is running)
+            print("  [4/9] Checking Databricks connectivity...")
+            db_success = check_databricks_connectivity(app_dir, template, port)
+            metrics.databricks_connectivity = db_success
+            if not db_success:
+                issues.append("Databricks connectivity failed")
+
+            # Stop the app now - we have the screenshot
+            await _stop_app(agent, app_dir, template, port)
+
+            # Metric 7: UI functional (VLM - binary check on captured screenshot)
+            ui_renders, ui_details = check_ui_functional_vlm(app_dir, prompt)
+            metrics.ui_renders = ui_renders
+            if not ui_renders:
+                issues.append(f"UI concerns: {ui_details}")
 
         # Metric 3: Type safety (requires dependencies)
         if deps_installed:
@@ -819,28 +896,6 @@ async def evaluate_app(app_dir: Path, prompt: str | None = None, port: int = 800
                 issues.append("Tests failed")
             if coverage < 70:
                 issues.append(f"Test coverage below 70% ({coverage:.1f}%)")
-
-        # Metric 5: Databricks connectivity (only if runtime succeeded)
-        if runtime_success:
-            db_success = check_databricks_connectivity(app_dir, template, port)
-            metrics.databricks_connectivity = db_success
-            if not db_success:
-                issues.append("Databricks connectivity failed")
-
-            # Metric 6: Data validity (LLM - binary check) - NOT INCLUDED IN SCORE
-            # TODO: Re-enable when LLM validation is reliable
-            # if db_success:
-            #     data_returned, data_details = check_data_validity_llm(app_dir, prompt, template)
-            #     metrics.data_returned = data_returned
-            #     if not data_returned:
-            #         issues.append(f"Data validity concerns: {data_details}")
-
-            # Metric 7: UI functional (VLM - binary check) - NOT INCLUDED IN SCORE
-            # TODO: Re-enable when VLM validation is reliable
-            # ui_renders, ui_details = check_ui_functional_vlm(app_dir, prompt)
-            # metrics.ui_renders = ui_renders
-            # if not ui_renders:
-            #     issues.append(f"UI concerns: {ui_details}")
 
         # Metric 8: Local runability (DevX)
         local_score, local_details = check_local_runability(app_dir, template)

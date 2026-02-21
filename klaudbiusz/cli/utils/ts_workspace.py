@@ -189,3 +189,95 @@ async def check_types(workspace: Workspace) -> ExecResult:
         ExecResult with exit code, stdout, stderr
     """
     return await workspace.exec(["bash", "/eval/typecheck.sh"])
+
+
+async def capture_screenshot(
+    workspace: Workspace,
+    app_dir: Path,
+    port: int = 8000,
+    wait_time: int = 10000,
+) -> bool:
+    """Capture a screenshot of the running app using Playwright.
+
+    Starts the app as a Dagger service, runs Playwright to capture a screenshot,
+    and exports it to the app directory.
+
+    Args:
+        workspace: Configured TypeScript workspace with built app
+        app_dir: Path to export screenshot to
+        port: Port the app listens on
+        wait_time: Milliseconds to wait for network idle
+
+    Returns:
+        True if screenshot was captured successfully
+    """
+    import time
+
+    client = workspace.client
+
+    # Create app service - runs npm start and stays running
+    # Using a shell command that starts the app in background and waits
+    app_service = (
+        workspace.ctr
+        .with_env_variable("_SCREENSHOT_TIMESTAMP", str(time.time()))
+        .with_exec(
+            ["sh", "-c", "cd /app && npm start"],
+            expect=dagger.ReturnType.ANY,
+        )
+        .with_exposed_port(port)
+        .as_service()
+    )
+
+    # Create Playwright container
+    playwright_ctr = (
+        client.container()
+        .from_("mcr.microsoft.com/playwright:v1.40.0-jammy")
+        .with_service_binding("app", app_service)
+        .with_workdir("/work")
+        .with_new_file(
+            "/work/screenshot.js",
+            f"""
+const {{ chromium }} = require('playwright');
+
+(async () => {{
+    const browser = await chromium.launch();
+    const page = await browser.newPage();
+    try {{
+        await page.goto('http://app:{port}', {{
+            waitUntil: 'networkidle',
+            timeout: {wait_time}
+        }});
+        await page.screenshot({{ path: '/work/screenshot.png', fullPage: true }});
+        console.log('Screenshot captured successfully');
+    }} catch (e) {{
+        console.error('Screenshot failed:', e.message);
+        // Take screenshot anyway to capture error state
+        await page.screenshot({{ path: '/work/screenshot.png', fullPage: true }});
+    }} finally {{
+        await browser.close();
+    }}
+}})();
+""",
+        )
+    )
+
+    try:
+        # Run the screenshot script
+        result_ctr = await playwright_ctr.with_exec(
+            ["node", "/work/screenshot.js"],
+            expect=dagger.ReturnType.ANY,
+        ).sync()
+
+        # Export screenshot to host
+        screenshot_dir = app_dir / "screenshot_output"
+        screenshot_dir.mkdir(exist_ok=True)
+
+        screenshot_file = result_ctr.file("/work/screenshot.png")
+        await screenshot_file.export(str(screenshot_dir / "screenshot.png"))
+
+        print("    ✅ Screenshot captured")
+        return True
+
+    except Exception as e:
+        print(f"    ⚠️  Screenshot failed: {e}")
+        return False

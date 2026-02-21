@@ -34,6 +34,7 @@ from cli.evaluation.evaluate_app import (
 from cli.utils.template_detection import detect_template, get_actual_app_dir
 from cli.utils.ts_workspace import (
     build_app,
+    capture_screenshot,
     check_runtime,
     check_types,
     create_ts_workspace,
@@ -251,11 +252,16 @@ async def evaluate_app_async(
         # Remaining checks run on host (not in Dagger)
         # These are slow (LLM/VLM calls) and can be skipped with --fast flag
 
+        # Capture screenshot if runtime succeeded (needed for UI check)
+        if runtime_success and not fast_mode:
+            print("  [5/8] Capturing screenshot...")
+            await capture_screenshot(workspace, app_dir, port)
+
         # Metric 5: Databricks connectivity (only if runtime succeeded)
         if fast_mode:
             print("  [5-7/7] Skipping DB/data/UI checks (--fast mode)")
         elif runtime_success:
-            print("  [5/7] Checking Databricks connectivity...")
+            print("  [6/8] Checking Databricks connectivity...")
             db_success = check_databricks_connectivity(app_dir, template, port)
             metrics.databricks_connectivity = db_success
             if not db_success:
@@ -269,13 +275,13 @@ async def evaluate_app_async(
                     issues.append(f"Data validity concerns: {data_details}")
 
             # Metric 7: UI functional (VLM)
-            print("  [7/7] Checking UI renders (VLM)...")
+            print("  [8/8] Checking UI renders (VLM)...")
             ui_renders, ui_details = check_ui_functional_vlm(app_dir, prompt)
             metrics.ui_renders = ui_renders
             if not ui_renders:
                 issues.append(f"UI concerns: {ui_details}")
         else:
-            print("  [5-7/7] Skipping DB/data/UI checks (runtime failed)")
+            print("  [5-8/8] Skipping DB/data/UI checks (runtime failed)")
 
     except Exception as e:
         issues.append(f"Evaluation error: {str(e)}")

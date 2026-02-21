@@ -51,8 +51,8 @@ Steps:
    - curl -sf --max-time 2 http://localhost:{port}/healthcheck
    - curl -sf --max-time 2 http://localhost:{port}/
 5. If either returns success, the app is running correctly
-6. Clean up: kill any process on port {port} after testing
 
+IMPORTANT: Do NOT stop the app. Leave it running for screenshot capture.
 The test succeeds if the health check passes.""",
     "stop": """Stop any running processes for this app on port {port}.
 - Kill any processes listening on port {port}

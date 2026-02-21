@@ -24,6 +24,7 @@ dependencies = [
     "tenacity>=9.1.2",
     "opentelemetry-exporter-otlp-proto-grpc>=1.38.0",
     "nest-asyncio>=1.6.0",
+    "playwright>=1.58.0",
 ]
 
 [tool.ruff]
