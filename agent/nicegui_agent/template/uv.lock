@@ -624,7 +624,7 @@ wheels = [
 
 [[package]]
 name = "nicegui"
-version = "3.7.0"
+version = "3.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -649,9 +649,9 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/24/6e/563dc49f674fb324c13385b319d2f35224986e0ef504b9dbc99fc15244ed/nicegui-3.7.0.tar.gz", hash = "sha256:ee981769577a55b1d8ab61a1129f15b7513571eedfd516309a081a47a19655a7", size = 21343733, upload-time = "2026-02-05T11:00:24.815Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/87/512897ea7d412adec5bfd5b32250f13a5eec2f0168b9abdd496b9f9e1f0f/nicegui-3.8.0.tar.gz", hash = "sha256:4badf3f8ef6d20119d25a2bee553fe5b224d2821a17853d54360fd3ae14e595c", size = 19048154, upload-time = "2026-02-24T16:11:16.183Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/80/de/51bdea23deffd1c31b5eb9942a9b66ba8611a8e46361787235e1fdc4d6db/nicegui-3.7.0-py3-none-any.whl", hash = "sha256:cf34435a2ee0aaf51d3065c769efe96b84859e7340b985340674dc2e3e0cb098", size = 22008327, upload-time = "2026-02-05T11:00:27.857Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/a2/ce16affb093fd44912ef39b29ff78734e0281e60be64f30dfb64f84c2c3e/nicegui-3.8.0-py3-none-any.whl", hash = "sha256:22040fe3c07144dfcaf464a1e136f9a63137bb78f5ad43337fd232e446cb2823", size = 19625456, upload-time = "2026-02-24T16:11:11.993Z" },
 ]
 
 [package.optional-dependencies]
@@ -1098,11 +1098,11 @@ wheels = [
 
 [[package]]
 name = "python-multipart"
-version = "0.0.20"
+version = "0.0.22"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f3/87/f44d7c9f274c7ee665a29b885ec97089ec5dc034c7f3fafa03da9e39a09e/python_multipart-0.0.20.tar.gz", hash = "sha256:8dd0cab45b8e23064ae09147625994d090fa46f5b0d1e13af944c331a7fa9d13", size = 37158, upload-time = "2024-12-16T19:45:46.972Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/01/979e98d542a70714b0cb2b6728ed0b7c46792b695e3eaec3e20711271ca3/python_multipart-0.0.22.tar.gz", hash = "sha256:7340bef99a7e0032613f56dc36027b959fd3b30a787ed62d310e951f7c3a3a58", size = 37612, upload-time = "2026-01-25T10:15:56.219Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/45/58/38b5afbc1a800eeea951b9285d3912613f2603bdf897a4ab0f4bd7f405fc/python_multipart-0.0.20-py3-none-any.whl", hash = "sha256:8a62d3a8335e06589fe01f2a3e178cdcc632f3fbe0d492ad9ee0ec35aab1f104", size = 24546, upload-time = "2024-12-16T19:45:44.423Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/d0/397f9626e711ff749a95d96b7af99b9c566a9bb5129b8e4c10fc4d100304/python_multipart-0.0.22-py3-none-any.whl", hash = "sha256:2b2cd894c83d21bf49d702499531c7bafd057d730c201782048f7945d82de155", size = 24579, upload-time = "2026-01-25T10:15:54.811Z" },
 ]
 
 [[package]]
