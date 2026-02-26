@@ -14,6 +14,27 @@ from cli.generation.codegen import GenerationMetrics
 
 logger = logging.getLogger(__name__)
 
+BUILD_CONTEXT_EXCLUDES = [
+    "app/",
+    "app-*/",
+    "app-eval/",
+    "archive/",
+    "results/",
+    ".venv/",
+    "__pycache__/",
+    ".git/",
+]
+
+# Keep generated source, logs, and metrics, but skip dependency trees.
+EXPORT_EXCLUDE_PATHS = [
+    "**/node_modules/**",
+]
+
+# Hard caps for a single app execution.
+APP_EXEC_TIMEOUT_SEC = 35 * 60
+# Retry once when the failure is timeout-shaped.
+BULK_TIMEOUT_RETRIES = 1
+
 
 def _read_metrics_from_app(app_dir: Path) -> GenerationMetrics | None:
     """Read metrics from generation_metrics.json in app directory."""
@@ -71,12 +92,11 @@ class DaggerAppGenerator:
         async with dagger.Connection(cfg) as client:
             container = await self._build_container(client)
             return await self._run_generation(
-                client, container, prompt, app_name, backend, model
+                container, prompt, app_name, backend, model
             )
 
     async def _run_generation(
         self,
-        client: dagger.Client,
         base_container: dagger.Container,
         prompt: str,
         app_name: str,
@@ -98,20 +118,26 @@ class DaggerAppGenerator:
         if model:
             cmd.append(f"--model={model}")
 
-        # mount cache volume for python deps (safe for concurrent access)
-        # note: npm cache is NOT cached to avoid corruption under parallel execution
-        # npm packages are already optimized via BuildKit cache mounts in Dockerfile
-        python_cache = client.cache_volume("klaudbiusz-python-cache")
-        container = base_container.with_mounted_cache(
-            "/home/klaudbiusz/.cache", python_cache, owner="klaudbiusz:klaudbiusz"
-        )
-
-        # run generation and sync to force evaluation
-        result = await container.with_exec(cmd).sync()
+        container = base_container
 
         # prepare log file path
         log_file_local = self.output_dir / "logs" / f"{app_name}.log"
         log_file_local.parent.mkdir(parents=True, exist_ok=True)
+        log_file_local.write_text("")
+
+        # run generation and sync to force evaluation
+        try:
+            result = await asyncio.wait_for(
+                container.with_exec(cmd).sync(),
+                timeout=APP_EXEC_TIMEOUT_SEC if APP_EXEC_TIMEOUT_SEC > 0 else None,
+            )
+        except TimeoutError as e:
+            timeout_msg = (
+                f"Generation timed out after {APP_EXEC_TIMEOUT_SEC}s for app '{app_name}'. "
+                "Marking as failed and releasing bulk slot."
+            )
+            log_file_local.write_text(f"=== TIMEOUT ===\n{timeout_msg}\n")
+            raise TimeoutError(timeout_msg) from e
 
         # capture stdout/stderr - even on failure we want to save what we can
         exec_error: dagger.ExecError | None = None
@@ -130,7 +156,8 @@ class DaggerAppGenerator:
         # because the app may have been built successfully before SDK shutdown error
         app_dir_local = self.output_dir / app_name
         try:
-            await result.directory(app_output).export(str(app_dir_local))
+            app_dir_filtered = result.directory(app_output).without_files(EXPORT_EXCLUDE_PATHS)
+            await app_dir_filtered.export(str(app_dir_local))
             # app was exported successfully - if we had an ExecError, log it but don't fail
             if exec_error:
                 logger.warning(f"Container exited with error but app was exported: {exec_error}")
@@ -178,22 +205,45 @@ class DaggerAppGenerator:
             base_container = await self._build_container(client)
             sem = asyncio.Semaphore(max_concurrency)
 
+            def is_timeout_failure(error: Exception, log_path: Path) -> bool:
+                message = str(error).lower()
+                if isinstance(error, TimeoutError):
+                    return True
+                if "timeout" in message or "timed out" in message or "code 124" in message:
+                    return True
+                if log_path.exists():
+                    try:
+                        content = log_path.read_text().lower()
+                    except OSError:
+                        return False
+                    return "=== timeout ===" in content or "timed out" in content
+                return False
+
             async def run_with_sem(
                 app_name: str, prompt: str
             ) -> tuple[str, Path | None, Path | None, GenerationMetrics | None, str | None]:
                 async with sem:
-                    try:
-                        app_dir, log_file, metrics = await self._run_generation(
-                            client, base_container, prompt, app_name, backend, model
-                        )
-                        if on_complete:
-                            on_complete(app_name, True)
-                        return (app_name, app_dir, log_file, metrics, None)
-                    except Exception as e:
-                        if on_complete:
-                            on_complete(app_name, False)
-                        log_path = self.output_dir / "logs" / f"{app_name}.log"
-                        return (app_name, None, log_path if log_path.exists() else None, None, str(e))
+                    log_path = self.output_dir / "logs" / f"{app_name}.log"
+                    max_attempts = BULK_TIMEOUT_RETRIES + 1
+
+                    for attempt in range(max_attempts):
+                        try:
+                            app_dir, log_file, metrics = await self._run_generation(
+                                base_container, prompt, app_name, backend, model
+                            )
+                            if on_complete:
+                                on_complete(app_name, True)
+                            return (app_name, app_dir, log_file, metrics, None)
+                        except Exception as e:
+                            if attempt < BULK_TIMEOUT_RETRIES and is_timeout_failure(e, log_path):
+                                logger.warning(
+                                    f"Timeout while generating '{app_name}', retrying "
+                                    f"({attempt + 1}/{BULK_TIMEOUT_RETRIES})"
+                                )
+                                continue
+                            if on_complete:
+                                on_complete(app_name, False)
+                            return (app_name, None, log_path if log_path.exists() else None, None, str(e))
 
             tasks = [run_with_sem(name, prompt) for name, prompt in prompts.items()]
             return await asyncio.gather(*tasks)
@@ -203,14 +253,7 @@ class DaggerAppGenerator:
         # build context excluding generated files
         context = client.host().directory(
             ".",
-            exclude=[
-                "app/",
-                "app-eval/",
-                "results/",
-                ".venv/",
-                "__pycache__/",
-                ".git/",
-            ],
+            exclude=BUILD_CONTEXT_EXCLUDES,
         )
 
         # build from Dockerfile (leverages BuildKit cache)

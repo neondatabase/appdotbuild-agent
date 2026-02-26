@@ -1,6 +1,8 @@
 """Runner script executed inside Dagger container."""
 
 import json
+import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -10,6 +12,12 @@ import fire
 
 # directories that exist in /workspace before generation (source code)
 _KNOWN_DIRS = {"cli", "__pycache__", ".venv"}
+_HEAVY_DIRS_TO_PRUNE = {"node_modules", ".pnpm-store", ".yarn", ".next"}
+_IGNORED_GENERATED_DIRS = {".pytest_cache", ".cache"}
+OPENCODE_TIMEOUT_SEC = 30 * 60
+OPENCODE_TIMEOUT_RETRIES = 1
+OPENCODE_TERM_GRACE_SEC = 10
+OPENCODE_KILL_GRACE_SEC = 5
 
 
 def _move_to_expected(actual_dir: Path, expected: Path, app_name: str) -> Path:
@@ -31,8 +39,14 @@ def _find_new_app_dir(output_dir: Path, app_name: str, pre_existing: set[str]) -
     # find new directories created during generation
     current_dirs = {d.name for d in output_dir.iterdir() if d.is_dir()}
     new_dirs = current_dirs - pre_existing - _KNOWN_DIRS - {app_name}
-    # filter out empty dirs
-    new_dirs = {d for d in new_dirs if any((output_dir / d).iterdir())}
+    # filter out hidden/transient and empty dirs
+    new_dirs = {
+        d
+        for d in new_dirs
+        if not d.startswith(".")
+        and d not in _IGNORED_GENERATED_DIRS
+        and any((output_dir / d).iterdir())
+    }
 
     if not new_dirs:
         # agent used the expected name (or created nothing)
@@ -52,6 +66,40 @@ def _find_new_app_dir(output_dir: Path, app_name: str, pre_existing: set[str]) -
     # last resort: pick the largest new directory
     largest = max(new_dirs, key=lambda d: sum(1 for _ in (output_dir / d).rglob("*")))
     return _move_to_expected(output_dir / largest, expected, app_name)
+
+
+def _prune_heavy_artifacts(app_dir: Path) -> None:
+    """Remove dependency/build directories to reduce Dagger snapshot size."""
+    removed = 0
+    for root, dirs, _ in os.walk(app_dir, topdown=True):
+        prune_dirs = [d for d in dirs if d in _HEAVY_DIRS_TO_PRUNE]
+        for dir_name in prune_dirs:
+            shutil.rmtree(Path(root) / dir_name, ignore_errors=True)
+            dirs.remove(dir_name)
+            removed += 1
+
+    if removed:
+        print(f"Pruned {removed} heavy directories before export")
+
+
+def _terminate_process_group(proc: subprocess.Popen) -> None:
+    """Terminate spawned process group, then force kill if needed."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    try:
+        proc.wait(timeout=OPENCODE_TERM_GRACE_SEC)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    proc.wait(timeout=OPENCODE_KILL_GRACE_SEC)
 
 
 def run(
@@ -106,6 +154,8 @@ def run(
 
     # find and normalize the app directory (rename if agent used different name)
     app_dir = _find_new_app_dir(out_path, app_name, pre_existing)
+    if app_dir:
+        _prune_heavy_artifacts(app_dir)
 
     if error:
         print(f"SDK error: {error}", file=sys.stderr)
@@ -140,12 +190,35 @@ def _run_opencode(
     if model:
         cmd.extend(["--model", model])
 
-    # run opencode generation
-    result = subprocess.run(cmd, cwd="/workspace", capture_output=False)
+    # run opencode generation with hard timeout and one retry on timeout
+    result_code: int | None = None
+    for attempt in range(OPENCODE_TIMEOUT_RETRIES + 1):
+        proc = subprocess.Popen(
+            cmd,
+            cwd="/workspace",
+            start_new_session=True,  # allow killing whole process group on timeout
+        )
+        try:
+            result_code = proc.wait(timeout=OPENCODE_TIMEOUT_SEC)
+            break
+        except subprocess.TimeoutExpired:
+            _terminate_process_group(proc)
+            if attempt < OPENCODE_TIMEOUT_RETRIES:
+                print(
+                    f"Warning: opencode timed out after {OPENCODE_TIMEOUT_SEC}s for '{app_name}', retrying once",
+                    file=sys.stderr,
+                )
+                continue
+            print(
+                f"Error: opencode generation timed out after {OPENCODE_TIMEOUT_SEC}s for app '{app_name}'",
+                file=sys.stderr,
+            )
+            sys.exit(124)
 
-    if result.returncode != 0:
-        print(f"Error: opencode generation failed with code {result.returncode}", file=sys.stderr)
-        sys.exit(result.returncode)
+    assert result_code is not None
+    if result_code != 0:
+        print(f"Error: opencode generation failed with code {result_code}", file=sys.stderr)
+        sys.exit(result_code)
 
     # read metrics from generated file
     metrics_file = Path(output_dir) / app_name / "generation_metrics.json"
