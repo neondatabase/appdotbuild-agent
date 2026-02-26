@@ -24,6 +24,7 @@ def run(
     backend: str = "claude",
     model: str | None = None,
     output_dir: str | None = None,
+    databricks_cli_path: str | None = None,
 ) -> dict[str, str | None]:
     """Run app generation in Dagger container.
 
@@ -33,6 +34,7 @@ def run(
         backend: Backend to use ("claude" or "opencode", default: "claude")
         model: LLM model (optional, for opencode non-default model)
         output_dir: Directory to store generated apps (default: ./app)
+        databricks_cli_path: Optional host path to custom databricks CLI binary
 
     Usage:
         # Claude backend (default) - uses skills
@@ -49,6 +51,7 @@ def run(
 
     generator = DaggerAppGenerator(
         output_dir=Path(output_dir) if output_dir else Path("./app"),
+        databricks_cli_path=Path(databricks_cli_path).expanduser() if databricks_cli_path else None,
     )
 
     try:

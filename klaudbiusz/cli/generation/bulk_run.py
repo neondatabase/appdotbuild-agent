@@ -26,6 +26,7 @@ def main(
     model: str | None = None,
     output_dir: str | None = None,
     max_concurrency: int = 6,
+    databricks_cli_path: str | None = None,
 ) -> None:
     """Bulk app generation via Dagger with parallelism.
 
@@ -35,6 +36,7 @@ def main(
         model: LLM model (optional, for opencode non-default model)
         output_dir: Custom output directory for generated apps
         max_concurrency: Maximum parallel generations (default: 6)
+        databricks_cli_path: Optional host path to custom databricks CLI binary
 
     Usage:
         # Claude backend with databricks prompts
@@ -66,12 +68,15 @@ def main(
         print(f"Model: {model}")
     print(f"Prompt set: {prompts}")
     print(f"Max concurrency: {max_concurrency}")
+    if databricks_cli_path:
+        print(f"Databricks CLI path override: {databricks_cli_path}")
     out_path = Path(output_dir) if output_dir else Path("./app")
     print(f"Output dir: {out_path}\n")
 
     generator = DaggerAppGenerator(
         output_dir=out_path,
         stream_logs=False,  # disable TUI for bulk runs
+        databricks_cli_path=Path(databricks_cli_path).expanduser() if databricks_cli_path else None,
     )
 
     # progress bar with success/fail tracking

@@ -50,6 +50,13 @@ uv run cli/generation/bulk_run.py --backend=opencode
 
 # OpenCode with custom model
 uv run cli/generation/bulk_run.py --backend=opencode --model=anthropic/claude-opus-4-5-20251101
+
+# Optional: override Databricks CLI binary used in Dagger container
+uv run cli/generation/single_run.py "Create a customer churn analysis dashboard" \
+  --databricks_cli_path=/absolute/path/to/databricks
+
+# Optional: same override for bulk run
+uv run cli/generation/bulk_run.py --databricks_cli_path=/absolute/path/to/databricks
 ```
 
 ### Local Debugging (without Dagger)

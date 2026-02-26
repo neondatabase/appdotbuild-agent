@@ -1,11 +1,15 @@
 FROM python:3.12-slim
 
+ARG INSTALL_DATABRICKS_CLI=1
+
 # install system dependencies in single layer (includes playwright browser deps)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends curl unzip git && \
-    curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh && \
+    if [ "$INSTALL_DATABRICKS_CLI" = "1" ]; then \
+        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh; \
+    fi && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     apt-get install -y --no-install-recommends \

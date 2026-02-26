@@ -62,15 +62,18 @@ class DaggerAppGenerator:
         self,
         output_dir: Path,
         stream_logs: bool = True,
+        databricks_cli_path: Path | None = None,
     ):
         """Initialize Dagger app generator.
 
         Args:
             output_dir: Directory to export generated apps to
             stream_logs: Whether to stream Dagger logs to stderr
+            databricks_cli_path: Optional host path to custom databricks CLI binary
         """
         self.output_dir = output_dir
         self.stream_logs = stream_logs
+        self.databricks_cli_path = databricks_cli_path
 
     async def generate_single(
         self,
@@ -256,8 +259,24 @@ class DaggerAppGenerator:
             exclude=BUILD_CONTEXT_EXCLUDES,
         )
 
-        # build from Dockerfile (leverages BuildKit cache)
-        container = context.docker_build()
+        if self.databricks_cli_path is not None:
+            resolved_cli_path = self.databricks_cli_path.resolve()
+            if not resolved_cli_path.is_file():
+                raise ValueError(
+                    f"--databricks_cli_path must point to a file, got: {resolved_cli_path}"
+                )
+            # Explicit branch: do not install default CLI, copy custom binary instead.
+            container = context.docker_build(
+                build_args=[dagger.BuildArg(name="INSTALL_DATABRICKS_CLI", value="0")]
+            )
+            container = container.with_file(
+                "/usr/local/bin/databricks",
+                client.host().file(str(resolved_cli_path)),
+                permissions=0o755,
+            )
+        else:
+            # Explicit branch: install default CLI from Dockerfile.
+            container = context.docker_build()
 
         # pass through env vars from host (LLM providers + internal)
         env_vars = [
