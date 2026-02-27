@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -349,6 +350,25 @@ Key areas: packages/appkit-ui (React components), packages/appkit (server SDK), 
 
     task_description = "\n".join(categories)
 
+    # write large context to temp files to avoid hitting OS ARG_MAX limit
+    # (system_prompt is passed via CLI args/env to the subprocess)
+    analyses_file = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", prefix="trajectory_analyses_", delete=False
+    )
+    analyses_file.write(concatenated_analyses)
+    analyses_file.close()
+
+    extra_context_file = None
+    extra_context = f"{skills_section}{appkit_section}{eval_section}".strip()
+    extra_context_ref = ""
+    if extra_context:
+        extra_context_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", prefix="trajectory_extra_context_", delete=False
+        )
+        extra_context_file.write(extra_context)
+        extra_context_file.close()
+        extra_context_ref = f"\n\nAdditional context (skills, appkit, eval metrics) is in: {extra_context_file.name}\nRead this file first as well."
+
     base_instructions = f"""You are analyzing AI agent execution trajectories for a Databricks app generator.
 
 **Your task**: Provide actionable recommendations in these categories:
@@ -358,15 +378,11 @@ Key areas: packages/appkit-ui (React components), packages/appkit (server SDK), 
 - Focus on systemic issues, not one-off failures
 - Be specific: reference file paths, skill names, trajectory patterns
 - Format recommendations as markdown with clear sections
-- Only analyze context that has been explicitly provided below
+- Only analyze context that has been explicitly provided
 
----
+**IMPORTANT**: Start by reading the trajectory analyses file and any additional context files listed below.
 
-## Trajectory Analyses
-
-{concatenated_analyses}{skills_section}{appkit_section}{eval_section}
-
----
+Trajectory analyses are in: {analyses_file.name}{extra_context_ref}
 
 Analyze the data and provide your recommendations."""
 
@@ -384,34 +400,39 @@ Analyze the data and provide your recommendations."""
     )
 
     final_result: str | None = None
-    async for message in query(prompt="Analyze trajectories and provide recommendations.", options=options):
-        match message:
-            case AssistantMessage():
-                for block in message.content:
-                    match block:
-                        case TextBlock():
-                            text_preview = block.text[:200] if len(block.text) > 200 else block.text
-                            logger.info(f"💭 Agent: {text_preview}{'...' if len(block.text) > 200 else ''}")
-                        case ToolUseBlock():
-                            args = block.input or {}
-                            params = ", ".join(f"{k}={str(v)[:200]}" for k, v in args.items())
-                            truncated = params if len(params) <= 200 else params[:200] + "..."
-                            logger.info(f"🔧 Tool: {block.name}({truncated})")
-            case ResultMessage(result=result):
-                final_result = result
-                logger.info("✅ Agent completed analysis and produced final report")
-            case UserMessage():
-                for block in message.content:
-                    match block:
-                        case TextBlock():
-                            text_preview = block.text[:200] if len(block.text) > 200 else block.text
-                            logger.info(f"👤 User: {text_preview}{'...' if len(block.text) > 200 else ''}")
-                        case _:
-                            pass
-            case SystemMessage():
-                pass
-            case _:
-                logger.warning(f"Unknown message type: {type(message).__name__}")
+    try:
+        async for message in query(prompt="Analyze trajectories and provide recommendations.", options=options):
+            match message:
+                case AssistantMessage():
+                    for block in message.content:
+                        match block:
+                            case TextBlock():
+                                text_preview = block.text[:200] if len(block.text) > 200 else block.text
+                                logger.info(f"💭 Agent: {text_preview}{'...' if len(block.text) > 200 else ''}")
+                            case ToolUseBlock():
+                                args = block.input or {}
+                                params = ", ".join(f"{k}={str(v)[:200]}" for k, v in args.items())
+                                truncated = params if len(params) <= 200 else params[:200] + "..."
+                                logger.info(f"🔧 Tool: {block.name}({truncated})")
+                case ResultMessage(result=result):
+                    final_result = result
+                    logger.info("✅ Agent completed analysis and produced final report")
+                case UserMessage():
+                    for block in message.content:
+                        match block:
+                            case TextBlock():
+                                text_preview = block.text[:200] if len(block.text) > 200 else block.text
+                                logger.info(f"👤 User: {text_preview}{'...' if len(block.text) > 200 else ''}")
+                            case _:
+                                pass
+                case SystemMessage():
+                    pass
+                case _:
+                    logger.warning(f"Unknown message type: {type(message).__name__}")
+    finally:
+        Path(analyses_file.name).unlink(missing_ok=True)
+        if extra_context_file:
+            Path(extra_context_file.name).unlink(missing_ok=True)
 
     if final_result is None:
         raise RuntimeError("Agent did not produce a final report")
