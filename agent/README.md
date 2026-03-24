@@ -6,7 +6,7 @@
 2) Make sure you have `ANTHROPIC_API_KEY` and `GEMINI_API_KEY` env vars available.
 3) Run the commands
 
-### Commands
+### Commands t
 
 All the commands are run using `uv` from `agent` directory.
 
