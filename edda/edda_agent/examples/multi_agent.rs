@@ -1,3 +1,4 @@
+use edda_agent::llm::FinishReason;
 use edda_agent::processor::agent::{Agent, AgentError, AgentState, Command, Event};
 use edda_agent::processor::databricks::{
     self, DatabricksTool, DatabricksToolHandler, FinishDelegation, FinishDelegationArgs,
@@ -10,7 +11,7 @@ use edda_agent::processor::tools::{
 use edda_agent::processor::utils::LogHandler;
 use edda_agent::toolbox::{self, basic::toolset};
 use edda_integrations::databricks::DatabricksRestClient;
-use edda_mq::db::sqlite::SqliteStore;
+use edda_mq::store::{AnyStore, create_store};
 use edda_mq::{Envelope, Event as MQEvent, EventStore, Handler, PollingQueue};
 use edda_sandbox::SandboxHandle;
 use eyre::Result;
@@ -23,10 +24,18 @@ use std::sync::Arc;
 // Prompts
 const PLANNER_PROMPT: &str = "
 You are a planning assistant that coordinates between different specialist agents.
-You can:
-- Use 'explore_databricks_catalog' to delegate Databricks exploration tasks
-- Use 'send_coding_task' to delegate Python coding tasks
-Choose the appropriate specialist for each user request.
+You have two tools:
+- 'explore_databricks_catalog' — delegates Databricks catalog exploration to a specialist
+- 'send_coding_task' — delegates Python coding to a specialist
+
+STRICT WORKFLOW — always follow these steps in order:
+1. Call 'explore_databricks_catalog' to discover the data schema and SQL queries.
+2. Wait for the exploration result, then immediately call 'send_coding_task' with a detailed
+   description that includes the discovered table names, column names, and the exact SQL queries
+   to use. Do NOT summarize or reply with text — call the tool.
+3. Wait for the coding result confirming the task is complete.
+
+Never respond with plain text when you have pending tool calls to make.
 ";
 
 const DATABRICKS_PROMPT: &str = "
@@ -40,17 +49,17 @@ Explore the specified catalog and provide comprehensive summary of:
 - Relationships between tables
 
 ## Focus
-- Look for business-relevant data
+- Look for sales-relevant data (orders, revenue, products, customers)
 - Identify primary/foreign keys
 - Use `databricks_describe_table` for full column details
-- Note columns for API fields
+- Note exact table and column names needed to query sales stats
 
 ## Completion
 When done, call `finish_delegation` with comprehensive summary including:
 - Overview of discoveries
 - Key schemas and table counts
-- Detailed table structures with column specs
-- API endpoint recommendations with column mappings
+- Detailed table structures with column specs and sample values
+- Exact SQL queries that could compute: total revenue, top products, sales by period
 
 IMPORTANT: Always use `databricks_describe_table` to get complete column details.
 ";
@@ -60,18 +69,31 @@ You are a python software engineer.
 Workspace is already set up using uv init.
 Use uv package manager if you need to add extra libraries.
 Program will be run using uv run main.py command in the current directory.
+
+Your task is to build a CLI tool that reports core sales statistics from a Databricks SQL warehouse.
+Use the databricks-sql-connector library to query the data.
+The report should print to stdout: total revenue, top 5 products by revenue, and sales breakdown by period.
+Use the DATABRICKS_HOST, DATABRICKS_TOKEN, and DATABRICKS_WAREHOUSE_ID environment variables for connection.
+Format output as a readable text report with clear sections and aligned columns.
+
 IMPORTANT: After the script runs successfully, you MUST call the 'done' tool to complete the task.
 ";
 
 const USER_PROMPT: &str = "
-Explore the 'main' catalog in Databricks and tell me about any bakery or sales data.
-After that, create a Python script that fetches my IP using ipify.org API.
+Explore the 'main' catalog in Databricks and find sales or bakery data with revenue/order information.
+Then build a Python CLI tool that connects to Databricks and prints a sales statistics report:
+total revenue, top 5 products by revenue, and sales breakdown by time period.
 ";
 
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     // Choose provider via environment variable
     let provider = std::env::var("LLM_PROVIDER")
@@ -207,6 +229,30 @@ impl Agent for Planner {
     type AgentEvent = PlannerEvent;
     type AgentError = PlannerError;
     type Services = ();
+
+    async fn handle(
+        state: &AgentState<Self>,
+        cmd: Command<Self::AgentCommand>,
+        services: &Self::Services,
+    ) -> Result<Vec<Event<Self::AgentEvent>>, AgentError<Self::AgentError>> {
+        if let Command::PutCompletion { ref response } = cmd {
+            if response.finish_reason == FinishReason::Stop {
+                // LLM replied with text instead of calling a tool — re-prompt it
+                let mut events = state.handle_shared(cmd, services).await?;
+                events.push(Event::UserCompletion {
+                    content: rig::OneOrMany::one(UserContent::text(
+                        "You must call one of your tools now. \
+                         If you have already received Databricks exploration results, \
+                         call 'send_coding_task' immediately with a detailed description \
+                         including the discovered table names, column names, and SQL queries. \
+                         Do not respond with plain text.",
+                    )),
+                });
+                return Ok(events);
+            }
+        }
+        state.handle_shared(cmd, services).await
+    }
 }
 
 // ============================================================================
@@ -293,6 +339,24 @@ impl Agent for DatabricksWorker {
                 }
                 Ok(vec![Event::ToolCalls { calls }])
             }
+            Command::PutCompletion { ref response }
+                if response.finish_reason == FinishReason::Stop
+                    && state.agent.parent_id.is_some() =>
+            {
+                // LLM finished with text instead of calling finish_delegation — treat text as summary
+                let summary = response
+                    .choice
+                    .iter()
+                    .filter_map(|c| match c {
+                        rig::message::AssistantContent::Text(t) => Some(t.text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let mut events = state.handle_shared(cmd, services).await?;
+                events.push(state.agent.emit_finished(summary));
+                Ok(events)
+            }
             Command::Agent(DatabricksCommand::Explore { parent_id, call }) => {
                 let args = &call.function.arguments;
                 let args: ExploreCatalogArgs = serde_json::from_value(args.clone()).unwrap();
@@ -307,6 +371,14 @@ impl Agent for DatabricksWorker {
                 ])
             }
             _ => state.handle_shared(cmd, services).await,
+        }
+    }
+
+    fn apply(state: &mut AgentState<Self>, event: Event<Self::AgentEvent>) {
+        state.apply_shared(event.clone());
+        if let Event::Agent(DatabricksEvent::Grabbed { parent_id, call }) = event {
+            state.agent.parent_id = Some(parent_id);
+            state.agent.parent_call = Some(call);
         }
     }
 }
@@ -394,6 +466,20 @@ impl Agent for CodingWorker {
                     call: state.agent.parent_call.clone().unwrap(),
                     result: "task completed".to_string(),
                 }));
+                Ok(events)
+            }
+            Command::PutCompletion { ref response }
+                if response.finish_reason == FinishReason::Stop
+                    || response.finish_reason == FinishReason::MaxTokens =>
+            {
+                let mut events = state.handle_shared(cmd, services).await?;
+                events.push(Event::UserCompletion {
+                    content: rig::OneOrMany::one(UserContent::text(
+                        "You must call a tool now. \
+                         When the script runs successfully, call 'done'. \
+                         If there are errors, fix them with the available tools first.",
+                    )),
+                });
                 Ok(events)
             }
             Command::Agent(CodingCommand::Execute { parent_id, call }) => {
@@ -593,12 +679,8 @@ fn send_coding_task_tool_definition() -> ToolDefinition {
 // Infrastructure
 // ============================================================================
 
-async fn store() -> PollingQueue<SqliteStore> {
-    let pool = sqlx::SqlitePool::connect(":memory:")
-        .await
-        .expect("Failed to create in-memory SQLite pool");
-    let store = SqliteStore::new(pool, "agent");
-    store.migrate().await;
+async fn store() -> PollingQueue<AnyStore> {
+    let store = create_store(None).await.expect("Failed to create store");
     PollingQueue::new(store)
 }
 
@@ -610,15 +692,16 @@ impl toolbox::Validator for Validator {
         sandbox: &mut edda_sandbox::DaggerSandbox,
     ) -> Result<Result<(), String>> {
         use edda_sandbox::Sandbox;
-        sandbox.exec("uv run main.py").await.map(|result| {
-            if result.exit_code == 0 {
-                Ok(())
-            } else {
-                Err(format!(
-                    "code: {}\nstdout: {}\nstderr: {}",
-                    result.exit_code, result.stdout, result.stderr
-                ))
-            }
-        })
+        let result = sandbox.exec("uv run main.py").await?;
+        if result.exit_code == 0 {
+            sandbox.export_directory("/app", "/tmp/demo").await?;
+            tracing::info!("App exported to /tmp/demo");
+            Ok(Ok(()))
+        } else {
+            Ok(Err(format!(
+                "code: {}\nstdout: {}\nstderr: {}",
+                result.exit_code, result.stdout, result.stderr
+            )))
+        }
     }
 }

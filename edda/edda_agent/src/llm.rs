@@ -287,7 +287,7 @@ impl LLMProvider {
 
     pub fn default_model(&self) -> &str {
         match self {
-            LLMProvider::Anthropic => "claude-sonnet-4-5-20250929",
+            LLMProvider::Anthropic => "claude-sonnet-4-6",
             LLMProvider::Gemini => "gemini-2.5-flash",
             LLMProvider::OpenRouter => "deepseek/deepseek-v3.2-exp",
         }
