@@ -1,7 +1,8 @@
 use eyre::Result;
 use serde::Deserialize;
 
-const GITHUB_API_URL: &str = "https://api.github.com/repos/appdotbuild/agent/releases/latest";
+const GITHUB_API_URL: &str =
+    "https://api.github.com/repos/neondatabase/appdotbuild-agent/releases/latest";
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
@@ -40,7 +41,7 @@ pub async fn check_for_updates() -> Result<()> {
     match compare_versions(current, &latest)? {
         std::cmp::Ordering::Less => {
             eprintln!(
-                "\n📦 Update available: v{} → v{}\n   Run: curl -LsSf https://raw.githubusercontent.com/appdotbuild/agent/refs/heads/main/edda/install.sh | sh\n",
+                "\n📦 Update available: v{} → v{}\n   Run: curl -LsSf https://raw.githubusercontent.com/neondatabase/appdotbuild-agent/refs/heads/main/edda/install.sh | sh\n",
                 current, latest
             );
         }

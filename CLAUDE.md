@@ -60,7 +60,7 @@ cargo run --manifest-path edda_mcp/Cargo.toml
 cargo test
 
 # Install MCP server locally
-curl -LsSf https://raw.githubusercontent.com/appdotbuild/agent/refs/heads/main/edda/install.sh | sh
+curl -LsSf https://raw.githubusercontent.com/neondatabase/appdotbuild-agent/refs/heads/main/edda/install.sh | sh
 ```
 
 ### Core Patterns

@@ -17,7 +17,7 @@ import fire
 def main(
     clone_to: str | None = None,
     install_deps: bool = True,
-    git_url: str = "https://github.com/appdotbuild/agent.git",
+    git_url: str = "https://github.com/neondatabase/appdotbuild-agent.git",
     branch: str = "main",
 ) -> None:
     """Self-setup klaudbiusz in a new environment.

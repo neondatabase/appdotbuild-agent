@@ -8,7 +8,7 @@
 set -u
 
 APP_NAME="edda_mcp"
-GITHUB_REPO="appdotbuild/agent"
+GITHUB_REPO="neondatabase/appdotbuild-agent"
 GITHUB_BASE_URL="https://github.com/${GITHUB_REPO}"
 
 # Version handling - support EDDA_VERSION env var

@@ -311,7 +311,7 @@ class FSMApplication:
         return actions
 
     async def get_diff_with(self, snapshot: dict[str, str]) -> str:
-        # TODO: Filter out binary files from diffs - https://github.com/appdotbuild/agent/issues/247
+        # TODO: Filter out binary files from diffs - https://github.com/neondatabase/appdotbuild-agent/issues/247
         logger.info(
             f"SERVER get_diff_with: Received snapshot with {len(snapshot)} files."
         )
