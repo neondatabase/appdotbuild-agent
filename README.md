@@ -1,6 +1,15 @@
 # app.build (agent)
 
-**⚠️ warning - the repo is not actively maintained anymore**. Existing code is provided for research purposes - feel free to fork and use in your experiments. 
+> # ⚠️ THIS PROJECT IS NO LONGER SUPPORTED
+>
+> **`appdotbuild-agent` is unmaintained.** It receives **no updates, no fixes, and no support**, and this will not change.
+>
+> - 🚫 **Not supported** — issues are not monitored or answered.
+> - 🚫 **No pull requests** — PRs will **not** be reviewed, accepted, or merged.
+> - 🚫 **No updates or releases** — the code is frozen as-is.
+> - 🚫 **No security patches** — do not rely on it in production.
+>
+> The source remains public for **research and reference only**. Fork it and use it entirely **at your own risk** — no warranty, no support channel.
 
 **app.build** is an open-source AI agent for generating production-ready applications with testing, linting and deployment setup from a single prompt. This agent relies heavily on scaffolding and extensive validation to ensure high-quality outputs.
 
