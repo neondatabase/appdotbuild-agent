@@ -29,7 +29,7 @@
     "@types/cors": "2.8.13",
     "@types/pg": "8.11.11",
     "drizzle-kit": "^0.31.5",
-    "eslint": "^9.37.0",
+    "eslint": "^10.0.0",
     "typescript": "~5.8.2"
   },
   "overrides": {
