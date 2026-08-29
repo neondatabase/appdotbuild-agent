@@ -1,0 +1,7 @@
+# Handler Implementation
+
+Handlers should be focused async functions that accept parsed Zod input types and return clean domain objects. Structure handlers with clear imports, type annotations, and single responsibility: import your database connection, table schemas, and type definitions at the top, then implement the core logic with proper error handling. Export handlers as named exports to support easy testing and composition.
+
+Follow the pattern of accepting fully parsed input types with defaults already applied by Zod validation. Your handler signature should be `async (input: CreateProductInput): Promise<Product>` where the input type already includes default values and validation. This approach separates concerns: tRPC handles validation, handlers handle business logic.
+
+Keep handlers isolated and testable by avoiding dependencies on other handlers. Import only what you need: database connection, table schemas, and utility functions. Structure the implementation with clear steps: validate prerequisites (like foreign key existence), perform the database operation, handle numeric conversions for the response, and return properly typed results. This pattern makes handlers predictable and easy to debug.

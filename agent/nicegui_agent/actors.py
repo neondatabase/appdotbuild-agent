@@ -1,6 +1,7 @@
 import jinja2
 import logging
 import anyio
+from pathlib import Path
 from typing import Callable, Awaitable
 from core.base_node import Node
 from core.workspace import Workspace
@@ -9,6 +10,7 @@ from llm.common import AsyncLLM, Message, TextRaw, Tool, ToolUse, ToolUseResult
 from nicegui_agent import playbooks
 from core.notification_utils import notify_if_callback, notify_stage
 from integrations.dbrx import DatabricksClient
+from core.knowledge_enricher import KnowledgeBaseEnricher
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,44 @@ class NiceguiActor(FileOperationsActor):
             "tests/test_sqlmodel_smoke.py",
         ]
         self.files_allowed = files_allowed or ["app/", "tests/"]
+
+        # Knowledge base enricher with nicegui-specific knowledge base (singleton)
+        nicegui_kb_dir = Path(__file__).parent / "knowledge_base"
+        self.enricher = KnowledgeBaseEnricher(nicegui_kb_dir)
+
+    def _determine_development_phase(self, system_prompt: str) -> str:
+        """determine development phase from system prompt."""
+        prompt_lower = system_prompt.lower()
+        if ("data modeling" in prompt_lower or 
+            ("sqlmodel" in prompt_lower and "data structures" in prompt_lower) or
+            "database schemas" in prompt_lower):
+            return "data_model"
+        elif ("application development" in prompt_lower or 
+              "ui components" in prompt_lower or
+              "application logic" in prompt_lower or
+              "existing data models" in prompt_lower):
+            return "application"
+        else:
+            return "default"
+
+    async def _enrich_system_prompt(self, base_system_prompt: str, user_prompt: str) -> str:
+        """enrich system prompt with relevant knowledge base topics."""
+        try:
+            original_size = len(base_system_prompt)
+            development_phase = self._determine_development_phase(base_system_prompt)
+            enrichment = await self.enricher.enrich_prompt(user_prompt, development_phase)
+            
+            if enrichment:
+                enriched_prompt = f"{base_system_prompt}\n\n{enrichment}"
+                new_size = len(enriched_prompt)
+                logger.info(f"system prompt enriched: {original_size} → {new_size} chars (+{new_size - original_size})")
+                return enriched_prompt
+            else:
+                logger.info(f"no enrichment added, keeping original: {original_size} chars")
+                return base_system_prompt
+        except Exception as e:
+            logger.warning(f"failed to enrich system prompt: {e}")
+            return base_system_prompt
 
     async def execute(
         self,
@@ -90,6 +130,9 @@ class NiceguiActor(FileOperationsActor):
         message = Message(role="user", content=[TextRaw(user_prompt_rendered)])
         self.root = Node(BaseData(workspace, [message], {}))
 
+        # Enrich system prompt with relevant knowledge base topics
+        enriched_system_prompt = await self._enrich_system_prompt(self.system_prompt, user_prompt)
+
         solution: Node[BaseData] | None = None
         iteration = 0
         while solution is None:
@@ -112,7 +155,7 @@ class NiceguiActor(FileOperationsActor):
             )
             nodes = await self.run_llm(
                 candidates,
-                system_prompt=self.system_prompt,
+                system_prompt=enriched_system_prompt,
                 tools=self.tools,
                 max_tokens=8192,
             )

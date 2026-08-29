@@ -1,0 +1,7 @@
+# Handler Error Handling
+
+Wrap database operations in try/catch blocks to handle connection issues, constraint violations, and other database errors gracefully. Log the complete error object with contextual information: `console.error('Product creation failed:', error)` provides debugging information without exposing sensitive details to clients. Always rethrow the original error to preserve stack traces and allow tRPC to handle error responses appropriately.
+
+Handle foreign key constraints proactively by validating referenced entities exist before attempting insert/update operations. This prevents "violates foreign key constraint" errors and provides clearer error messages. For example, verify a user exists before creating records that reference the user ID. This validation should happen in your business logic, not through database error handling.
+
+Avoid silent failures and ensure all error paths are explicit. Never return empty values or default objects to hide errors - this breaks the contract with your clients and makes debugging nearly impossible. Let database errors bubble up through tRPC's error handling system, which will provide appropriate HTTP status codes and error messages while protecting sensitive information.
